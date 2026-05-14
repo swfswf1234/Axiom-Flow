@@ -1,0 +1,33 @@
+{
+  "_comment": "版面坐标定义 Schema — 由 MinerU layout.json 映射而来",
+  "version": "0.1",
+  "block_types": ["text", "formula", "table", "figure", "heading"],
+  "coordinate_system": {
+    "origin": "top-left",
+    "unit": "points (1/72 inch)",
+    "fields": ["x0", "y0", "x1", "y1"]
+  },
+  "confidence_range": [0.0, 1.0],
+  "block": {
+    "type": "object",
+    "required": ["block_id", "doc_id", "page_no", "block_type", "bbox"],
+    "properties": {
+      "block_id": {"type": "string", "format": "uuid"},
+      "doc_id": {"type": "string", "format": "uuid"},
+      "page_no": {"type": "integer", "minimum": 1},
+      "block_type": {"type": "string", "enum": ["text", "formula", "table", "figure", "heading"]},
+      "content": {"type": "string"},
+      "latex": {"type": "string"},
+      "bbox": {
+        "type": "object",
+        "properties": {
+          "x0": {"type": "number"},
+          "y0": {"type": "number"},
+          "x1": {"type": "number"},
+          "y1": {"type": "number"}
+        }
+      },
+      "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+    }
+  }
+}
