@@ -1,0 +1,27 @@
+{
+  "experiment_id": "parser-v1-preflight",
+  "artifact_id": "sha256:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+  "page_no": 1,
+  "status": "fallback_only",
+  "primary_available": false,
+  "fallback_available": true,
+  "model_calls": 2,
+  "max_model_calls": 2,
+  "attempts": [
+    {
+      "model": "qwen-vl-ocr",
+      "status": "failed",
+      "duration_seconds": 9.889,
+      "error_type": "JSONDecodeError",
+      "error_summary": "Extra data: line 4 column 1 (char 2781)"
+    },
+    {
+      "model": "qwen-vl-plus",
+      "status": "success",
+      "duration_seconds": 23.42,
+      "response_artifact": "sha256:bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697/page-001/fallback.json",
+      "markdown_chars": 1763,
+      "block_count": 9
+    }
+  ]
+}

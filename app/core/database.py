@@ -1,3 +1,10 @@
+"""
+模块职责：v0.1 SQLAlchemy 异步数据库连接和会话管理。
+设计关联（DesignRef）：docs/history/2026-07-mineru-baseline/design/data_schema.md
+实现状态：Legacy
+关联测试：无；当前主链将在新架构重构时替换。
+"""
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import Settings

@@ -1,3 +1,10 @@
+"""
+模块职责：v0.1 文档仓储操作。
+设计关联（DesignRef）：docs/history/2026-07-mineru-baseline/architecture.md
+实现状态：Legacy
+关联测试：无；当前主链将在新架构重构时替换。
+"""
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repository.base import BaseRepository

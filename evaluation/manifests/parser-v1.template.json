@@ -1,0 +1,14 @@
+{
+  "experiment_id": "parser-v1",
+  "required_page_count": 12,
+  "budget": {"max_model_calls": 36},
+  "pages": [
+    {
+      "id": "math-text-01",
+      "artifact_id": "replace-with-local-artifact-id",
+      "page_no": 1,
+      "category": "math_text",
+      "dimensions": ["text", "structure", "source_evidence"]
+    }
+  ]
+}

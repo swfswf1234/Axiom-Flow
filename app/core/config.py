@@ -1,27 +1,34 @@
+"""
+模块职责：v0.1 PostgreSQL、MinerU 和队列配置。
+设计关联（DesignRef）：docs/history/2026-07-mineru-baseline/environment.md
+实现状态：Legacy
+关联测试：无；当前主链将在新架构重构时替换。
+"""
+
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # PostgreSQL
+    # v0.1 的 PostgreSQL 连接配置。
     pg_host: str = "localhost"
     pg_port: int = 5432
     pg_database: str = "axiom_flow"
     pg_user: str = "postgres"
     pg_password: str = ""
 
-    # MinerU
+    # v0.1 的 MinerU 输出目录。
     mineru_output_dir: str = "data/parsed"
 
-    # Qdrant (Phase 2)
+    # v0.1 预留的 Qdrant 配置。
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
 
-    # Redis (Phase 3)
+    # v0.1 预留的 Redis 配置。
     redis_host: str = "localhost"
     redis_port: int = 6379
 
-    # App
+    # v0.1 应用监听配置。
     app_port: int = 8002
     app_host: str = "0.0.0.0"
 

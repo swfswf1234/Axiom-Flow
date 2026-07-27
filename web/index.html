@@ -1,0 +1,60 @@
+<!doctype html>
+<!--
+模块职责：提供 v0.2 本地知识审阅工作台的页面结构。
+设计关联（DesignRef）：docs/design/web-workbench.md
+实现状态：Current
+关联测试：tests/test_v02_pipeline.py
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Axiom-Flow</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Axiom-Flow <span>v0.2</span></div>
+    <div id="document-status" class="status">尚未选择文档</div>
+  </header>
+  <main class="shell">
+    <aside class="sidebar">
+      <form id="upload-form" class="upload-form">
+        <label for="pdf-file">导入 PDF</label>
+        <input id="pdf-file" type="file" accept="application/pdf" required>
+        <button type="submit">导入文档</button>
+      </form>
+      <div class="sidebar-title">文档库</div>
+      <nav id="document-list" aria-label="文档库"></nav>
+    </aside>
+    <section class="workspace">
+      <nav class="tabs" aria-label="工作视图">
+        <button class="tab active" data-view="pages">页面审阅</button>
+        <button class="tab" data-view="knowledge">知识候选</button>
+        <button class="tab" data-view="workbook">工作簿发布</button>
+        <button class="tab" data-view="graph">知识图谱</button>
+      </nav>
+      <div id="notice" class="notice" role="status"></div>
+      <section id="pages-view" class="view active">
+        <div class="view-bar"><h1>页面质量审阅</h1><button id="parse-button" class="command">开始解析</button></div>
+        <div id="pages" class="page-list"></div>
+      </section>
+      <section id="knowledge-view" class="view">
+        <div class="view-bar"><h1>知识候选与关系</h1><button id="extract-button" class="command">生成候选</button></div>
+        <div id="candidates" class="candidate-list"></div>
+        <div id="edges" class="edge-list"></div>
+      </section>
+      <section id="workbook-view" class="view">
+        <div class="view-bar"><h1>工作簿发布</h1><div class="actions"><button id="export-button">导出草稿</button><a id="download-workbook" href="#" hidden>下载工作簿</a><button id="publish-button" class="command">显式发布</button></div></div>
+        <form id="workbook-form" class="import-form"><input id="workbook-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><button type="submit">导入并校验</button></form>
+        <pre id="workbook-detail" class="detail"></pre>
+      </section>
+      <section id="graph-view" class="view">
+        <div class="view-bar"><h1>已发布知识图谱</h1><button id="graph-button">刷新</button></div>
+        <div id="graph" class="graph"></div>
+      </section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

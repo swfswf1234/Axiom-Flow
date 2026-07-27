@@ -1,3 +1,10 @@
+"""
+模块职责：v0.1 页面布局块 ORM 模型。
+设计关联（DesignRef）：docs/history/2026-07-mineru-baseline/design/data_schema.md
+实现状态：Legacy
+关联测试：无；当前主链将在新架构重构时替换。
+"""
+
 import enum
 import uuid
 from sqlalchemy import String, Integer, Float, Enum, ForeignKey

@@ -1,96 +1,42 @@
-# Axiom-Flow v0.1
+# Axiom-Flow
 
-> QED-Engine 的核心知识解析与重构引擎 — 将数学教材转化为结构化知识网络。
+> 本地优先的技术文档质量与知识审阅工作台。
 
 ## 项目定位
 
-Axiom-Flow 是 **QED-Engine** 系列的第二部分（Part 2），负责 PDF 内容数字化与知识提取。它与 Part 1 的 **QED-Tracker**（资源检索分类引擎）协同工作：
+Axiom-Flow 将数学教材、计算机论文等 PDF 转为可追溯的规范化内容，并通过质量审阅、
+知识工作簿和显式发布，形成可供后续学习交互使用的知识体系。首期不把任何单一解析工具
+或模型当作唯一真相：文字层、本地解析、百炼视觉模型和 MinerU 都在统一适配边界后运行。
 
-```
-QED-Tracker (Part 1)             Axiom-Flow (Part 2)
-┌──────────────────┐            ┌──────────────────────┐
-│  检索 + 分类 +    │──dataset──→│  MinerU 解析         │
-│  元数据索引       │            │  → LlamaIndex 索引   │
-│                  │            │  → Qdrant 向量存储   │
-└──────────────────┘            └──────────────────────┘
-```
+当前优先完成解析质量工作台与知识发布闭环。详细架构、设计、决策和工作状态见
+[`docs/README.md`](docs/README.md)。
 
-## Phase 1：MinerU 集成（v0.1 目标）
+## 当前状态
 
-当前阶段聚焦于 **MinerU PDF 解析管线** 的搭建，实现数学教材的完整数字化提取：
+v0.2 已实现 MySQL 运行事实源、百炼模型适配、Web 审阅和 Excel 显式发布的单篇闭环；旧
+`app/` 仍是不可扩展的 MinerU 基线。运行步骤见
+[`docs/guides/v02-local-run.md`](docs/guides/v02-local-run.md)。
 
-- **版面分析**：识别文本、公式、表格、标题的物理布局
-- **LaTeX 提取**：高保真还原数学公式
-- **坐标保留**：每字每符的 bbox 物理坐标保留
-- **结构存储**：PostgreSQL 存储布局元数据
+请不要依据历史 MinerU、PostgreSQL、Qdrant 或 Celery 说明配置 v0.2；扫描件、批量任务、
+向量检索、Neo4j 和学习聊天会在已发布知识快照稳定后逐步加入。
 
-```mermaid
-flowchart LR
-    PDF[PDF] --> MINERU[MinerUService]
-    MINERU --> MD[Markdown + LaTeX]
-    MINERU --> JSON[Layout JSON + bbox]
-    MD --> PG[(PostgreSQL)]
-    JSON --> PG
-```
+## 文档结构
 
-## 快速开始
-
-```bash
-# 1. 激活环境
-conda activate QED_env
-
-# 2. 安装依赖
-pip install -r requirements.txt
-
-# 3. 初始化数据库
-python scripts/init_db.py
-
-# 4. 启动服务
-uvicorn app.main:app --reload --port 8002
+```text
+AGENTS.md                     # Agent 与开发执行协议
+docs/                         # 当前设计、决策、计划和指南
+├── architecture/             # 已接受的架构边界
+├── design/                   # 目标设计
+├── adr/                       # 关键决策记录
+├── plans/                     # 可执行计划
+├── trackers/                  # 当前状态与路线图
+├── guides/                    # 可重复操作指南
+└── history/                   # 已归档的 v0.1 基线
 ```
 
-## 项目结构
-
-```
-app/                          # 核心应用
-├── api/                      # FastAPI 路由
-├── core/                     # 配置与数据库连接
-├── models/                   # 数据模型 (AxiomNode / LayoutBlock / Document)
-├── repository/               # 数据访问层
-├── services/                 # 业务服务 (MinerU / Parser / Index)
-└── main.py                   # FastAPI 入口
-docs/                         # AOP 协议文档体系
-├── agents_read.md            # Agent 操作协议
-├── architecture.md           # 系统架构
-├── environment.md            # 环境搭建指南
-├── design/                   # 设计文档
-├── trackers/                 # 任务追踪
-└── knowledge_base/           # 书目状态与知识依赖
-data/
-├── raw/                      # 原始 PDF
-└── parsed/                   # MinerU 解析输出
-scripts/                      # CLI 工具与批处理
-```
-
-## 技术栈
-
-| 维度 | 选型 |
-|------|------|
-| 解析引擎 | MinerU (Magic-PDF) |
-| 异步框架 | FastAPI |
-| 关系存储 | PostgreSQL |
-| 向量存储 | Qdrant |
-| 知识索引 | LlamaIndex (后续 Phase) |
-| 任务队列 | Redis + Celery (后续 Phase) |
-
-## 依赖项目
-
-- **QED-Tracker** (`../QED-Tracker/`) — 提供已检索的 PDF 数据源
-- **数据路径**: `D:\coding\QED-Engine\QED-Tracker\dataset`
-
-## AOP 协议
-
-本项目遵循 Agentic Operations Protocol。Agent 在操作前必须阅读 `docs/agents_read.md`。
+任何实现开始前阅读根目录 [`AGENTS.md`](AGENTS.md) 与
+[`docs/README.md`](docs/README.md)。旧的 v0.1 文档已完整保存在
+`docs/history/2026-07-mineru-baseline/`，仅作历史追溯。
 
 ## License
 

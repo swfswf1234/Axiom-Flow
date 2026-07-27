@@ -1,3 +1,10 @@
+"""
+模块职责：v0.1 FastAPI 应用入口和生命周期管理。
+设计关联（DesignRef）：docs/history/2026-07-mineru-baseline/architecture.md
+实现状态：Legacy
+关联测试：无；当前主链将在新架构重构时替换。
+"""
+
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
