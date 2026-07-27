@@ -16,7 +16,16 @@
 6. `trackers/current.md`：当前正在推进的工作。
 7. `plans/`：每项工作的实施与验收定义。
 
-## 文档状态
+## 双状态元数据
+
+活跃架构、设计和计划使用两项状态，禁止再用 `Current（目标设计）` 混写：
+
+- `设计状态`：`Draft`、`Proposed`、`Accepted`、`Superseded`、`Historical`。
+- `实现状态`：`Not Started`、`In Progress`、`Implemented`、`Verified`、`Blocked`、`Completed`。
+
+旧文档只有 `状态` 时按其原意解释；修改旧文档时应迁移到双状态。
+
+## 兼容状态
 
 | 状态 | 含义 |
 | --- | --- |
@@ -41,5 +50,8 @@
 | `guides/code-document-traceability.md` | 中文注释、文件头和双向映射维护规范。 |
 | `../evaluation/` | 可复现实验、样本清单、评分工具与报告。 |
 | `history/` | 历史方案和记录。 |
+
+当前运行事实仍是 v0.2；已接受但尚在实施的 v0.3 目标见 `architecture/v03-target.md`，不得把
+目标文档描述为已交付能力。
 
 实际运行行为以代码与测试为准；设计文档不能把未实现的能力写成已支持。

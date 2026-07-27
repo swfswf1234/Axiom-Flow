@@ -18,3 +18,4 @@
 | `excel-release-workflow.md` | `backend/app/workbook.py` | `tests/test_v02_pipeline.py` |
 | `web-workbench.md` | `backend/app/main.py`、`web/` | `tests/test_v02_pipeline.py` |
 | `evaluation-governance.md` | `evaluation/scorecard.py`、`evaluation/preflight.py` | `tests/test_evaluation_scorecard.py`、`tests/test_evaluation_preflight.py` |
+| `background-jobs.md` | 尚未实现 | `tests/test_code_document_mapping.py` |
