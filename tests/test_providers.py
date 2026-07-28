@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from backend.app.config import Settings
 from backend.app.providers import _json_object
 
 
@@ -27,3 +28,10 @@ def test_json_object_accepts_json_fence_and_trailing_content():
 def test_json_object_rejects_content_without_any_json_object():
     with pytest.raises(json.JSONDecodeError):
         _json_object("无法生成结构化结果")
+
+
+def test_settings_repr_never_exposes_api_key():
+    settings = Settings(api_key="sensitive-value")
+
+    assert "sensitive-value" not in repr(settings)
+    assert settings.api_key_value == "sensitive-value"

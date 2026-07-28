@@ -1,9 +1,9 @@
 <!doctype html>
 <!--
-模块职责：提供 v0.2 本地知识审阅工作台的页面结构。
+模块职责：提供 v0.3 任务化知识审阅工作台的页面结构。
 设计关联（DesignRef）：docs/design/web-workbench.md
 实现状态：Current
-关联测试：tests/test_v02_pipeline.py
+关联测试：tests/test_v03_api.py
 -->
 <html lang="zh-CN">
 <head>
@@ -14,7 +14,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Axiom-Flow <span>v0.2</span></div>
+    <div class="brand">Axiom-Flow <span>v0.3</span></div>
     <div id="document-status" class="status">尚未选择文档</div>
   </header>
   <main class="shell">
@@ -35,6 +35,11 @@
         <button class="tab" data-view="graph">知识图谱</button>
       </nav>
       <div id="notice" class="notice" role="status"></div>
+      <section id="job-panel" class="job-panel" aria-live="polite" hidden>
+        <div><strong id="job-kind">后台任务</strong><span id="job-state" class="job-state"></span></div>
+        <progress id="job-progress" value="0" max="1"></progress>
+        <button id="cancel-job-button" class="reject" type="button">取消任务</button>
+      </section>
       <section id="pages-view" class="view active">
         <div class="view-bar"><h1>页面质量审阅</h1><button id="parse-button" class="command">开始解析</button></div>
         <div id="pages" class="page-list"></div>

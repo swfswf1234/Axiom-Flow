@@ -13,8 +13,9 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Protocol
 
 import fitz
 
@@ -127,7 +128,7 @@ def main() -> None:
             settings.vision_model,
             settings.vision_fallback_model,
             args.data_dir,
-            settings.api_key,
+            settings.api_key_value,
         )
     )
     args.report.parent.mkdir(parents=True, exist_ok=True)

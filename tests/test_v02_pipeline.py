@@ -99,23 +99,20 @@ def test_http_api_accepts_upload_and_serves_static_workbench(tmp_path: Path, mys
     source = tmp_path / "sample.pdf"
     _pdf(source)
     provider = FakeProvider()
-    application = create_app(_settings(tmp_path, mysql_settings), provider, provider)
+    application = create_app(_settings(tmp_path, mysql_settings), lambda: (provider, provider))
 
     with TestClient(application) as client:
-        assert client.get("/api/health").json()["version"] == "0.2.0"
+        assert client.get("/api/v1/health").json()["version"] == "0.3.0"
         home = client.get("/")
         assert home.status_code == 200
         assert "Axiom-Flow" in home.text
         with source.open("rb") as input_file:
-            response = client.post("/api/documents", files={"file": ("sample.pdf", input_file, "application/pdf")})
+            response = client.post("/api/v1/documents", files={"file": ("sample.pdf", input_file, "application/pdf")})
         assert response.status_code == 201
         document_id = response.json()["id"]
-        assert client.post(f"/api/documents/{document_id}/parse").status_code == 200
-        pages = client.get(f"/api/documents/{document_id}/pages").json()
-        assert client.get(pages[0]["image_url"]).headers["content-type"].startswith("image/png")
-        for page in pages:
-            assert client.post(f"/api/pages/{page['id']}/review", json={"status": "accepted", "reason": "通过"}).status_code == 200
-        assert client.post(f"/api/documents/{document_id}/candidates").status_code == 200
+        command = client.post(f"/api/v1/documents/{document_id}/parse-jobs")
+        assert command.status_code == 202
+        assert command.json()["job"]["status"] == "queued"
 
 
 def test_store_recovers_an_interrupted_parse_run(tmp_path: Path, mysql_settings: Settings, mysql_store: MySQLStore):

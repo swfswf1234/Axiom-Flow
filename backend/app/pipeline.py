@@ -9,6 +9,7 @@ import hashlib
 import json
 import shutil
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -39,19 +40,36 @@ class PipelineService:
             shutil.copyfile(source, destination)
         with fitz.open(destination) as pdf:
             page_count = len(pdf)
-        return self.store.create_document(original_filename or source.name, content_hash, destination, page_count)
+        find_by_hash = getattr(self.store, "get_document_by_hash", None)
+        existing = find_by_hash(content_hash) if find_by_hash else None
+        if existing:
+            return existing
+        document = self.store.create_document(original_filename or source.name, content_hash, destination, page_count)
+        register = getattr(self.store, "register_artifact", None)
+        if register:
+            register(document["id"], None, "source_pdf", destination)
+        return document
 
-    async def parse_document(self, document_id: str) -> dict[str, Any]:
+    async def parse_document(
+        self,
+        document_id: str,
+        job_id: str | None = None,
+        progress: Callable[[int, int], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
         document = self.store.get_document(document_id)
         if not document:
             raise KeyError("文档不存在")
         provider_summary = {"vision_model": self.settings.vision_model, "fallback_model": self.settings.vision_fallback_model}
-        run = self.store.create_parse_run(document_id, provider_summary)
+        calls_before = getattr(self.vision, "calls", 0)
+        run = self.store.create_parse_run(document_id, provider_summary, job_id)
         self.store.update_document_status(document_id, "parsing")
         parsed_pages = []
         try:
             with fitz.open(document["source_path"]) as pdf:
                 for index, page in enumerate(pdf):
+                    if cancelled and cancelled():
+                        raise InterruptedError("任务已请求取消")
                     page_no = index + 1
                     image_path, image_bytes = self._render_page(document["content_hash"], page_no, page)
                     raw_text = page.get_text("text").strip()
@@ -76,22 +94,41 @@ class PipelineService:
                             "image_path": str(image_path), "page_kind": page_kind, "review_status": "needs_review", "review_reason": "等待人工确认",
                         }
                     )
+                    if progress:
+                        progress(page_no, len(pdf))
             self.store.replace_pages(run["id"], document_id, parsed_pages)
-            self.store.finish_parse_run(run["id"], "parsed", getattr(self.vision, "calls", 0))
+            calls = getattr(self.vision, "calls", 0) - calls_before
+            self.store.finish_parse_run(run["id"], "parsed", calls)
             self.store.update_document_status(document_id, "needs_review")
-            return {"run_id": run["id"], "document_id": document_id, "status": "parsed", "model_calls": getattr(self.vision, "calls", 0)}
-        except BaseException:
+            return {"run_id": run["id"], "document_id": document_id, "status": "parsed", "model_calls": calls}
+        except BaseException as exc:
             # 协程取消、进程重启后的恢复都不能把文档永久留在 parsing。
-            self.store.finish_parse_run(run["id"], "failed", getattr(self.vision, "calls", 0))
+            calls = getattr(self.vision, "calls", 0) - calls_before
+            status = "cancelled" if isinstance(exc, InterruptedError) else "failed"
+            self.store.finish_parse_run(run["id"], status, calls, {"message": str(exc)[:1000]})
             self.store.update_document_status(document_id, "failed")
             raise
 
-    async def generate_candidates(self, document_id: str) -> list[dict[str, Any]]:
+    async def generate_candidates(self, document_id: str, job_id: str | None = None) -> list[dict[str, Any]]:
         pages = self.store.accepted_pages(document_id)
         if not pages:
             raise ValueError("没有已接受的知识正文页面")
         markdown = "\n\n".join(f"## 第 {page['page_no']} 页\n{page['markdown']}" for page in pages)
-        response = await self.knowledge.extract_knowledge(markdown)
+        parse_run_id = str(pages[0]["run_id"])
+        calls_before = getattr(self.knowledge, "calls", 0)
+        create_extraction = getattr(self.store, "create_extraction_run", None)
+        extraction = create_extraction(
+            document_id, parse_run_id, job_id, {"knowledge_model": self.settings.knowledge_model}
+        ) if create_extraction else None
+        try:
+            response = await self.knowledge.extract_knowledge(markdown)
+        except Exception as exc:
+            if extraction:
+                self.store.finish_extraction_run(
+                    extraction["id"], "failed", getattr(self.knowledge, "calls", 0) - calls_before,
+                    {"message": str(exc)[:1000]},
+                )
+            raise
         page_by_quote = [(page["page_no"], page["markdown"]) for page in pages]
         candidates = []
         title_to_id = {}
@@ -112,7 +149,13 @@ class PipelineService:
                 evidence = self._candidate_evidence(str(item.get("evidence_quote") or ""), page_by_quote)
                 relation = str(item.get("relation") or "RELATED_TO")
                 edges.append({"id": str(uuid.uuid4()), "document_id": document_id, "source_id": source_id, "target_id": target_id, "relation": relation if relation in allowed_relations else "RELATED_TO", "evidence_json": json.dumps(evidence, ensure_ascii=False), "review_status": "needs_review"})
-        self.store.replace_candidates(document_id, candidates, edges)
+        if extraction:
+            self.store.append_candidates(extraction["id"], document_id, candidates, edges)
+            self.store.finish_extraction_run(
+                extraction["id"], "succeeded", getattr(self.knowledge, "calls", 0) - calls_before,
+            )
+        else:
+            self.store.replace_candidates(document_id, candidates, edges)
         self.store.update_document_status(document_id, "knowledge_review")
         return self.store.list_candidates(document_id)
 

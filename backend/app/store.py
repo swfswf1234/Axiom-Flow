@@ -17,6 +17,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from backend.domain.models import DocumentStatus, ParseRunStatus, ReviewStatus
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -73,7 +74,11 @@ class MySQLStore:
 
     def truncate_all(self) -> None:
         """仅供隔离测试库使用；调用方必须保证连接的是 axiom_flow_test。"""
-        tables = ("af_edges", "af_releases", "af_workbook_revisions", "af_candidates", "af_pages", "af_parse_runs", "af_documents")
+        tables = (
+            "af_source_spans", "af_content_blocks", "af_quality_reports", "af_review_events",
+            "af_edges", "af_candidates", "af_extraction_runs", "af_releases",
+            "af_workbook_revisions", "af_artifacts", "af_pages", "af_parse_runs", "af_jobs", "af_documents",
+        )
         with self.engine.begin() as connection:
             connection.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
             for table in tables:
@@ -95,20 +100,32 @@ class MySQLStore:
         return self._many("SELECT * FROM af_documents ORDER BY created_at DESC")
 
     def update_document_status(self, document_id: str, status: str) -> None:
+        status = DocumentStatus(status).value
         with self.engine.begin() as connection:
             connection.execute(text("UPDATE af_documents SET status = :status WHERE id = :id"), {"id": document_id, "status": status})
 
-    def create_parse_run(self, document_id: str, provider_summary: dict[str, Any]) -> dict[str, Any]:
-        row = {"id": str(uuid.uuid4()), "document_id": document_id, "status": "parsing", "provider_summary": json.dumps(provider_summary, ensure_ascii=False), "model_calls": 0, "created_at": _now()}
+    def create_parse_run(
+        self, document_id: str, provider_summary: dict[str, Any], job_id: str | None = None,
+    ) -> dict[str, Any]:
+        row = {"id": str(uuid.uuid4()), "document_id": document_id, "job_id": job_id,
+               "status": "parsing", "provider_summary": json.dumps(provider_summary, ensure_ascii=False),
+               "model_calls": 0, "created_at": _now()}
         with self.engine.begin() as connection:
             connection.execute(text("""INSERT INTO af_parse_runs
-                (id, document_id, status, provider_summary, model_calls, created_at)
-                VALUES (:id, :document_id, :status, CAST(:provider_summary AS JSON), :model_calls, :created_at)"""), row)
+                (id, document_id, job_id, status, provider_summary, model_calls, created_at)
+                VALUES (:id, :document_id, :job_id, :status, CAST(:provider_summary AS JSON),
+                :model_calls, :created_at)"""), row)
         return row
 
-    def finish_parse_run(self, run_id: str, status: str, model_calls: int) -> None:
+    def finish_parse_run(
+        self, run_id: str, status: str, model_calls: int, error: dict[str, Any] | None = None,
+    ) -> None:
+        status = ParseRunStatus(status).value
         with self.engine.begin() as connection:
-            connection.execute(text("UPDATE af_parse_runs SET status = :status, model_calls = :model_calls WHERE id = :id"), {"id": run_id, "status": status, "model_calls": model_calls})
+            connection.execute(text("""UPDATE af_parse_runs SET status=:status, model_calls=:model_calls,
+                finished_at=:finished_at, error_json=CAST(:error_json AS JSON) WHERE id=:id"""),
+                {"id": run_id, "status": status, "model_calls": model_calls, "finished_at": _now(),
+                 "error_json": json.dumps(error, ensure_ascii=False) if error else None})
 
     def replace_pages(self, run_id: str, document_id: str, pages: list[dict[str, Any]]) -> None:
         """写入一次解析运行的页面事实，历史 ParseRun 的产物不得被新运行覆盖。"""
@@ -212,6 +229,7 @@ class MySQLStore:
         return row
 
     def _review(self, table: str, record_id: str, status: str, reason: str) -> None:
+        status = ReviewStatus(status).value
         messages = {"af_pages": "页面不存在", "af_candidates": "知识候选不存在"}
         with self.engine.begin() as connection:
             result = connection.execute(text(f"UPDATE {table} SET review_status = :status, review_reason = :reason WHERE id = :id"), {"id": record_id, "status": status, "reason": reason})

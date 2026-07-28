@@ -7,16 +7,16 @@
 
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
-from sqlalchemy.engine import URL
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
     """v0.2 配置描述 MySQL 运行库、本地文件产物和百炼模型。"""
 
     data_dir: Path = Path("data")
-    api_key: str = Field(default="", validation_alias=AliasChoices("AXIOM_API_KEY", "API_KEY"))
+    api_key: SecretStr = Field(default=SecretStr(""), validation_alias=AliasChoices("AXIOM_API_KEY", "API_KEY"))
     vision_model: str = "qwen-vl-ocr"
     vision_fallback_model: str = "qwen-vl-plus"
     knowledge_model: str = "qwen-plus"
@@ -31,12 +31,21 @@ class Settings(BaseSettings):
     mysql_test_database: str = Field(default="axiom_flow_test", validation_alias="AXIOM_MYSQL_TEST_DATABASE")
     mysql_pool_size: int = 5
     mysql_max_overflow: int = 10
+    worker_id: str = "axiom-flow-worker"
+    worker_poll_seconds: float = 1.0
+    worker_lease_seconds: int = 120
+    max_upload_bytes: int = 100 * 1024 * 1024
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AXIOM_", extra="ignore", populate_by_name=True)
 
     @property
     def documents_dir(self) -> Path:
         return self.data_dir / "documents"
+
+    @property
+    def api_key_value(self) -> str:
+        """仅在供应商请求边界展开密钥，配置日志始终保持脱敏。"""
+        return self.api_key.get_secret_value()
 
     @property
     def mysql_url(self) -> str:

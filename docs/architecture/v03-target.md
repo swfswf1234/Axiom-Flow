@@ -1,10 +1,10 @@
 # v0.3 目标架构
 
 设计状态：Accepted
-实现状态：In Progress
+实现状态：Implemented
 最后更新：2026-07-27
-关联代码：尚未实现
-关联测试：`tests/test_code_document_mapping.py`
+关联代码：`backend/domain/models.py`、`backend/infrastructure/mysql.py`、`backend/api/schemas.py`、`backend/migrations/versions/20260727_0002_v03_jobs_and_history.py`
+关联测试：`tests/test_v03_jobs.py`、`tests/test_v03_api.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0007-versioned-domain-records.md`
 
 ## 分层
@@ -36,4 +36,3 @@ flowchart LR
 
 本地 PDF、页图和工作簿以内容哈希组织。数据库保存产物索引和哈希，不把绝对路径暴露给 API。
 后续检索和学习服务只能读取已发布 `KnowledgeRelease`。
-

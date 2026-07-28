@@ -51,7 +51,7 @@ class BailianProvider:
         self.calls = 0
 
     async def _complete(self, model: str, messages: list[dict[str, Any]]) -> str:
-        if not self.settings.api_key:
+        if not self.settings.api_key_value:
             raise RuntimeError("未配置 AXIOM_API_KEY，无法调用百炼模型")
         if self.calls >= self.settings.model_call_budget:
             raise RuntimeError("已达到 AXIOM_MODEL_CALL_BUDGET 调用上限")
@@ -59,7 +59,7 @@ class BailianProvider:
         async with httpx.AsyncClient(timeout=self.settings.model_timeout_seconds) as client:
             response = await client.post(
                 f"{self.settings.dashscope_base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {self.settings.api_key}"},
+                headers={"Authorization": f"Bearer {self.settings.api_key_value}"},
                 json={"model": model, "messages": messages, "temperature": 0},
             )
             response.raise_for_status()

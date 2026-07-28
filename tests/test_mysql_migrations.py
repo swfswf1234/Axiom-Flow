@@ -10,7 +10,6 @@ from sqlalchemy import text
 from backend.app.config import Settings
 from backend.app.store import MySQLStore, upgrade_database
 
-
 EXPECTED_TABLES = {
     "af_documents",
     "af_parse_runs",
@@ -19,6 +18,13 @@ EXPECTED_TABLES = {
     "af_edges",
     "af_workbook_revisions",
     "af_releases",
+    "af_jobs",
+    "af_extraction_runs",
+    "af_review_events",
+    "af_artifacts",
+    "af_content_blocks",
+    "af_source_spans",
+    "af_quality_reports",
 }
 
 
@@ -31,7 +37,7 @@ def test_migration_is_idempotent_and_owns_only_prefixed_tables(mysql_settings: S
             tables = set(connection.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name LIKE 'af\\_%'" )).scalars())
             revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         assert EXPECTED_TABLES <= tables
-        assert revision == "20260727_0001"
+        assert revision == "20260727_0002"
     finally:
         store.dispose()
 

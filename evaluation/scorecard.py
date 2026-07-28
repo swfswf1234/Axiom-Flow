@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 VALID_DIMENSIONS = {
     "text",
     "structure",

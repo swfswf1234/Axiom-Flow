@@ -5,10 +5,9 @@
 关联测试：tests/test_mysql_migrations.py
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import mysql
-
 
 revision = "20260727_0001"
 down_revision = None

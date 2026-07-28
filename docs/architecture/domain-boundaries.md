@@ -1,6 +1,7 @@
 # 领域边界
 
-状态：Current（v0.2 已实施）  
+设计状态：Accepted
+实现状态：Implemented
 最后更新：2026-07-27
 关联代码：各领域的 v0.2 实现与 Legacy 边界见 `docs/architecture/code-map.md`  
 关联测试：`tests/test_code_document_mapping.py`  
@@ -14,6 +15,8 @@
 | Knowledge | 候选单元、关系、证据、审阅状态和已发布快照。 | 直接调用供应商 SDK。 |
 | Workbook | Excel 导出、导入校验、差异与发布版本。 | 绕过知识校验直接写运行库。 |
 | Web | 工作台浏览、审阅与命令提交。 | 承担领域规则。 |
+| Jobs | 幂等入队、租约、进度、取消、重试和恢复。 | 解释 PDF 或知识语义。 |
 
-`ParserAdapter` 和 `ModelProvider` 是基础设施边界。百炼、MinerU 与任何未来引擎都
+领域、应用、基础设施、API 和 Worker 的依赖方向见 `v03-target.md`。`ParserAdapter` 和
+`ModelProvider` 是基础设施边界。百炼、MinerU 与任何未来引擎都
 在此边界后实现。领域服务只消费规范化类型，不能读取供应商私有 JSON。

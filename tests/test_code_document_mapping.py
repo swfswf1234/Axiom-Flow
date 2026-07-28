@@ -5,9 +5,8 @@
 被测代码：docs/architecture/code-map.md
 """
 
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CODE_MAP = ROOT / "docs" / "architecture" / "code-map.md"
