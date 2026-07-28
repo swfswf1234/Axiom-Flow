@@ -1,7 +1,7 @@
 # 领域边界
 
 设计状态：Accepted
-实现状态：Implemented
+实现状态：Verified
 最后更新：2026-07-27
 关联代码：各领域的 v0.2 实现与 Legacy 边界见 `docs/architecture/code-map.md`  
 关联测试：`tests/test_code_document_mapping.py`  

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axiom-flow"
+version = "0.3.0"
+description = "本地优先的技术文档质量与知识审阅工作台"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.13.0",
+  "fastapi>=0.110.0",
+  "httpx>=0.28.0",
+  "openpyxl>=3.1.0",
+  "pydantic>=2.0.0",
+  "pydantic-settings>=2.0.0",
+  "pymupdf>=1.24.0",
+  "pymysql>=1.1.0",
+  "python-multipart>=0.0.9",
+  "sqlalchemy>=2.0.0",
+  "uvicorn[standard]>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+  "pytest-cov>=5.0.0",
+  "ruff>=0.5.0",
+]
+legacy = [
+  "asyncpg>=0.29.0",
+  "celery>=5.3.0",
+  "llama-index>=0.10.0",
+  "llama-index-vector-stores-qdrant>=0.1.0",
+  "magic-pdf>=0.7.0",
+  "psycopg2-binary>=2.9.0",
+  "qdrant-client>=1.9.0",
+  "redis>=5.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "evaluation*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]

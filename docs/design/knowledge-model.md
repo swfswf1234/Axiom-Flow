@@ -1,6 +1,7 @@
 # 知识模型与图关系
 
-状态：Current（目标设计）  
+设计状态：Accepted
+实现状态：Verified
 最后更新：2026-07-27
 关联代码：由 `docs/architecture/code-map.md` 中的解析、仓储与工作簿服务组合实现  
 关联测试：`tests/test_v02_pipeline.py`、`tests/test_code_document_mapping.py`  

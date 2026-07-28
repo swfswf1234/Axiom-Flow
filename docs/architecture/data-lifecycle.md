@@ -1,7 +1,7 @@
 # 数据生命周期与事实来源
 
 设计状态：Accepted
-实现状态：Implemented
+实现状态：Verified
 最后更新：2026-07-27
 关联代码：`backend/app/store.py`、`backend/migrations/env.py`、`backend/migrations/versions/20260727_0001_mysql_v02.py`
 关联测试：`tests/test_v02_pipeline.py`、`tests/test_mysql_migrations.py`、`tests/test_code_document_mapping.py`

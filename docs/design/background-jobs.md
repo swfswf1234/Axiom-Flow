@@ -1,7 +1,7 @@
 # 持久化后台任务
 
 设计状态：Accepted
-实现状态：Implemented
+实现状态：Verified
 最后更新：2026-07-27
 关联代码：`backend/application/jobs.py`、`backend/worker/runner.py`、`backend/worker/__main__.py`
 关联测试：`tests/test_v03_jobs.py`、`tests/test_code_document_mapping.py`

@@ -13,11 +13,11 @@ Axiom-Flow 将数学教材、计算机论文等 PDF 转为可追溯的规范化�
 
 ## 当前状态
 
-v0.2 已实现 MySQL 运行事实源、百炼模型适配、Web 审阅和 Excel 显式发布的单篇闭环；旧
-`app/` 仍是不可扩展的 MinerU 基线。运行步骤见
-[`docs/guides/v02-local-run.md`](docs/guides/v02-local-run.md)。
+v0.3 已实现 MySQL 持久任务、独立 Worker、版本化解析/抽取历史、API v1、Web 审阅和 Excel
+显式发布；旧 `app/` 仍是不可扩展的 MinerU 基线。运行步骤见
+[`docs/guides/v03-local-run.md`](docs/guides/v03-local-run.md)。
 
-请不要依据历史 MinerU、PostgreSQL、Qdrant 或 Celery 说明配置 v0.2；扫描件、批量任务、
+请不要依据历史 MinerU、PostgreSQL、Qdrant 或 Celery 说明配置 v0.3；扫描件正式路由、批量导入、
 向量检索、Neo4j 和学习聊天会在已发布知识快照稳定后逐步加入。
 
 ## 文档结构

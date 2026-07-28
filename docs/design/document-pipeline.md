@@ -1,6 +1,7 @@
 # 文档解析流水线
 
-状态：Current（目标设计）  
+设计状态：Accepted
+实现状态：Verified
 最后更新：2026-07-27
 关联代码：`backend/app/config.py`、`backend/app/providers.py`、`backend/app/pipeline.py`  
 关联测试：`tests/test_v02_pipeline.py`、`tests/test_providers.py`、`tests/test_code_document_mapping.py`  

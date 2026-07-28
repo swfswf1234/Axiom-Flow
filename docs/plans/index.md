@@ -9,4 +9,4 @@
 | `2026-07-v02-first-loop.md` | Completed | 单篇本地审阅、工作簿发布与图谱闭环。 |
 | `2026-07-v02-phase-closure.md` | Completed | v0.2 阶段收尾、验证基线与后续恢复条件。 |
 | `2026-07-v03-readiness-audit.md` | Completed | v0.3 前的文档、代码与交付链路审计。 |
-| `2026-07-v03-architecture-rebuild.md` | In Progress | 领域分层、持久任务、API v1 与交付门禁。 |
+| `2026-07-v03-architecture-rebuild.md` | Completed | 领域分层、持久任务、API v1 与交付门禁。 |
