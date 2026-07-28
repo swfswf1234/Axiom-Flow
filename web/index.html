@@ -10,6 +10,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Axiom-Flow</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -41,8 +42,57 @@
         <button id="cancel-job-button" class="reject" type="button">取消任务</button>
       </section>
       <section id="pages-view" class="view active">
-        <div class="view-bar"><h1>页面质量审阅</h1><button id="parse-button" class="command">开始解析</button></div>
-        <div id="pages" class="page-list"></div>
+        <div class="view-bar">
+          <h1>页面质量审阅</h1>
+          <div class="actions">
+            <button id="history-button" type="button" title="解析历史">历史</button>
+            <button id="parse-button" class="command" type="button">开始解析</button>
+          </div>
+        </div>
+        <section id="run-toolbar" class="run-toolbar" hidden></section>
+        <div id="review-workspace" class="review-workspace" hidden>
+          <aside class="page-navigator" aria-label="页面导航">
+            <div class="navigator-tools">
+              <input id="page-filter" type="search" placeholder="筛选页码或问题" aria-label="筛选页面">
+              <label><input id="issues-only" type="checkbox"> 仅问题页</label>
+            </div>
+            <nav id="page-index" aria-label="解析页面"></nav>
+          </aside>
+          <section class="page-inspector">
+            <div class="page-controls">
+              <button id="previous-page" type="button" title="上一页" aria-label="上一页">&#8592;</button>
+              <label>第 <input id="page-number" type="number" min="1" aria-label="页码"> 页</label>
+              <button id="next-page" type="button" title="下一页" aria-label="下一页">&#8594;</button>
+              <span class="control-spacer"></span>
+              <button id="fit-width" type="button">适合宽度</button>
+              <button id="zoom-out" type="button" title="缩小" aria-label="缩小">&#8722;</button>
+              <output id="zoom-level">100%</output>
+              <button id="zoom-in" type="button" title="放大" aria-label="放大">&#43;</button>
+            </div>
+            <div class="comparison">
+              <section class="source-pane">
+                <header><h2>原始页图</h2><span id="page-state" class="meta"></span></header>
+                <div id="image-stage" class="image-stage"><img id="page-image" alt=""></div>
+              </section>
+              <section class="ocr-pane">
+                <header><h2>当前 OCR</h2><span id="page-issues" class="issues"></span></header>
+                <nav class="content-tabs" aria-label="OCR 内容格式">
+                  <button class="content-tab active" data-content="readable" type="button">阅读</button>
+                  <button class="content-tab" data-content="markdown" type="button">Markdown</button>
+                  <button class="content-tab" data-content="blocks" type="button">Blocks JSON</button>
+                </nav>
+                <div id="ocr-content" class="ocr-content"></div>
+                <div id="page-review"></div>
+              </section>
+            </div>
+            <nav id="artifact-downloads" class="artifact-downloads" aria-label="产物下载"></nav>
+          </section>
+        </div>
+        <div id="empty-pages" class="empty-state">尚未选择可用的当前解析运行</div>
+        <aside id="history-drawer" class="history-drawer" hidden>
+          <div class="drawer-header"><h2>解析历史</h2><button id="close-history" type="button" title="关闭" aria-label="关闭">&#215;</button></div>
+          <div id="run-history"></div>
+        </aside>
       </section>
       <section id="knowledge-view" class="view">
         <div class="view-bar"><h1>知识候选与关系</h1><button id="extract-button" class="command">生成候选</button></div>
@@ -60,6 +110,17 @@
       </section>
     </section>
   </main>
+  <dialog id="parse-dialog">
+    <form id="parse-form" method="dialog">
+      <h2>新建解析任务</h2>
+      <div class="range-fields">
+        <label>起始页<input id="parse-start" type="number" min="1" required></label>
+        <label>结束页<input id="parse-end" type="number" min="1" required></label>
+      </div>
+      <p id="parse-budget" class="meta"></p>
+      <div class="dialog-actions"><button value="cancel">取消</button><button id="confirm-parse" class="command" value="default">提交</button></div>
+    </form>
+  </dialog>
   <script src="/app.js"></script>
 </body>
 </html>

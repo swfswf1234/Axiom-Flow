@@ -1,0 +1,28 @@
+{
+  "experiment_id": "rudin-scan-v1",
+  "run_artifact_id": "sha256:70e22f01273d1e1f87a870238bda732b571d68b7c6cd71a419e93cce9624e13c",
+  "model_calls": 24,
+  "max_model_calls": 24,
+  "average_score": 0.604,
+  "duration_seconds": 655.261,
+  "cost_estimate": 0.0,
+  "minimum_average_score": 1.5,
+  "critical_failures": [
+    "rudin-scan-0020: 只返回页面第一处定理，绝大部分正文和公式缺失",
+    "rudin-scan-0045: 只返回一个段落，绝大部分正文和公式缺失",
+    "rudin-scan-0070: 只返回一个公式，绝大部分正文缺失",
+    "rudin-scan-0095: formula=0",
+    "rudin-scan-0095: 只返回一道习题开头，页面其余习题和公式缺失",
+    "rudin-scan-0120: 只返回一个公式，页面正文缺失",
+    "rudin-scan-0145: source_evidence=0",
+    "rudin-scan-0145: Markdown 在页尾中途截断且没有任何块或 bbox",
+    "rudin-scan-0170: formula=0",
+    "rudin-scan-0170: 只返回首行文字，定理、证明和公式全部缺失",
+    "rudin-scan-0195: 只返回一个公式，页面正文缺失",
+    "rudin-scan-0220: 只返回公式 (89)，页面正文缺失",
+    "rudin-scan-0245: source_evidence=0",
+    "rudin-scan-0245: Markdown 在页尾中途截断且没有任何块或 bbox",
+    "rudin-scan-0270: 只返回一个局部句子和公式，页面其余内容缺失"
+  ],
+  "accepted": false
+}

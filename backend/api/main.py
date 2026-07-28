@@ -8,7 +8,7 @@
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -17,31 +17,31 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.schemas import (
+    ArtifactResponse,
     CommandResponse,
+    CurrentParseRunRequest,
     DocumentResponse,
     JobResponse,
     KnowledgeEdgeResponse,
     KnowledgeNodeResponse,
     PageResponse,
+    ParseJobRequest,
     ReviewRequest,
 )
-from backend.app.config import Settings
-from backend.app.pipeline import PipelineService
-from backend.app.providers import BailianProvider
-from backend.app.workbook import WorkbookService
-from backend.application.jobs import JobApplicationService, ProviderFactory
-from backend.infrastructure.mysql import V03Store
+from backend.application.ports import ProviderFactory
+from backend.bootstrap import build_container
 
 
 def create_app(
-    settings: Settings | None = None,
+    settings: Any | None = None,
     provider_factory: ProviderFactory | None = None,
 ) -> FastAPI:
     """组装 API；测试可注入确定性供应商工厂，生产任务仅由 Worker 调用供应商。"""
-    resolved = settings or Settings()
-    store = V03Store(resolved.mysql_url, resolved.mysql_pool_size, resolved.mysql_max_overflow)
-    jobs = JobApplicationService(store, resolved, provider_factory)
-    workbooks = WorkbookService(store, resolved.data_dir)
+    container = build_container(settings, provider_factory)
+    resolved = container.settings
+    store = container.repository
+    jobs = container.jobs
+    workbooks = container.workbooks
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -55,6 +55,7 @@ def create_app(
     app.state.store = store
     app.state.jobs = jobs
     app.state.settings = resolved
+    app.state.container = container
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
@@ -98,8 +99,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="只接受 PDF 文件")
         temporary = await _receive_upload(file, resolved.data_dir / "uploads", resolved.max_upload_bytes, ".pdf")
         try:
-            provider = BailianProvider(resolved)
-            return PipelineService(store, resolved, provider, provider).import_pdf(temporary, file.filename)
+            return container.import_pipeline.import_pdf(temporary, file.filename)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"无法导入 PDF：{str(exc)[:500]}") from exc
         finally:
@@ -110,8 +110,9 @@ def create_app(
         return _document(store, document_id)
 
     @app.post("/api/v1/documents/{document_id}/parse-jobs", status_code=202, response_model=CommandResponse)
-    def submit_parse(document_id: str) -> dict:
-        job, created = jobs.submit_parse(document_id)
+    def submit_parse(document_id: str, request: ParseJobRequest | None = None) -> dict:
+        selection = request or ParseJobRequest()
+        job, created = jobs.submit_parse(document_id, selection.page_start, selection.page_end)
         return {"job": job, "created": created}
 
     @app.post("/api/v1/documents/{document_id}/extraction-jobs", status_code=202, response_model=CommandResponse)
@@ -139,12 +140,58 @@ def create_app(
         _document(store, document_id)
         return store.list_parse_runs(document_id)
 
+    @app.get("/api/v1/documents/{document_id}/current-parse-run")
+    def current_parse_run(document_id: str) -> dict:
+        _document(store, document_id)
+        run = store.get_current_parse_run(document_id)
+        if not run:
+            raise KeyError("尚未选择当前解析运行")
+        return {**run, "selection_history": store.list_parse_run_selections(document_id)}
+
+    @app.post("/api/v1/documents/{document_id}/current-parse-run")
+    def select_current_parse_run(document_id: str, request: CurrentParseRunRequest) -> dict:
+        _document(store, document_id)
+        return store.select_current_parse_run(document_id, request.run_id, request.reason, resolved.data_dir)
+
     @app.get("/api/v1/parse-runs/{run_id}/pages", response_model=list[PageResponse])
     def list_run_pages(run_id: str) -> list[dict]:
         pages = store.list_pages_for_run(run_id)
         for page in pages:
             page["image_url"] = f"/api/v1/pages/{page['id']}/image"
         return pages
+
+    @app.get("/api/v1/parse-runs/{run_id}/pages/{page_no}", response_model=PageResponse)
+    def get_run_page(run_id: str, page_no: int) -> dict:
+        page = store.get_page_for_run(run_id, page_no)
+        if not page:
+            raise KeyError("解析页面不存在")
+        page["image_url"] = f"/api/v1/pages/{page['id']}/image"
+        return page
+
+    @app.get("/api/v1/parse-runs/{run_id}/artifact-summary")
+    def get_artifact_summary(run_id: str) -> dict:
+        return store.get_artifact_summary(run_id)
+
+    @app.get("/api/v1/parse-runs/{run_id}/page-index")
+    def get_page_index(run_id: str) -> list[dict]:
+        return store.list_page_index(run_id)
+
+    @app.get("/api/v1/parse-runs/{run_id}/artifacts", response_model=list[ArtifactResponse])
+    def list_run_artifacts(run_id: str) -> list[dict]:
+        artifacts = store.list_artifacts_for_run(run_id)
+        for artifact in artifacts:
+            artifact["download_url"] = f"/api/v1/artifacts/{artifact['id']}/content"
+        return artifacts
+
+    @app.get("/api/v1/artifacts/{artifact_id}/content")
+    def artifact_content(artifact_id: str) -> FileResponse:
+        artifact = store.get_artifact(artifact_id)
+        if not artifact:
+            raise KeyError("解析产物不存在")
+        path = _data_path(resolved.data_dir, artifact["path"])
+        if not path.is_file():
+            raise KeyError("解析产物文件不存在")
+        return FileResponse(path, media_type=artifact["mime_type"], filename=path.name)
 
     @app.get("/api/v1/documents/{document_id}/pages", response_model=list[PageResponse])
     def list_latest_pages(document_id: str) -> list[dict]:
@@ -157,9 +204,10 @@ def create_app(
     @app.get("/api/v1/pages/{page_id}/image")
     def page_image(page_id: str) -> FileResponse:
         page = store.get_page(page_id)
-        if not page or not Path(page["image_path"]).is_file():
+        path = _data_path(resolved.data_dir, page["image_path"]) if page else None
+        if not page or path is None or not path.is_file():
             raise KeyError("页面图像不存在")
-        return FileResponse(page["image_path"], media_type="image/png")
+        return FileResponse(path, media_type="image/png")
 
     @app.post("/api/v1/pages/{page_id}/reviews", response_model=PageResponse)
     def review_page(page_id: str, request: ReviewRequest) -> dict:
@@ -241,11 +289,21 @@ def create_app(
     return app
 
 
-def _document(store: V03Store, document_id: str) -> dict:
+def _document(store: Any, document_id: str) -> dict:
     document = store.get_document(document_id)
     if not document:
         raise KeyError("文档不存在")
     return document
+
+
+def _data_path(data_dir: Path, stored_path: str) -> Path:
+    """解析数据库中的相对产物路径并拒绝数据目录逃逸。"""
+    root = data_dir.resolve()
+    candidate = Path(stored_path)
+    resolved = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError("解析产物路径超出数据目录")
+    return resolved
 
 
 async def _receive_upload(file: UploadFile, directory: Path, limit: int, suffix: str) -> Path:
@@ -267,6 +325,3 @@ async def _receive_upload(file: UploadFile, directory: Path, limit: int, suffix:
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"code": code, "message": message, "details": {}}})
-
-
-app = create_app()

@@ -10,7 +10,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from backend.app.config import Settings
+from backend.infrastructure.config import Settings
 
 config = context.config
 if config.config_file_name:

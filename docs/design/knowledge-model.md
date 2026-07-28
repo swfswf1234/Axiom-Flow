@@ -4,7 +4,7 @@
 实现状态：Verified
 最后更新：2026-07-27
 关联代码：由 `docs/architecture/code-map.md` 中的解析、仓储与工作簿服务组合实现  
-关联测试：`tests/test_v02_pipeline.py`、`tests/test_code_document_mapping.py`  
+关联测试：`tests/test_document_workflow.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0003-excel-publish-source-of-truth.md`
 
 知识抽取只消费质量已接受的规范化内容，每次创建独立 `ExtractionRun` 并输出待审阅

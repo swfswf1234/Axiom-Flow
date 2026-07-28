@@ -1,0 +1,27 @@
+{
+  "experiment_id": "rudin-scan-v1",
+  "run_artifact_id": "sha256:70e22f01273d1e1f87a870238bda732b571d68b7c6cd71a419e93cce9624e13c",
+  "model_config": {
+    "provider": "bailian",
+    "model": "qwen-vl-ocr",
+    "fallback_model": "qwen-vl-plus",
+    "timeout_seconds": 180
+  },
+  "model_calls": 24,
+  "duration_seconds": 655.261,
+  "cost_estimate": 0.0,
+  "pages": [
+    {"id": "rudin-scan-0020", "scores": {"text": 0, "structure": 0, "formula": 1, "source_evidence": 1}, "critical_errors": ["只返回页面第一处定理，绝大部分正文和公式缺失"], "review_reason": "局部公式可读且有 bbox，但不是完整页面解析。"},
+    {"id": "rudin-scan-0045", "scores": {"text": 0, "structure": 0, "formula": 1, "source_evidence": 1}, "critical_errors": ["只返回一个段落，绝大部分正文和公式缺失"], "review_reason": "局部段落可定位，页面结构和后续内容全部缺失。"},
+    {"id": "rudin-scan-0070", "scores": {"text": 0, "structure": 0, "formula": 1, "source_evidence": 1}, "critical_errors": ["只返回一个公式，绝大部分正文缺失"], "review_reason": "单个公式可定位，但不能代表完整页面。"},
+    {"id": "rudin-scan-0095", "scores": {"text": 0, "structure": 0, "formula": 0, "source_evidence": 1}, "critical_errors": ["只返回一道习题开头，页面其余习题和公式缺失"], "review_reason": "局部段落有 bbox，公式与列表结构不可用。"},
+    {"id": "rudin-scan-0120", "scores": {"text": 0, "structure": 0, "formula": 1, "source_evidence": 1}, "critical_errors": ["只返回一个公式，页面正文缺失"], "review_reason": "局部公式识别可用，整页文字和结构不可用。"},
+    {"id": "rudin-scan-0145", "scores": {"text": 1, "structure": 1, "formula": 1, "source_evidence": 0}, "critical_errors": ["Markdown 在页尾中途截断且没有任何块或 bbox"], "review_reason": "主体文字和公式较多，但缺少可定位证据并发生截断。"},
+    {"id": "rudin-scan-0170", "scores": {"text": 0, "structure": 0, "formula": 0, "source_evidence": 1}, "critical_errors": ["只返回首行文字，定理、证明和公式全部缺失"], "review_reason": "首行可定位，页面主要数学内容不可用。"},
+    {"id": "rudin-scan-0195", "scores": {"text": 0, "structure": 0, "formula": 1, "source_evidence": 1}, "critical_errors": ["只返回一个公式，页面正文缺失"], "review_reason": "单个公式可定位，页面其余内容不可用。"},
+    {"id": "rudin-scan-0220", "scores": {"text": 0, "structure": 0, "formula": 1, "source_evidence": 1}, "critical_errors": ["只返回公式 (89)，页面正文缺失"], "review_reason": "公式局部可定位，完整结构不可用。"},
+    {"id": "rudin-scan-0245", "scores": {"text": 1, "structure": 1, "formula": 1, "source_evidence": 0}, "critical_errors": ["Markdown 在页尾中途截断且没有任何块或 bbox"], "review_reason": "主体内容较多但不完整，且无法回到页内坐标。"},
+    {"id": "rudin-scan-0270", "scores": {"text": 0, "structure": 0, "formula": 1, "source_evidence": 1}, "critical_errors": ["只返回一个局部句子和公式，页面其余内容缺失"], "review_reason": "局部内容可定位，整页不可用。"},
+    {"id": "rudin-scan-0295", "scores": {"text": 2, "structure": 2, "formula": 2, "source_evidence": 1}, "critical_errors": [], "review_reason": "正文、标题、公式和列表基本完整；最后一个 bbox 超出归一化边界，证据仍需修订。"}
+  ]
+}

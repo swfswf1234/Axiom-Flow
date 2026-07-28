@@ -35,6 +35,20 @@ class ReviewRequest(BaseModel):
     reason: str = Field(default="", max_length=4000)
 
 
+class ParseJobRequest(BaseModel):
+    """限定解析任务使用的 PDF 物理页范围，端点均包含。"""
+
+    page_start: int = Field(default=1, ge=1)
+    page_end: int | None = Field(default=None, ge=1)
+
+
+class CurrentParseRunRequest(BaseModel):
+    """显式选择文档当前解析运行。"""
+
+    run_id: str = Field(min_length=1, max_length=36)
+    reason: str = Field(min_length=1, max_length=4000)
+
+
 class JobResponse(BaseModel):
     id: str
     kind: str
@@ -72,6 +86,18 @@ class PageResponse(BaseModel):
     review_status: str
     review_reason: str
     image_url: str | None = None
+
+
+class ArtifactResponse(BaseModel):
+    id: str
+    document_id: str
+    run_id: str | None
+    kind: str
+    content_hash: str
+    mime_type: str
+    size_bytes: int
+    metadata: dict[str, Any]
+    download_url: str
 
 
 class KnowledgeNodeResponse(BaseModel):

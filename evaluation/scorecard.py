@@ -19,12 +19,6 @@ VALID_DIMENSIONS = {
     "table_figure",
     "source_evidence",
 }
-REQUIRED_CATEGORY_COUNTS = {
-    "math_text": 3,
-    "math_scanned": 3,
-    "math_formula": 3,
-    "cs_table_figure": 3,
-}
 REQUIRED_PAGE_COUNT = 12
 DEFAULT_MAX_MODEL_CALLS = 36
 MINIMUM_AVERAGE_SCORE = 1.5
@@ -69,8 +63,17 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     if not isinstance(pages, list) or len(pages) != REQUIRED_PAGE_COUNT:
         raise ValueError(f"manifest.pages must contain {REQUIRED_PAGE_COUNT} pages")
 
+    required_categories = _require_mapping(manifest.get("required_categories"), "manifest.required_categories")
+    if not required_categories or not all(
+        isinstance(category, str) and category.strip() and isinstance(count, int) and count > 0
+        for category, count in required_categories.items()
+    ):
+        raise ValueError("manifest.required_categories must contain positive category counts")
+    if sum(required_categories.values()) != REQUIRED_PAGE_COUNT:
+        raise ValueError(f"manifest.required_categories must total {REQUIRED_PAGE_COUNT}")
+
     page_ids: set[str] = set()
-    category_counts = {category: 0 for category in REQUIRED_CATEGORY_COUNTS}
+    category_counts = {category: 0 for category in required_categories}
     for page in pages:
         page = _require_mapping(page, "manifest.pages item")
         page_id = page.get("id")
@@ -82,7 +85,7 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         if not isinstance(page.get("page_no"), int) or page["page_no"] < 1:
             raise ValueError(f"page {page_id} requires a positive page_no")
         category = page.get("category")
-        if category not in REQUIRED_CATEGORY_COUNTS:
+        if category not in required_categories:
             raise ValueError(f"page {page_id} has an invalid category")
         category_counts[category] += 1
         dimensions = page.get("dimensions")
@@ -92,8 +95,8 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             raise ValueError(f"page {page_id} has invalid dimensions")
         if "source_evidence" not in dimensions:
             raise ValueError(f"page {page_id} must include source_evidence")
-    if category_counts != REQUIRED_CATEGORY_COUNTS:
-        raise ValueError("manifest must contain three pages for each required category")
+    if category_counts != required_categories:
+        raise ValueError("manifest page categories must match required_categories")
 
 
 def score_experiment(manifest: dict[str, Any], results: dict[str, Any]) -> dict[str, Any]:

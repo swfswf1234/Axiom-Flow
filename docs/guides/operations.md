@@ -14,3 +14,14 @@
 目标不含原件或已发布快照；数据库备份、批处理保留周期和生产部署仍是后续运维任务。在此之前
 不得将历史 MinerU 输出目录约定当作当前规范。显式重建规则见 ADR 0007；普通运维不得直接
 执行 `DROP`、`TRUNCATE` 或 Alembic `downgrade base`。
+
+新解析运行的私有文件固定写入 `data/documents/<内容哈希>/parse-runs/<运行 ID>/`，共享页图写入
+`page-assets/render-200dpi-v1/`。正式整书运行前必须记录
+源文件哈希、数据库表和行数、目标目录状态、可用空间、模型预算和回滚位置；最终
+`manifest.json` 通过后才可关闭任务。
+
+旧运行只能通过 `backend.tools.prune_parse_runs` 清理。命令默认 dry-run，`stage --apply` 仍只把
+目录移动到 `data/trash/<operation-id>/` 并保留墓碑；复验当前 manifest 和 API 后再运行
+`purge --operation-id ... --apply`。每次 apply 都必须同时给出完整文档 SHA-256 和当前
+`--keep-run-id`。purge 前可用 `rollback --operation-id ... --apply` 恢复。禁止直接删除
+`parse-runs/`、`page-assets/` 或数据库行。

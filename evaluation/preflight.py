@@ -1,5 +1,5 @@
 """
-模块职责：以单页、最多两次视觉模型调用验证百炼解析链路，不写入生产数据。
+模块职责：以单页 OCR 调用验证百炼解析链路，不写入生产数据。
 设计关联（DesignRef）：docs/design/evaluation-governance.md
 实现状态：Current
 关联测试：tests/test_evaluation_preflight.py
@@ -13,20 +13,17 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol
 
 import fitz
 
-from backend.app.config import Settings
-from backend.app.providers import BailianProvider
+from backend.infrastructure.bailian import BailianProvider
+from backend.infrastructure.config import Settings
 
 
 class PreflightVisionProvider(Protocol):
-    async def parse_page_primary(self, image_bytes: bytes, raw_text: str, page_no: int) -> dict[str, Any]: ...
-
-    async def parse_page_fallback(self, image_bytes: bytes, raw_text: str, page_no: int) -> dict[str, Any]: ...
+    async def parse_page(self, image_bytes: bytes, raw_text: str, page_no: int) -> dict[str, Any]: ...
 
 
 def _safe_error(error: Exception, api_key: str) -> str:
@@ -49,12 +46,11 @@ async def run_preflight(
     source: Path,
     page_no: int,
     provider: PreflightVisionProvider,
-    primary_model: str,
-    fallback_model: str,
+    model: str,
     data_dir: Path,
     api_key: str = "",
 ) -> dict[str, Any]:
-    """执行主模型和可选回退模型，并返回不含论文正文的可提交摘要。"""
+    """执行单模型预检，并返回不含教材正文的可提交摘要。"""
     payload = source.read_bytes()
     artifact_id = f"sha256:{hashlib.sha256(payload).hexdigest()}"
     image_bytes, raw_text = _render_page(source, page_no)
@@ -62,50 +58,39 @@ async def run_preflight(
     artifact_dir.mkdir(parents=True, exist_ok=True)
     attempts: list[dict[str, Any]] = []
 
-    async def attempt(model: str, method: Callable[[bytes, str, int], Awaitable[dict[str, Any]]], artifact_name: str) -> bool:
-        started_at = time.perf_counter()
-        try:
-            result = await method(image_bytes, raw_text, page_no)
-            if not isinstance(result, dict):
-                raise ValueError("视觉模型输出不是 JSON 对象")
-            (artifact_dir / artifact_name).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            attempts.append(
-                {
-                    "model": model,
-                    "status": "success",
-                    "duration_seconds": round(time.perf_counter() - started_at, 3),
-                    "response_artifact": f"{artifact_id}/page-{page_no:03d}/{artifact_name}",
-                    "markdown_chars": len(str(result.get("markdown") or "")),
-                    "block_count": len(result.get("blocks") or []),
-                }
-            )
-            return True
-        except Exception as exc:
-            attempts.append(
-                {
-                    "model": model,
-                    "status": "failed",
-                    "duration_seconds": round(time.perf_counter() - started_at, 3),
-                    "error_type": type(exc).__name__,
-                    "error_summary": _safe_error(exc, api_key),
-                }
-            )
-            return False
-
-    primary_ok = await attempt(primary_model, provider.parse_page_primary, "primary.json")
-    fallback_ok: bool | None = None
-    if not primary_ok and fallback_model != primary_model:
-        fallback_ok = await attempt(fallback_model, provider.parse_page_fallback, "fallback.json")
-    status = "primary_available" if primary_ok else "fallback_only" if fallback_ok else "unavailable"
+    started_at = time.perf_counter()
+    try:
+        result = await provider.parse_page(image_bytes, raw_text, page_no)
+        if not isinstance(result, dict):
+            raise ValueError("视觉模型输出不是 JSON 对象")
+        artifact_name = "response.json"
+        (artifact_dir / artifact_name).write_text(
+            json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+        )
+        attempts.append({
+            "model": model, "status": "success",
+            "duration_seconds": round(time.perf_counter() - started_at, 3),
+            "response_artifact": f"{artifact_id}/page-{page_no:03d}/{artifact_name}",
+            "markdown_chars": len(str(result.get("markdown") or "")),
+            "block_count": len(result.get("blocks") or []),
+        })
+        available = True
+    except Exception as exc:
+        attempts.append({
+            "model": model, "status": "failed",
+            "duration_seconds": round(time.perf_counter() - started_at, 3),
+            "error_type": type(exc).__name__, "error_summary": _safe_error(exc, api_key),
+        })
+        available = False
+    status = "available" if available else "unavailable"
     return {
         "experiment_id": "parser-v1-preflight",
         "artifact_id": artifact_id,
         "page_no": page_no,
         "status": status,
-        "primary_available": primary_ok,
-        "fallback_available": fallback_ok,
+        "available": available,
         "model_calls": len(attempts),
-        "max_model_calls": 2,
+        "max_model_calls": 3,
         "attempts": attempts,
     }
 
@@ -118,7 +103,7 @@ def main() -> None:
     parser.add_argument("--report", type=Path, default=Path("evaluation/reports/parser-v1-preflight.json"))
     args = parser.parse_args()
 
-    settings = Settings().model_copy(update={"model_call_budget": 2})
+    settings = Settings().model_copy(update={"model_call_budget": 3})
     provider = BailianProvider(settings)
     report = asyncio.run(
         run_preflight(
@@ -126,7 +111,6 @@ def main() -> None:
             args.page_no,
             provider,
             settings.vision_model,
-            settings.vision_fallback_model,
             args.data_dir,
             settings.api_key_value,
         )
@@ -134,7 +118,7 @@ def main() -> None:
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"status": report["status"], "model_calls": report["model_calls"]}, ensure_ascii=False))
-    if report["status"] != "primary_available":
+    if report["status"] != "available":
         raise SystemExit(2)
 
 

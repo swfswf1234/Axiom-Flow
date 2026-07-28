@@ -13,8 +13,8 @@ from pathlib import Path
 from alembic import command
 from sqlalchemy import create_engine, text
 
-from backend.app.config import Settings
-from backend.app.store import _alembic_config
+from backend.infrastructure.config import Settings
+from backend.infrastructure.database import alembic_config
 
 SYSTEM_DATABASES = {"mysql", "information_schema", "performance_schema", "sys"}
 
@@ -49,7 +49,7 @@ def reset(database: str, allow_runtime: bool, confirmation: str, settings: Setti
     destination = resolved.data_dir / "backups" / f"reset-{database}-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    config = _alembic_config(url)
+    config = alembic_config(url)
     command.downgrade(config, "base")
     command.upgrade(config, "head")
     return destination

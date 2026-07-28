@@ -10,9 +10,7 @@ import logging
 import time
 from typing import Any
 
-from backend.app.config import Settings
 from backend.application.jobs import JobApplicationService
-from backend.infrastructure.mysql import V03Store
 
 LOGGER = logging.getLogger("axiom_flow.worker")
 
@@ -20,13 +18,14 @@ LOGGER = logging.getLogger("axiom_flow.worker")
 class Worker:
     """单进程 Worker；并发通过运行多个进程扩展。"""
 
-    def __init__(self, service: JobApplicationService, worker_id: str) -> None:
+    def __init__(self, service: JobApplicationService, worker_id: str, poll_seconds: float = 1.0) -> None:
         self.service = service
         self.store = service.store
         self.worker_id = worker_id
+        self.poll_seconds = poll_seconds
 
     def run_once(self) -> dict[str, Any] | None:
-        job = self.store.claim_next_job(self.worker_id, self.service.settings.worker_lease_seconds)
+        job = self.store.claim_next_job(self.worker_id, self.service.policy.worker_lease_seconds)
         if not job:
             return None
         try:
@@ -46,11 +45,12 @@ class Worker:
     def run_forever(self) -> None:
         while True:
             if self.run_once() is None:
-                time.sleep(self.service.settings.worker_poll_seconds)
+                time.sleep(self.poll_seconds)
 
 
-def build_worker(settings: Settings | None = None) -> Worker:
-    resolved = settings or Settings()
-    store = V03Store(resolved.mysql_url, resolved.mysql_pool_size, resolved.mysql_max_overflow)
-    store.require_schema()
-    return Worker(JobApplicationService(store, resolved), resolved.worker_id)
+def build_worker(settings: Any | None = None) -> Worker:
+    from backend.bootstrap import build_container
+
+    container = build_container(settings)
+    container.repository.require_schema()
+    return Worker(container.jobs, container.settings.worker_id, container.settings.worker_poll_seconds)

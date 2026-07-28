@@ -3,9 +3,9 @@
 设计状态：Accepted
 实现状态：Verified
 最后更新：2026-07-27
-关联代码：`evaluation/scorecard.py`、`evaluation/preflight.py`  
-关联测试：`tests/test_evaluation_scorecard.py`、`tests/test_evaluation_preflight.py`、`tests/test_code_document_mapping.py`  
-关联 ADR：`docs/adr/0002-parser-routing-and-provider-boundary.md`
+关联代码：`evaluation/scorecard.py`、`evaluation/preflight.py`、`evaluation/scanned_textbook.py`
+关联测试：`tests/test_evaluation_scorecard.py`、`tests/test_evaluation_preflight.py`、`tests/test_scanned_textbook_evaluation.py`、`tests/test_code_document_mapping.py`
+关联 ADR：`docs/adr/0009-reject-current-rudin-parser-route.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`
 
 ## 目的与边界
 
@@ -14,22 +14,26 @@
 
 ## 连通性预检
 
-正式实验前对一页本地 PDF 运行 `python -m evaluation.preflight`。预检先调用主视觉模型，
-失败后最多调用一次回退模型，最多消耗 2 次调用。预检报告只包含模型、调用次数、耗时、
+正式实验前对一页本地 PDF 运行 `python -m evaluation.preflight`。预检只调用 `qwen-vl-ocr`，
+按生产页级策略最多重试三次。预检报告只包含模型、调用次数、耗时、
 JSON 结构摘要和脱敏错误；完整结构化响应只存放在被忽略的本地 `data/`。
 
-只有主模型成功并返回合法 JSON 才允许启动正式 12 页实验。仅回退成功或两次均失败均记录
-为外部依赖/主链路问题，不能解释为解析质量通过，也不能修改生产路由。
+只有模型以完整结束状态返回合法顶层页面 JSON 才允许启动实验。失败记录为外部依赖或主链路
+问题，不能解释为解析质量通过。
 
 ## 固定实验协议
 
-- 每轮使用 12 页 manifest，包含文字型数学、扫描数学、公式密集、计算机论文表格/图示
-  四类页面各 3 页。
+- 每轮 manifest 自身声明一个或多个受控类别及其样本数。当前 Rudin 首轮只使用
+  `scanned_math_textbook` 类别的 12 页，后续收到新类型样本时再增加类别，不能把未验证类别
+  写成当前能力。
 - 每页声明适用评分维度：`text`、`structure`、`formula`、`table_figure`、`source_evidence`。
 - 人工按每个适用维度打 `0`、`1`、`2` 分：不可用、可用但需明显修订、可直接用于下一步。
-- 默认最多 36 次外部模型调用；记录模型、参数、耗时、错误与费用估算。超出预算即停止。
+- 默认最多 36 次外部模型调用；Rudin 的百炼候选最多使用 24 次。记录模型、参数、耗时、错误与
+  费用估算，超出预算即停止。
 - 候选方案只有在平均有效项得分不低于 `1.5`、公式页与所有页级证据均无 `0` 分、且无
   严重不可定位错误时才可进入 ADR 采纳。
+- ADR 0010 的连续 20 页运行是工程链路试跑，独立冻结 60 次预算和五页严格人工抽检；其结果
+  不覆盖上述 12 页整书路线采纳门槛。
 
 ## 结果与回归
 

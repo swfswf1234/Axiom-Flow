@@ -1,0 +1,20 @@
+{
+  "experiment_id": "rudin-scan-v1",
+  "required_page_count": 12,
+  "required_categories": {"scanned_math_textbook": 12},
+  "budget": {"max_model_calls": 24},
+  "pages": [
+    {"id": "rudin-scan-0020", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 20, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0045", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 45, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0070", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 70, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0095", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 95, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0120", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 120, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0145", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 145, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0170", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 170, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0195", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 195, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0220", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 220, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0245", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 245, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0270", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 270, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]},
+    {"id": "rudin-scan-0295", "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968", "page_no": 295, "category": "scanned_math_textbook", "dimensions": ["text", "structure", "formula", "source_evidence"]}
+  ]
+}

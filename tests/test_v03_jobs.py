@@ -8,12 +8,14 @@
 from pathlib import Path
 
 import fitz
+import httpx
+import pytest
 from sqlalchemy import text
 
-from backend.app.config import Settings
-from backend.app.pipeline import PipelineService
-from backend.application.jobs import JobApplicationService
-from backend.infrastructure.mysql import V03Store
+from backend.application.jobs import JobApplicationService, JobPolicy
+from backend.infrastructure.config import Settings
+from backend.infrastructure.mysql import MySQLRepository
+from backend.infrastructure.pdf_pipeline import PDFPipeline
 from backend.worker.runner import Worker
 
 
@@ -40,7 +42,7 @@ def _settings(tmp_path: Path, mysql_settings: Settings) -> Settings:
     return Settings(data_dir=tmp_path / "data", mysql_database=mysql_settings.mysql_database)
 
 
-def _document(store: V03Store, settings: Settings, tmp_path: Path) -> dict:
+def _document(store: MySQLRepository, settings: Settings, tmp_path: Path) -> dict:
     source = tmp_path / "v03.pdf"
     pdf = fitz.open()
     for page_text in ("Axiom page one", "Axiom page two"):
@@ -49,16 +51,32 @@ def _document(store: V03Store, settings: Settings, tmp_path: Path) -> dict:
     pdf.save(source)
     pdf.close()
     provider = FakeProvider()
-    return PipelineService(store, settings, provider, provider).import_pdf(source)
+    return PDFPipeline(store, settings, provider, provider).import_pdf(source)
 
 
-def _service(store: V03Store, settings: Settings) -> JobApplicationService:
-    return JobApplicationService(store, settings, lambda: (FakeProvider(), FakeProvider()))
+def _policy(settings: Settings) -> JobPolicy:
+    return JobPolicy(
+        vision_model=settings.vision_model,
+        vision_contract_version=settings.vision_contract_version,
+        vision_max_tokens=settings.vision_max_tokens,
+        vision_page_attempts=settings.vision_page_attempts,
+        model_call_budget=settings.model_call_budget,
+        knowledge_model=settings.knowledge_model,
+        worker_lease_seconds=settings.worker_lease_seconds,
+    )
+
+
+def _service(store: MySQLRepository, settings: Settings) -> JobApplicationService:
+    def factory(bound_budget: int | None):
+        execution = settings.model_copy(update={"model_call_budget": bound_budget})
+        return PDFPipeline(store, execution, FakeProvider(), FakeProvider())
+
+    return JobApplicationService(store, _policy(settings), factory)
 
 
 def test_jobs_are_idempotent_leased_and_versioned(tmp_path: Path, mysql_settings: Settings, mysql_store):
     settings = _settings(tmp_path, mysql_settings)
-    store = V03Store(settings.mysql_url)
+    store = MySQLRepository(settings.mysql_url)
     document = _document(store, settings, tmp_path)
     service = _service(store, settings)
 
@@ -72,6 +90,10 @@ def test_jobs_are_idempotent_leased_and_versioned(tmp_path: Path, mysql_settings
     completed = worker.run_once()
     assert completed["status"] == "succeeded"
     assert completed["result"]["model_calls"] == 2
+    assert store.list_pages(document["id"]) == []
+    store.select_current_parse_run(
+        document["id"], completed["result"]["run_id"], "测试选择当前运行", settings.data_dir,
+    )
     pages = store.list_pages(document["id"])
     assert len(pages) == 2
     for page in pages:
@@ -102,8 +124,8 @@ def test_jobs_are_idempotent_leased_and_versioned(tmp_path: Path, mysql_settings
 
 def test_two_workers_cannot_claim_the_same_job(tmp_path: Path, mysql_settings: Settings, mysql_store):
     settings = _settings(tmp_path, mysql_settings)
-    first_store = V03Store(settings.mysql_url)
-    second_store = V03Store(settings.mysql_url)
+    first_store = MySQLRepository(settings.mysql_url)
+    second_store = MySQLRepository(settings.mysql_url)
     document = _document(first_store, settings, tmp_path)
     job, _ = _service(first_store, settings).submit_parse(document["id"])
 
@@ -124,7 +146,7 @@ def test_two_workers_cannot_claim_the_same_job(tmp_path: Path, mysql_settings: S
 
 def test_queued_job_can_be_cancelled(tmp_path: Path, mysql_settings: Settings, mysql_store):
     settings = _settings(tmp_path, mysql_settings)
-    store = V03Store(settings.mysql_url)
+    store = MySQLRepository(settings.mysql_url)
     document = _document(store, settings, tmp_path)
     job, _ = _service(store, settings).submit_parse(document["id"])
 
@@ -132,4 +154,104 @@ def test_queued_job_can_be_cancelled(tmp_path: Path, mysql_settings: Settings, m
 
     assert cancelled["status"] == "cancelled"
     assert store.claim_next_job("worker-a", 120) is None
+    store.dispose()
+
+
+def test_parse_job_binds_an_inclusive_page_range(tmp_path: Path, mysql_settings: Settings, mysql_store):
+    settings = _settings(tmp_path, mysql_settings)
+    store = MySQLRepository(settings.mysql_url)
+    document = _document(store, settings, tmp_path)
+    service = _service(store, settings)
+
+    job, _ = service.submit_parse(document["id"], 2, 2)
+    completed = Worker(service, "range-worker").run_once()
+
+    assert job["payload"] == {
+        "model_call_budget": 3, "page_count": 1, "page_start": 2, "page_end": 2,
+    }
+    assert completed["status"] == "succeeded"
+    assert completed["progress_current"] == 1
+    assert completed["progress_total"] == 1
+    run = store.list_parse_runs(document["id"])[0]
+    assert [page["page_no"] for page in store.list_pages_for_run(run["id"])] == [2]
+    assert run["provider_summary"]["page_range"] == {"start": 2, "end": 2, "inclusive": True}
+    store.dispose()
+
+
+def test_parse_job_rejects_a_range_outside_the_document(tmp_path: Path, mysql_settings: Settings, mysql_store):
+    settings = _settings(tmp_path, mysql_settings)
+    store = MySQLRepository(settings.mysql_url)
+    document = _document(store, settings, tmp_path)
+
+    with pytest.raises(ValueError, match="解析页范围"):
+        _service(store, settings).submit_parse(document["id"], 2, 3)
+
+    store.dispose()
+
+
+def test_scanned_parse_retry_reuses_page_checkpoint(tmp_path: Path, mysql_settings: Settings, mysql_store):
+    settings = _settings(tmp_path, mysql_settings)
+    store = MySQLRepository(settings.mysql_url)
+    source = tmp_path / "scanned.pdf"
+    pdf = fitz.open()
+    for _ in range(2):
+        page = pdf.new_page()
+        page.draw_rect(fitz.Rect(72, 72, 300, 300), color=(0, 0, 0), fill=(0, 0, 0))
+    pdf.save(source)
+    pdf.close()
+    bootstrap = FakeProvider()
+    document = PDFPipeline(store, settings, bootstrap, bootstrap).import_pdf(source)
+    parsed_page_numbers = []
+    instances = 0
+
+    class InterruptingProvider(FakeProvider):
+        def __init__(self, should_fail: bool) -> None:
+            super().__init__()
+            self.should_fail = should_fail
+
+        async def parse_page(self, image_bytes: bytes, raw_text: str, page_no: int) -> dict:
+            self.calls += 1
+            parsed_page_numbers.append(page_no)
+            if self.should_fail and page_no == 2:
+                raise httpx.ReadTimeout("temporary outage")
+            return {
+                "markdown": f"扫描页 {page_no}", "page_kind": "content",
+                "blocks": [{
+                    "kind": "paragraph", "content": f"扫描页 {page_no}",
+                    "bbox_1000": [100, 100, 900, 900], "confidence": 0.9,
+                }],
+            }
+
+    def factory(bound_budget: int | None):
+        nonlocal instances
+        instances += 1
+        provider = InterruptingProvider(should_fail=instances == 1)
+        execution = settings.model_copy(update={"model_call_budget": bound_budget})
+        return PDFPipeline(store, execution, provider, provider)
+
+    service = JobApplicationService(store, _policy(settings), factory)
+    service.submit_parse(document["id"])
+    worker = Worker(service, "resume-worker")
+
+    first = worker.run_once()
+    assert first["status"] == "queued"
+    run = store.list_parse_runs(document["id"])[0]
+    assert [page["page_no"] for page in store.list_pages_for_run(run["id"])] == [1]
+
+    second = worker.run_once()
+    assert second["status"] == "succeeded"
+    assert parsed_page_numbers == [1, 2, 2]
+    assert second["result"]["model_calls"] == 3
+    assert store.list_pages(document["id"]) == []
+    store.select_current_parse_run(
+        document["id"], second["result"]["run_id"], "测试选择恢复运行", settings.data_dir,
+    )
+    assert len(store.list_pages(document["id"])) == 2
+    assert {item["kind"] for item in store.list_artifacts_for_run(run["id"])} >= {
+        "page_markdown", "page_json", "parse_manifest",
+    }
+    assert len(store._many(
+        "SELECT id FROM af_artifacts WHERE document_id=:id AND run_id IS NULL AND kind='page_image'",
+        {"id": document["id"]},
+    )) == 2
     store.dispose()

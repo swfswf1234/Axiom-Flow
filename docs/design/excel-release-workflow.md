@@ -3,8 +3,8 @@
 设计状态：Accepted
 实现状态：Verified
 最后更新：2026-07-27
-关联代码：`backend/app/workbook.py`  
-关联测试：`tests/test_v02_pipeline.py`、`tests/test_code_document_mapping.py`  
+关联代码：`backend/application/workbooks.py`
+关联测试：`tests/test_document_workflow.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0003-excel-publish-source-of-truth.md`
 
 导出工作簿包含 `documents`、`sections`、`knowledge_nodes`、`knowledge_edges` 和

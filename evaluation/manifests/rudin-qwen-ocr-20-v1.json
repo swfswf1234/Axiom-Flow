@@ -1,0 +1,21 @@
+{
+  "experiment_id": "rudin-qwen-ocr-20-v1",
+  "source": {
+    "artifact_id": "sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968",
+    "pdf_page_count": 317
+  },
+  "page_range": {"start": 20, "end": 39, "inclusive": true},
+  "required_page_count": 20,
+  "model": "qwen-vl-ocr",
+  "request": {"max_tokens": 8192, "timeout_seconds": 180, "max_attempts_per_page": 3},
+  "budget": {"max_model_calls": 60},
+  "manual_review": {
+    "pages": [20, 24, 29, 34, 39],
+    "required_passes": 5,
+    "criteria": [
+      "no_obvious_paragraph_omission",
+      "correct_heading_and_reading_order",
+      "major_formulas_legible"
+    ]
+  }
+}

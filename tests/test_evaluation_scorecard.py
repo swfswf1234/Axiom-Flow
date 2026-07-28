@@ -14,27 +14,24 @@ def _manifest():
     pages = []
     for index in range(12):
         dimensions = ["text", "structure", "source_evidence"]
-        category = (
-            "math_text" if index < 3 else "math_scanned" if index < 6 else
-            "math_formula" if index < 9 else "cs_table_figure"
-        )
-        if category == "math_formula":
+        if index >= 6:
             dimensions.append("formula")
-        if category == "cs_table_figure":
+        if index >= 9:
             dimensions.append("table_figure")
         pages.append(
             {
                 "id": f"page-{index + 1}",
                 "artifact_id": f"artifact-{index + 1}",
                 "page_no": index + 1,
-                "category": category,
+                "category": "scanned_math_textbook",
                 "dimensions": dimensions,
             }
         )
     return {
         "experiment_id": "parser-v1",
         "required_page_count": 12,
-        "budget": {"max_model_calls": 36},
+        "required_categories": {"scanned_math_textbook": 12},
+        "budget": {"max_model_calls": 24},
         "pages": pages,
     }
 
@@ -77,11 +74,11 @@ def test_manifest_requires_fixed_page_count():
         validate_manifest(manifest)
 
 
-def test_manifest_requires_each_sample_category_three_times():
+def test_manifest_requires_declared_category_count():
     manifest = _manifest()
-    manifest["pages"][3]["category"] = "math_text"
+    manifest["pages"][3]["category"] = "unknown"
 
-    with pytest.raises(ValueError, match="three pages"):
+    with pytest.raises(ValueError, match="invalid category"):
         validate_manifest(manifest)
 
 
@@ -100,7 +97,7 @@ def test_scorecard_rejects_formula_zero_even_with_high_average():
 def test_scorecard_rejects_budget_overrun():
     manifest = _manifest()
     results = _results(manifest)
-    results["model_calls"] = 37
+    results["model_calls"] = 25
 
     with pytest.raises(ValueError, match="exceeds the manifest budget"):
         score_experiment(manifest, results)

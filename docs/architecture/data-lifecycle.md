@@ -3,9 +3,9 @@
 设计状态：Accepted
 实现状态：Verified
 最后更新：2026-07-27
-关联代码：`backend/app/store.py`、`backend/migrations/env.py`、`backend/migrations/versions/20260727_0001_mysql_v02.py`
-关联测试：`tests/test_v02_pipeline.py`、`tests/test_mysql_migrations.py`、`tests/test_code_document_mapping.py`
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0003-excel-publish-source-of-truth.md`
+关联代码：`backend/infrastructure/database.py`、`backend/migrations/env.py`、`backend/migrations/versions/20260727_0001_mysql_v02.py`
+关联测试：`tests/test_document_workflow.py`、`tests/test_mysql_migrations.py`、`tests/test_current_parse_runs.py`、`tests/test_prune_parse_runs.py`、`tests/test_code_document_mapping.py`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0003-excel-publish-source-of-truth.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`
 
 ```mermaid
 stateDiagram-v2
@@ -23,6 +23,8 @@ stateDiagram-v2
 - 原 PDF 不可变，以内容哈希和文档版本标识。
 - MySQL 仅保存 `af_` 前缀的运行事实；表结构通过 Alembic 显式迁移，不允许启动时自动建表。
 - 每次解析和抽取分别生成独立 `ParseRun`、`ExtractionRun`；旧页面、候选和审阅事件不被覆盖。
+- 文档通过 `current_parse_run_id` 显式选择审阅和抽取的事实来源；新成功运行仅为候选，切换历史追加保存。
+- 文档页图按渲染契约共享；旧运行文件可经受保护工具变为只保留摘要的 `pruned` 墓碑。
 - 长任务先写入 `af_jobs`，Worker 按租约领取并记录任务级进度、调用量、重试和错误。
 - 每个内容块和知识候选必须保存文档版本、页码、源文本或坐标、处理版本与质量状态。
 - Excel 导入先创建草稿版本；只有校验成功并由用户显式发布后，才更新运行时知识快照。

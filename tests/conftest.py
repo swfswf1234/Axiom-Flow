@@ -2,7 +2,7 @@
 模块职责：准备隔离的 MySQL 集成测试库并清理 af_ 表数据。
 设计关联（DesignRef）：docs/architecture/data-lifecycle.md
 实现状态：Current
-关联测试：tests/test_v02_pipeline.py、tests/test_mysql_migrations.py
+关联测试：tests/test_document_workflow.py、tests/test_mysql_migrations.py
 """
 
 import re
@@ -10,8 +10,9 @@ import re
 import pymysql
 import pytest
 
-from backend.app.config import Settings
-from backend.app.store import MySQLStore, upgrade_database
+from backend.infrastructure.config import Settings
+from backend.infrastructure.database import upgrade_database
+from backend.infrastructure.mysql import MySQLRepository
 
 
 @pytest.fixture(scope="session")
@@ -45,7 +46,7 @@ def mysql_settings() -> Settings:
 @pytest.fixture
 def mysql_store(mysql_settings: Settings):
     """每个测试独占已清空的 af_ 表集合，保留测试库和迁移版本供下次复用。"""
-    store = MySQLStore(mysql_settings.mysql_url)
+    store = MySQLRepository(mysql_settings.mysql_url)
     store.require_schema()
     store.truncate_all()
     try:

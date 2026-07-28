@@ -3,9 +3,9 @@
 设计状态：Accepted
 实现状态：Verified
 最后更新：2026-07-27
-关联代码：`backend/domain/models.py`、`backend/infrastructure/mysql.py`、`backend/api/schemas.py`、`backend/migrations/versions/20260727_0002_v03_jobs_and_history.py`
-关联测试：`tests/test_v03_jobs.py`、`tests/test_v03_api.py`、`tests/test_code_document_mapping.py`
-关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0007-versioned-domain-records.md`
+关联代码：`backend/domain/models.py`、`backend/application/ports.py`、`backend/bootstrap.py`、`backend/infrastructure/mysql.py`、`backend/api/schemas.py`、`backend/migrations/versions/20260727_0002_v03_jobs_and_history.py`
+关联测试：`tests/test_architecture_dependencies.py`、`tests/test_v03_jobs.py`、`tests/test_v03_api.py`、`tests/test_code_document_mapping.py`
+关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0007-versioned-domain-records.md`、`docs/adr/0012-backend-package-boundaries.md`
 
 ## 分层
 
@@ -26,13 +26,14 @@ flowchart LR
 - 应用层实现导入、提交解析、执行解析、审阅、抽取、工作簿和发布用例，只依赖端口。
 - 基础设施层实现 MySQL 仓储、任务租约、本地产物和百炼适配器。
 - API 只完成协议校验、用例调用和错误翻译；Worker 只负责领取任务并调用对应执行用例。
+- `backend/bootstrap.py` 是唯一装配根；`backend/app/` 不存在，也不提供旧导入兼容层。
 
 ## 核心事实
 
 `Document`、`Job`、`ParseRun`、`Page`、`ContentBlock`、`SourceSpan`、`QualityReport`、
 `ExtractionRun`、`KnowledgeNode`、`KnowledgeEdge`、`ReviewEvent`、`WorkbookRevision` 和
 `KnowledgeRelease` 都有稳定 ID。解析、抽取和审阅记录只追加版本；“最新”必须通过显式
-成功运行查询得到，不能靠覆盖旧行实现。
+成功运行查询得到，不能靠覆盖旧行实现。文档当前解析结果由显式指针选择，新成功运行不会自动提升。
 
 本地 PDF、页图和工作簿以内容哈希组织。数据库保存产物索引和哈希，不把绝对路径暴露给 API。
 后续检索和学习服务只能读取已发布 `KnowledgeRelease`。

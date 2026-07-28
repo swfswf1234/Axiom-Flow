@@ -14,6 +14,6 @@ API 在同一事务内按 `kind + aggregate_id + input_version` 创建幂等任�
 MySQL 8 的 `SELECT ... FOR UPDATE SKIP LOCKED` 领取任务，写入 `lease_owner`、
 `lease_expires_at` 和心跳；过期租约在未超过 `max_attempts` 时重新排队，否则失败。
 
-解析按页更新 `progress_current/progress_total`，每页间检查取消请求。模型调用预算、调用量、
-回退次数和错误均归属于单个任务。限流、超时和 5xx 属于可重试错误；损坏 PDF、非法模型输出
-和领域校验失败属于永久错误。任务错误只保存脱敏摘要。
+解析按所选页范围更新 `progress_current/progress_total`，每页间检查取消请求。模型调用预算、
+调用量、页级重试和错误均归属于单个任务。限流、超时、5xx、截断和不完整模型输出允许在
+`qwen-vl-ocr` 内重试；损坏 PDF 和越界页范围属于永久错误。任务错误只保存脱敏摘要。

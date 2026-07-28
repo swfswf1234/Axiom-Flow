@@ -7,7 +7,7 @@
 
 import pytest
 
-from backend.app.config import Settings
+from backend.infrastructure.config import Settings
 from backend.tools.reset_dev_database import reset
 
 

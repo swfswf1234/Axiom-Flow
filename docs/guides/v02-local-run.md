@@ -1,5 +1,11 @@
 # v0.2 本地运行
 
+状态：Deprecated
+最后更新：2026-07-28
+
+本页只保留 v0.2 阶段背景，不再是可执行指南。`backend.app.main` 已按 ADR 0012 删除，当前启动、
+迁移和清理命令统一见 [`v03-local-run.md`](v03-local-run.md)。
+
 v0.2 是单用户、本地优先的 PDF 审阅闭环。运行前确认 Python 环境已安装
 `requirements.txt` 中的依赖，并在 `.env` 中设置 `AXIOM_API_KEY`（兼容 `API_KEY`）和
 MySQL 连接（优先 `AXIOM_MYSQL_*`，兼容现有 `XQFM_MYSQL_*`）。无关变量会被忽略；
@@ -11,11 +17,7 @@ MySQL 连接（优先 `AXIOM_MYSQL_*`，兼容现有 `XQFM_MYSQL_*`）。无关�
 python -m alembic upgrade head
 ```
 
-```powershell
-python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
-```
-
-打开 `http://127.0.0.1:8000` 后依次完成：导入 PDF、开始解析、逐页审阅、生成并审阅知识
+当时的界面依次完成：导入 PDF、开始解析、逐页审阅、生成并审阅知识
 候选和关系、导出或导入工作簿、显式发布。运行事实保存在 MySQL 的 `af_` 表，本地 `data/`
 只保存原 PDF、页图和工作簿，且不纳入版本控制。
 

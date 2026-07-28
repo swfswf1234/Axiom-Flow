@@ -7,6 +7,9 @@
 在 `.env` 中设置 `AXIOM_API_KEY` 和 `AXIOM_MYSQL_*`。密钥使用 `SecretStr` 加载，不得写入
 命令、日志、工作簿或报告。安装核心依赖并升级非破坏性迁移：
 
+扫描教材按 ADR 0010 只使用 `qwen-vl-ocr`。首轮必须通过解析任务请求体显式限制为 PDF 第
+20–39 页，不得直接运行 317 页整书。
+
 ```powershell
 python -m pip install -r requirements.txt
 python -m alembic upgrade head
@@ -15,12 +18,15 @@ python -m alembic upgrade head
 分别启动 API 和 Worker：
 
 ```powershell
-python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 python -m backend.worker
 ```
 
 打开 `http://127.0.0.1:8000`。导入 PDF 后，解析和知识抽取返回持久任务；关闭浏览器不会取消
 任务。Worker 重启后会领取排队或租约过期的任务。
+
+限定页范围的解析命令请求体为 `{"page_start":20,"page_end":39}`，端点均包含；省略请求体时
+表示整份文档，仅用于已经取得对应解析决策的场景。
 
 开发检查使用：
 

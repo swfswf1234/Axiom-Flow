@@ -4,7 +4,7 @@
 实现状态：Verified
 最后更新：2026-07-27
 关联代码：由 `docs/architecture/code-map.md` 中的解析与仓储服务组合实现  
-关联测试：`tests/test_v02_pipeline.py`、`tests/test_code_document_mapping.py`  
+关联测试：`tests/test_document_workflow.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0002-parser-routing-and-provider-boundary.md`
 
 自动初筛检测空页、低文字覆盖、乱码、页数不一致、公式或表格缺失、解析器冲突和模型
