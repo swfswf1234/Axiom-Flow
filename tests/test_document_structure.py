@@ -53,6 +53,8 @@ def test_root_readme_serves_qed_operators_and_new_developers():
     content = (ROOT / "README.md").read_text(encoding="utf-8")
     for required in (
         "QED 的技术 PDF 解析与质量审阅组件",
+        "## 核心能力",
+        "## 技术栈",
         "## 能力边界",
         "## 快速启动",
         "## 典型流程",
@@ -64,12 +66,27 @@ def test_root_readme_serves_qed_operators_and_new_developers():
     assert "设计状态：" not in content
 
 
-def test_docs_readme_is_navigation_not_runtime_status():
+def test_docs_readme_guides_module_development():
     content = (DOCS / "README.md").read_text(encoding="utf-8")
-    for directory in DOCUMENT_DIRECTORIES:
-        assert f"{directory}/" in content
-    for required in ("## 按任务阅读", "## 文档地图", "## 去哪里确认事实"):
+    for required in ("## 项目结构", "## 运行框架", "## 主数据流", "## 模块职责", "## 开发流程"):
         assert required in content
+    assert content.count("```mermaid") >= 3
+    assert "## 按任务阅读" not in content
     assert "```powershell" not in content
     assert " passed" not in content
     assert "GitHub Actions" not in content
+
+
+def test_agents_routes_tasks_problems_and_completion():
+    content = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    for required in (
+        "## 快速开始",
+        "## 任务路由",
+        "## 问题定位",
+        "## 事实来源与决策",
+        "## 完成检查",
+        "docs/architecture/code-map.md",
+        "docs/trackers/current.md",
+        "docs/standards/task-lifecycle.md",
+    ):
+        assert required in content

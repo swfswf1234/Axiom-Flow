@@ -20,6 +20,26 @@ flowchart LR
 
 本仓库只实现图中的 Axiom-Flow。QED 的数据集采集、检索服务和最终学习体验属于外部或后续模块。
 
+## 核心能力
+
+- 导入技术 PDF，并以明确的物理页范围提交持久解析任务。
+- 使用 OCR 和 PDF 本地信息生成规范 Markdown、内容块、来源证据和质量报告。
+- 以版本化 `ParseRun`、逐页检查点和 SHA-256 manifest 保存可恢复、可校验的解析产物。
+- 在 Web 工作台中并排审阅原始页图、OCR 文本、Markdown 和结构化结果。
+- 管理知识候选、关系和审阅事件，通过 Excel 工作簿形成显式 `KnowledgeRelease`。
+
+## 技术栈
+
+| 范围 | 技术 |
+| --- | --- |
+| Backend 与协议 | Python 3.12、FastAPI、Pydantic |
+| 持久化与迁移 | MySQL 8、SQLAlchemy、Alembic |
+| PDF 与 OCR | PyMuPDF、阿里百炼 `qwen-vl-ocr` |
+| 后台任务 | MySQL 持久任务、租约与独立 Python Worker |
+| 本地产物 | 内容寻址目录、逐页检查点、SHA-256 manifest |
+| 审阅界面 | 原生 HTML、CSS、JavaScript、openpyxl |
+| 工程门禁 | Pytest、Ruff、GitHub Actions |
+
 ## 能力边界
 
 | 类别 | 内容 |
