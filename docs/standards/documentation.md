@@ -33,12 +33,15 @@
 - 内部链接显式指向目标文件或 `index.md`，不依赖托管平台将目录自动解析为 README。
 - 架构图和设计流程使用正文内嵌 Mermaid，图与说明在同一文件维护；不提交由 Mermaid 派生的
   PNG、SVG 或其他重复图源。
-- 当前目录只保存仍然有效的事实。Rejected/Superseded ADR、Completed/Superseded 计划和旧版
-  指南分别进入 `history/adr/`、`history/plans/<year-month>/` 和 `history/guides/`。
+- 当前目录只保存仍然有效的事实。Rejected/Superseded ADR 永久进入 `history/adr/`；关闭计划
+  只有在记录已执行的 D 类操作、迁移/发布里程碑、事故复盘或不可替代外部证据时才进入
+  `history/plans/<year-month>/`，其他计划在事实同步后删除。
+- 失效指南默认删除，旧版本操作从对应 Git commit/tag 恢复。被整体替换的系统只保留包含范围、
+  失效原因和不可变 Git commit 的 `history/baselines/` 摘要，不复制旧代码或文档树。
 - 活跃 `guides/` 固定维护开发与运维两本正文手册；测试命令属于开发流程，运行、数据保护和恢复
   属于运维流程，索引不得扩写第三份规则事实源。
-- 历史正文保留当时事实，可以补充 Historical 声明和修复链接，但不得改写旧结论。
+- 选择性保留的历史正文保持当时事实，可以补充 Historical 声明和修复链接，但不得改写旧结论。
 
 文档移动或删除前必须先搜索全部引用。仍有唯一事实、决策依据或审计价值的文件必须移入对应
-history 目录；只有精确重复、空草稿或不含唯一事实和审计价值的文件才可删除。完成后必须运行
-文档结构、Markdown 链接和代码映射测试。
+history 目录；精确重复、空草稿、不含唯一证据的文件，或已有有效 Git 锚点的完整旧副本可以
+删除。删除前必须确认锚点可读，并在完成后运行 ADR、文档结构、Markdown 链接和代码映射测试。

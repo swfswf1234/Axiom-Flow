@@ -3,8 +3,9 @@
 状态：Current
 最后更新：2026-07-29
 
-本目录只保留未关闭计划。Completed 和 Superseded 计划归档到
-[历史计划索引](../history/plans/index.md)，状态规则见[文档规范](../standards/documentation.md)。
+本目录只保留未关闭计划。关闭计划按 [ADR 0013](../adr/0013-selective-history-retention.md) 判定
+Retain 或 Delete；只有长期审计证据进入[历史计划索引](../history/plans/index.md)，状态规则见
+[文档规范](../standards/documentation.md)。
 
 | 计划 | 实现状态 | 恢复或完成条件 |
 | --- | --- | --- |

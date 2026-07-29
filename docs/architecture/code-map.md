@@ -5,10 +5,10 @@
 维护位置：`docs/architecture/code-map.md`  
 关联代码：受管模块清单  
 关联测试：`tests/test_code_document_mapping.py`  
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0012-backend-package-boundaries.md`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0012-backend-package-boundaries.md`、`docs/adr/0013-selective-history-retention.md`
 
-本表是代码与文档关系的唯一事实源。v0.1 运行代码已删除，原始设计只保留在
-`docs/history/2026-07-mineru-baseline/`。`__init__.py` 及无业务语义的极短文件豁免。
+本表是代码与文档关系的唯一事实源。v0.1 运行代码已删除，其范围和 Git 恢复锚点见
+`docs/history/baselines/v01-mineru.md`。`__init__.py` 及无业务语义的极短文件豁免。
 
 | 代码路径 | 层级/职责 | 状态 | 设计关联 | 关联测试 | 备注 |
 | --- | --- | --- | --- | --- | --- |

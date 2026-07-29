@@ -7,7 +7,7 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 [`../history/adr/`](../history/adr/index.md)；完整规则见
 [ADR 治理规范](../standards/adr-governance.md)，新文件使用 [ADR 模板](../templates/adr.md)。
 
-下一个可用编号：0013
+下一个可用编号：0014
 
 | ADR | 标题 | 领域 | 决策阶段 | 状态 | 取代关系 |
 | --- | --- | --- | --- | --- | --- |
@@ -23,3 +23,4 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 | [`0010`](0010-qwen-ocr-only-rudin-trial.md) | Rudin 试跑采用 qwen-vl-ocr 单模型路线 | 解析与评测 | v0.3 | Accepted | 取代 0002 |
 | [`0011`](0011-current-parse-run-and-prunable-artifacts.md) | 显式当前解析运行与可清理产物 | 数据与持久化 | v0.3 | Accepted | — |
 | [`0012`](0012-backend-package-boundaries.md) | Backend 包边界一次性收口 | 工程治理 | v0.3 | Accepted | — |
+| [`0013`](0013-selective-history-retention.md) | 选择性历史保留与 Git 锚点 | 工程治理 | v0.3 | Accepted | — |

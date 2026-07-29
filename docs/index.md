@@ -16,7 +16,7 @@
 | `trackers/` | 当前工作、回归、待办和路线图 | [追踪索引](trackers/index.md) |
 | `standards/` | 任务、文档、ADR 和追溯规范 | [规范索引](standards/index.md) |
 | `templates/` | ADR、设计、计划和实验模板 | [模板索引](templates/index.md) |
-| `history/` | 已失效但需要审计的决定、计划、指南和旧基线 | [历史索引](history/index.md) |
+| `history/` | 被取代 ADR、选择性执行记录和 Git 锚点基线 | [历史索引](history/index.md) |
 
 当前实现与测试映射只查 [code-map](architecture/code-map.md)；事实冲突处理和任务路由只查
 [AGENTS.md](../AGENTS.md)。

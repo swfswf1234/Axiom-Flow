@@ -22,6 +22,13 @@ DOCUMENT_DIRECTORIES = (
     "history",
 )
 ACTIVE_GUIDES = {"index.md", "development.md", "operations.md"}
+HISTORY_DIRECTORIES = {"adr", "baselines", "plans"}
+RETAINED_2026_07_PLANS = {
+    "2026-07-v02-first-loop.md",
+    "2026-07-v03-architecture-rebuild.md",
+    "2026-07-v03-result-workbench-storage.md",
+    "index.md",
+}
 CLOSED_STATES = ("实现状态：Completed", "状态：Completed", "状态：Superseded")
 
 
@@ -67,6 +74,31 @@ def test_guides_are_two_human_handbooks_and_an_index():
     assert "OPS-001：生产运维基线未实现" in operations
     assert "OPS-001：生产运维基线未实现" in backlog
     assert "不得直接暴露到公网" in operations
+
+
+def test_history_retains_only_auditable_evidence():
+    history = DOCS / "history"
+    directories = {path.name for path in history.iterdir() if path.is_dir()}
+    assert directories == HISTORY_DIRECTORIES
+    assert not (history / "guides").exists()
+    assert not (history / "2026-07-mineru-baseline").exists()
+
+    baselines = {path.name for path in (history / "baselines").glob("*") if path.is_file()}
+    assert baselines == {"index.md", "v01-mineru.md"}
+    baseline = (history / "baselines" / "v01-mineru.md").read_text(encoding="utf-8")
+    assert "Git 锚点：`6cc4129`" in baseline
+    assert "git show 6cc4129:docs/architecture.md" in baseline
+
+    month = history / "plans" / "2026-07"
+    retained = {path.name for path in month.glob("*.md")}
+    assert retained == RETAINED_2026_07_PLANS
+    index = (month / "index.md").read_text(encoding="utf-8")
+    for anchor in ("4961cfa", "be7ec34", "a6ec4e0"):
+        assert f"`{anchor}`" in index
+
+    plan_template = (DOCS / "templates" / "plan.md").read_text(encoding="utf-8")
+    assert "归档判定：`Retain` 或 `Delete`" in plan_template
+    assert "ADR 0013" in plan_template
 
 
 def test_root_readme_serves_qed_operators_and_new_developers():

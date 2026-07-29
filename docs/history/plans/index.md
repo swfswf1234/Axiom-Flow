@@ -3,8 +3,10 @@
 状态：Historical
 最后更新：2026-07-29
 
-Completed 与 Superseded 计划按月份归档。计划正文保留当时范围和结论；当前工作只在
-[活跃计划索引](../../plans/index.md)与[当前工作](../../trackers/current.md)维护。
+本目录只按月份保留符合 [ADR 0013](../../adr/0013-selective-history-retention.md) 的关闭计划：已执行
+的 D 类数据操作、迁移/发布里程碑、事故复盘或不可替代外部证据。普通关闭计划完成事实同步后
+删除，详细过程由 Git 恢复。当前工作只在[活跃计划索引](../../plans/index.md)与
+[当前工作](../../trackers/current.md)维护。
 
 | 月份 | 归档索引 |
 | --- | --- |
