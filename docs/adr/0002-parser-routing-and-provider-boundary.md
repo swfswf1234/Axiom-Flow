@@ -2,6 +2,10 @@
 
 状态：Superseded
 日期：2026-07-27
+领域：解析与评测
+决策阶段：v0.2
+取代：—
+被取代：[ADR 0010](0010-qwen-ocr-only-rudin-trial.md)
 
 ## 决定
 

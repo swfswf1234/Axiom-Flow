@@ -2,6 +2,10 @@
 
 状态：Accepted
 日期：2026-07-28
+领域：解析与评测
+决策阶段：v0.3
+取代：[ADR 0002](0002-parser-routing-and-provider-boundary.md)
+被取代：—
 
 ## 决定
 

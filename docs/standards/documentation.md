@@ -16,7 +16,7 @@
 `关联 ADR`。计划声明设计与实现状态、范围、验证、回滚和完成条件。指南、标准、索引和追踪器
 至少声明状态与最后更新。
 
-- 设计状态：`Draft`、`Proposed`、`Accepted`、`Superseded`、`Historical`。
+- 设计状态：`Draft`、`Proposed`、`Accepted`、`Rejected`、`Superseded`、`Historical`。
 - 实现状态：`Not Started`、`In Progress`、`Implemented`、`Verified`、`Blocked`、`Completed`。
 
 `Implemented` 表示实现和本地定向门禁已完成；`Verified` 还要求适用的全量与远端门禁通过。

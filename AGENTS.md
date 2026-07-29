@@ -56,6 +56,7 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 历史资料。历史资料只解释背景，不覆盖当前设计。
 
 - 修改领域边界、公开 API、持久化语义、事实来源或解析路由前，先新增或更新 ADR。
+- ADR 使用全局顺序编号并原位保留，新增、拒绝或取代按 `docs/standards/adr-governance.md` 执行。
 - 每项实现必须关联计划，包含范围、验证、回滚和完成条件。
 - 按 `docs/standards/task-lifecycle.md` 分类 A/B/C/D；不是所有任务都需要实验。
 - 外部模型实验前必须冻结假设、样本、内容哈希、预算和采纳门槛；结果经 ADR 接受后才成为设计。
