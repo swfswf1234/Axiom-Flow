@@ -62,9 +62,9 @@ def test_guides_are_two_human_handbooks_and_an_index():
     assert "testing.md" not in index
 
     operations = (DOCS / "guides" / "operations.md").read_text(encoding="utf-8")
-    backlog = (DOCS / "trackers" / "backlog.md").read_text(encoding="utf-8")
+    todo = (DOCS / "trackers" / "todo.md").read_text(encoding="utf-8")
     assert "OPS-001：生产运维基线未实现" in operations
-    assert "OPS-001：生产运维基线未实现" in backlog
+    assert "OPS-001" in todo and "生产运维基线未实现" in todo
     assert "不得直接暴露到公网" in operations
 
 
@@ -134,7 +134,7 @@ def test_agents_routes_tasks_problems_and_completion():
         "## 完成检查",
         "docs/architecture/code-map.md",
         "docs/index.md",
-        "docs/trackers/current.md",
+        "docs/trackers/todo.md",
         "docs/standards/task-lifecycle.md",
         "tests/test_architecture_documents.py",
         "tests/test_design_documents.py",

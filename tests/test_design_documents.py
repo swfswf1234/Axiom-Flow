@@ -124,7 +124,7 @@ def test_evaluation_design_tracks_scorecard_contract():
         assert f"`{dimension}`" in content
 
 
-def test_known_design_gaps_are_registered_in_contracts_and_backlog():
-    backlog = (ROOT / "docs" / "trackers" / "backlog.md").read_text(encoding="utf-8")
-    assert "DES-001" in _content("document-pipeline.md") and "DES-001" in backlog
-    assert "DES-002" in _content("excel-release-workflow.md") and "DES-002" in backlog
+def test_known_design_gaps_are_registered_in_contracts_and_todo():
+    todo = (ROOT / "docs" / "trackers" / "todo.md").read_text(encoding="utf-8")
+    assert "DES-001" in _content("document-pipeline.md") and "DES-001" in todo
+    assert "DES-002" in _content("excel-release-workflow.md") and "DES-002" in todo

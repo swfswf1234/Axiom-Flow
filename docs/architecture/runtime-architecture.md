@@ -92,7 +92,7 @@ flowchart TD
 | Domain 和 Application 不反向依赖外层 | 符合 | `tests/test_architecture_dependencies.py` |
 | API/Worker 不直接导入基础设施 | 符合 | `tests/test_architecture_dependencies.py` |
 | `bootstrap.py` 是唯一装配根 | 符合 | `backend/bootstrap.py` |
-| API 只经应用用例访问业务能力 | 部分符合 | **ARCH-001**：API 仍从容器取得 repository，并直接完成部分查询、审阅和发布写入；见[待办](../trackers/backlog.md)。 |
+| API 只经应用用例访问业务能力 | 部分符合 | **ARCH-001**：API 仍从容器取得 repository，并直接完成部分查询、审阅和发布写入；见[待做任务](../trackers/todo.md)。 |
 
 ARCH-001 关闭前，本文件保持 `实现状态：In Progress`。修复必须通过独立 Backend 计划增加应用
 服务，不能在文档对齐任务中静默改变运行行为。

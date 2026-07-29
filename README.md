@@ -50,8 +50,8 @@ flowchart LR
 | 不负责 | 数据集下载、下游检索、学习界面，以及未经人工审阅的整书质量背书 |
 
 项目当前处于预发布工程阶段。解析链路可以运行，但数学公式 OCR 仍需真实样本评测和人工审阅；
-实时进度见[当前工作](docs/trackers/current.md)、[回归待办](docs/trackers/regressions.md)和
-[路线图](docs/trackers/roadmap.md)。
+开放工作见[待做任务](docs/trackers/todo.md)，关闭证据见[已关闭任务](docs/trackers/completed.md)，
+长期方向见[能力路线图](docs/trackers/roadmap.md)。
 
 ## 快速启动
 

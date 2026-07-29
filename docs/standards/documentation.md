@@ -3,7 +3,7 @@
 状态：Current
 最后更新：2026-07-29
 治理对象：文档分类、写作、元数据、索引、命名、归档与删除
-依据 ADR：`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0016-remove-document-templates.md`
+依据 ADR：`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0016-remove-document-templates.md`、`docs/adr/0017-consolidated-task-ledgers-and-roadmap.md`
 关联测试：`tests/test_document_structure.py`、`tests/test_markdown_links.py`、`tests/test_standard_governance.py`
 
 ## 目的与边界
@@ -27,7 +27,7 @@
 | `standards/` | 工程治理规则。 |
 | `guides/` | 当前可重复执行的开发与运维步骤。 |
 | `plans/` | 已批准且尚未关闭的短期执行合同。 |
-| `trackers/` | 当前工作镜像、候选队列、回归证据和路线图。 |
+| `trackers/` | 全部未关闭任务、简短关闭台账和无状态能力路线图。 |
 | `history/` | 选择性保留的长期审计证据和旧基线 Git 锚点。 |
 
 一个事实只设一个维护位置，其他文档使用链接。实验参数、结果和评分保存在 `evaluation/`，标准

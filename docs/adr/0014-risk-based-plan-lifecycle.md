@@ -38,3 +38,6 @@
 关联 [ADR 0013](0013-selective-history-retention.md)、[任务生命周期](../standards/task-lifecycle.md)、
 [文档规范](../standards/documentation.md)。原计划模板已按 [ADR 0016](0016-remove-document-templates.md)
 删除，计划正文直接遵守任务生命周期。
+
+ADR 0017 后续将第 4、5 项的 tracker 导航收口为 todo/completed：todo 镜像全部活跃计划并保存候选
+和缺陷，completed 保存终态导航，plans index 与 roadmap 不再维护任务状态。

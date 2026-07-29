@@ -8,7 +8,7 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 [ADR 治理规范](../standards/adr-governance.md)；新文件遵守对应 standard，并参考最近一份仍有效的
 同类文档组织内容。
 
-下一个可用编号：0017
+下一个可用编号：0018
 
 | ADR | 标题 | 领域 | 决策阶段 | 状态 | 取代关系 |
 | --- | --- | --- | --- | --- | --- |
@@ -28,3 +28,4 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 | [`0014`](0014-risk-based-plan-lifecycle.md) | 风险分级计划准入与单一生命周期 | 工程治理 | v0.3 | Accepted | — |
 | [`0015`](0015-standards-as-governance-source.md) | 标准作为治理事实源与变更门禁 | 工程治理 | v0.3 | Accepted | — |
 | [`0016`](0016-remove-document-templates.md) | 删除文档模板目录 | 工程治理 | v0.3 | Accepted | — |
+| [`0017`](0017-consolidated-task-ledgers-and-roadmap.md) | 统一任务台账与无状态能力路线图 | 工程治理 | v0.3 | Accepted | — |

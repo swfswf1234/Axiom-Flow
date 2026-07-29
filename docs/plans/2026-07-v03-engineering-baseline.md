@@ -5,7 +5,7 @@
 最后更新：2026-07-29
 关联 ADR：`docs/adr/0012-backend-package-boundaries.md`、`docs/adr/0013-selective-history-retention.md`、`docs/adr/0014-risk-based-plan-lifecycle.md`
 关联设计：`docs/architecture/runtime-architecture.md`
-关联 Tracker：`docs/trackers/regressions.md`（REG-001）
+关联 Tracker：`docs/trackers/todo.md`（REL-001、REG-001）
 归档判定：Retain；发布后保留远端 CI、标签和发布锚点作为里程碑证据。
 
 ## 目标与成功标准
@@ -46,7 +46,7 @@ CI 未通过时不得创建标签。标签创建前的远端推送通过新增�
 
 ## 阻塞与恢复
 
-- 阻塞证据：[`REG-001`](../trackers/regressions.md) 记录 `main@a6ec4e0` 的 GitHub Actions
+- 阻塞证据：[`REG-001`](../trackers/todo.md) 记录 `main@a6ec4e0` 的 GitHub Actions
   Pytest 步骤失败，本地同批门禁通过，远端失败原因尚未形成可复现结论。
 - 恢复条件：独立 B 类任务定位并关闭 REG-001，且预定发布提交的同一 Actions 工作流全部通过。
 - 责任位置：`tests/`、`.github/workflows/` 与 REG-001 后续修复计划负责诊断和修复；本计划只负责

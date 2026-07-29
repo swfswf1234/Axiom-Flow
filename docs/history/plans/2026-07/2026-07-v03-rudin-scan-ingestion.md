@@ -6,7 +6,7 @@
 最后更新：2026-07-29
 关联 ADR：`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`
 关联设计：`docs/design/document-pipeline.md`、`docs/design/evaluation-governance.md`
-关联 Tracker：`docs/trackers/backlog.md`
+关联 Tracker：`docs/trackers/todo.md`（EXP-002）
 归档判定：Retain；保留真实外部调用、运行数据选择与清理、manifest 哈希和人工验收结论。
 
 ## 目标与成功标准
@@ -50,5 +50,5 @@ ADR 0010 已冻结 PDF 第 20–39 页、`qwen-vl-ocr`、每页最多 3 次和�
 ## 关闭与归档
 
 工程链路和产物完整性已达到执行目标，但五页质量门禁仅通过 3/5，关闭结果为 Rejected，不启动
-317 页整书解析。后续候选保留在 backlog，冻结假设、样本、预算和采纳门槛后建立新的 C 类计划，
+317 页整书解析。后续候选保留在 todo，冻结假设、样本、预算和采纳门槛后建立新的 C 类计划，
 不得恢复或改写本计划。

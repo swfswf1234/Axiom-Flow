@@ -79,9 +79,9 @@ def test_data_state_diagrams_cover_every_domain_enum_value():
 
 def test_arch_001_tracks_api_repository_access_until_it_is_removed():
     runtime = (ARCHITECTURE / "runtime-architecture.md").read_text(encoding="utf-8")
-    backlog = (ROOT / "docs" / "trackers" / "backlog.md").read_text(encoding="utf-8")
+    todo = (ROOT / "docs" / "trackers" / "todo.md").read_text(encoding="utf-8")
     has_direct_access = _api_gets_repository_from_container()
 
     assert ("ARCH-001" in runtime) is has_direct_access
-    assert ("ARCH-001" in backlog) is has_direct_access
+    assert ("ARCH-001" in todo) is has_direct_access
     assert ("实现状态：In Progress" in runtime) is has_direct_access

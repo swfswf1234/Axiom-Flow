@@ -1,8 +1,8 @@
 """
-模块职责：验证活跃计划的命名、元数据、生命周期状态及 tracker 镜像保持一致。
+模块职责：验证活跃计划的命名、元数据、生命周期状态及计划索引边界保持一致。
 设计关联（DesignRef）：docs/standards/task-lifecycle.md
 实现状态：Current
-被测代码：docs/plans、docs/trackers/current.md
+被测代码：docs/plans
 """
 
 import re
@@ -11,14 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PLANS = ROOT / "docs" / "plans"
 PLAN_INDEX = PLANS / "index.md"
-CURRENT = ROOT / "docs" / "trackers" / "current.md"
 PLAN_FILE = re.compile(r"\d{4}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
-INDEX_ENTRY = re.compile(
-    r"^\| \[(?P<title>[^]]+)]\((?P<path>[^)]+\.md)\) "
-    r"\| (?P<status>[^|]+) \| (?P<type>[ABCD]) \|",
-    re.MULTILINE,
-)
-CURRENT_PLAN_LINK = re.compile(r"\]\(\.\./plans/(?P<path>[^)]+\.md)\)")
 ACTIVE_STATUSES = {"Accepted", "In Progress", "Blocked"}
 TASK_TYPES = {"A", "B", "C", "D"}
 REQUIRED_FIELDS = (
@@ -85,32 +78,9 @@ def test_blocked_plans_declare_evidence_and_recovery_contract():
             assert "## 阻塞与恢复" not in content, filename
 
 
-def test_plan_index_matches_every_active_plan_body():
-    plans = _active_plans()
+def test_plan_index_is_navigation_only_and_routes_status_to_todo():
     index = PLAN_INDEX.read_text(encoding="utf-8")
-    entries = {match.group("path"): match.groupdict() for match in INDEX_ENTRY.finditer(index)}
-
-    assert set(entries) == set(plans)
-    for filename, plan in plans.items():
-        entry = entries[filename]
-        assert entry["title"] == plan["title"]
-        assert entry["status"].strip() == plan["status"]
-        assert entry["type"] == plan["type"]
-
-
-def test_current_tracker_exactly_mirrors_in_progress_plans():
-    in_progress = {
-        filename for filename, plan in _active_plans().items() if plan["status"] == "In Progress"
-    }
-    content = CURRENT.read_text(encoding="utf-8")
-    mirrored = {
-        filename
-        for filename in CURRENT_PLAN_LINK.findall(content)
-        if PLAN_FILE.fullmatch(filename)
-    }
-
-    assert mirrored == in_progress
-    if in_progress:
-        assert "当前没有正在实施的计划。" not in content
-    else:
-        assert "当前没有正在实施的计划。" in content
+    assert "../trackers/todo.md" in index
+    assert "| 状态 |" not in index
+    for filename in _active_plans():
+        assert filename not in index

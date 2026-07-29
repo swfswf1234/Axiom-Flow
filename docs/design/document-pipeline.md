@@ -88,4 +88,4 @@ manifest 位于 `parse-runs/<run-id>/`。manifest v2 区分共享与私有文件
 
 **DES-001**：Accepted 目标还包括乱码、版面覆盖、页数、公式和表格缺失等稳定质量信号；当前
 实现尚未具备这些规则及回归样本。本文件在该偏差关闭前保持 `实现状态：In Progress`，关闭条件
-见[待办](../trackers/backlog.md)。
+见[待做任务](../trackers/todo.md)。

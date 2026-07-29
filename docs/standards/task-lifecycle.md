@@ -3,8 +3,8 @@
 状态：Current
 最后更新：2026-07-29
 治理对象：任务分类、计划准入、tracker 状态、实施门禁与关闭交付
-依据 ADR：`docs/adr/0014-risk-based-plan-lifecycle.md`、`docs/adr/0015-standards-as-governance-source.md`
-关联测试：`tests/test_plan_governance.py`
+依据 ADR：`docs/adr/0014-risk-based-plan-lifecycle.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0017-consolidated-task-ledgers-and-roadmap.md`
+关联测试：`tests/test_plan_governance.py`、`tests/test_tracker_governance.py`
 
 ## 目的与边界
 
@@ -32,8 +32,9 @@ GitHub Release、部署、受保护环境变更、正式数据操作和需要独
   必须建立计划；简单措辞、链接和局部无行为修正由差异、验证与提交记录承接。
 - 每份计划只有一个 `任务类型`。C 输出冻结实验、报告和决策 ADR；B 实现已接受的确定性契约；
   D 执行已经通过实现门禁的发布或真实操作。三类分别关闭。
-- backlog 只保存尚未具备计划条件的候选工作。范围、前置条件、验证和成功标准明确后转为
-  Accepted 计划，并从 backlog 移除；缺陷证据可继续保留在 regressions，由计划引用。
+- todo 使用稳定 ID 保存全部未关闭 Plan、Defect、Gap 和 Candidate。候选具备范围、前置条件、
+  验证和成功标准后保留原 ID、改为 Plan 并链接 Accepted 计划；缺陷证据与关联计划可使用不同 ID
+  互相引用。
 
 ### 计划契约与状态
 
@@ -58,13 +59,14 @@ stateDiagram-v2
 
 `Accepted`、`In Progress`、`Blocked` 可留在活跃 Plans；`Completed`、`Cancelled`、`Superseded`
 是终态。终态另写 `关闭结果：Achieved | Rejected | Partial | Not Applicable`。需要新候选、重新
-设计或新 ADR 时应关闭旧计划并返回 backlog，不得长期维持不可恢复的 Blocked。
+设计或新 ADR 时应关闭旧计划并以新 ID 返回 todo，不得长期维持不可恢复的 Blocked。
 
 ### 状态导航
 
-- 计划正文是状态事实源；`plans/index.md` 只汇总全部活跃计划的状态、类型和下一条件。
-- `trackers/current.md` 只镜像全部 In Progress 计划；没有执行中计划时明确写空。
+- 计划正文是状态事实源；`trackers/todo.md` 镜像全部活跃计划的标题、链接和状态。
+- `plans/index.md` 只解释目录边界并链接 todo，不维护第二张计划状态表。
 - 计划不复制通用命令、设计正文、实验结果或逐日工作日志，只链接对应事实源。
+- 长期能力依赖只在 roadmap 维护且不写任务状态；任务终态时从 todo 原子移除并写入 completed。
 
 ## 执行与门禁
 
@@ -86,9 +88,9 @@ flowchart LR
 - 计划实施前必须声明定向测试、适用回归或端到端样本，以及不能自动化的人工验收和责任位置。
 - 共享模型、状态机、路由或跨领域流程变更必须追加全量回归；阶段关闭追加固定样本端到端验收。
 - 测试使用隔离数据和假外部供应商；外部模型质量必须通过冻结评测回答，不能用单元测试替代。
-- 可复现失败登记 regressions 并补回归测试；外部依赖失败保存证据、恢复条件和责任位置。
+- 可复现失败以 Defect ID 登记 todo 并补回归测试；外部依赖失败保存证据、恢复条件和责任位置。
 - 关闭计划按[文档规范](documentation.md#归档与删除)执行 `Retain` 或 `Delete`；自动规则由
-  `tests/test_plan_governance.py` 守护，适用命令只在开发指南维护。
+  Plan 与 tracker 治理测试守护，适用命令只在开发指南维护。
 
 ## 变更与取代
 

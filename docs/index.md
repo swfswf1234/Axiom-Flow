@@ -13,7 +13,7 @@
 | `adr/` | 全局架构决策登记与当前决定 | [ADR 索引](adr/index.md) |
 | `guides/` | 可重复执行的开发、测试和运维步骤 | [指南索引](guides/index.md) |
 | `plans/` | 尚未关闭的实施计划 | [计划索引](plans/index.md) |
-| `trackers/` | 当前工作、回归、待办和路线图 | [追踪索引](trackers/index.md) |
+| `trackers/` | 待做任务、关闭台账和无状态能力路线图 | [追踪索引](trackers/index.md) |
 | `standards/` | 工程治理规则的唯一事实源 | [规范索引](standards/index.md) |
 | `history/` | 被取代 ADR、选择性执行记录和 Git 锚点基线 | [历史索引](history/index.md) |
 

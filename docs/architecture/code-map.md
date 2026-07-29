@@ -51,7 +51,8 @@
 | `tests/test_markdown_links.py` | Markdown 链接测试 | Current | `docs/standards/documentation.md` | — | 守护仓库本地相对链接。 |
 | `tests/test_document_structure.py` | 文档结构测试 | Current | `docs/standards/documentation.md` | — | 守护入口、目录边界、计划归档和 Agent 协议。 |
 | `tests/test_adr_structure.py` | ADR 治理测试 | Current | `docs/standards/adr-governance.md` | — | 守护全局编号、登记表、元数据和完整取代关系。 |
-| `tests/test_plan_governance.py` | 计划治理测试 | Current | `docs/standards/task-lifecycle.md` | — | 守护活跃计划元数据、状态、索引和 current 镜像。 |
+| `tests/test_plan_governance.py` | 计划治理测试 | Current | `docs/standards/task-lifecycle.md` | — | 守护活跃计划元数据、状态和索引边界。 |
+| `tests/test_tracker_governance.py` | Tracker 治理测试 | Current | `docs/standards/task-lifecycle.md` | — | 守护任务 ID、Plan 镜像、关闭证据和无状态路线图。 |
 | `tests/test_standard_governance.py` | Standards 治理测试 | Current | `docs/standards/documentation.md` | — | 守护标准目录边界、统一契约、索引和测试反向关联。 |
 | `tests/test_evaluation_scorecard.py` | 评分门禁测试 | Current | `docs/design/evaluation-governance.md` | — | 被测代码为 scorecard。 |
 | `tests/test_evaluation_preflight.py` | 百炼预检测试 | Current | `docs/design/evaluation-governance.md` | — | 使用假视觉供应商。 |

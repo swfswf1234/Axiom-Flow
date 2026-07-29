@@ -10,7 +10,7 @@ Axiom-Flow 是 QED 的本地优先技术 PDF 解析与质量审阅组件。当�
 接到任务后按顺序执行：
 
 1. 检查工作树和当前分支，保留用户已有变更。
-2. 从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/current.md`、关联计划和回归记录。
+2. 从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/todo.md`、关联计划和关闭证据。
 3. 从 `docs/standards/index.md` 选择本任务适用的强制规则；开发命令查
    `docs/guides/development.md`，运行与数据操作查 `docs/guides/operations.md`。
 4. 在 `docs/architecture/code-map.md` 定位受影响模块、DesignRef、实现状态和测试。
@@ -86,6 +86,6 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 1. 实现与当前 Accepted 设计/ADR 一致，未恢复 Superseded 或 Historical 契约。
 2. 受影响模块、DesignRef、code-map、设计和测试已经同步。
 3. 架构与设计触发项已同步正文与 Mermaid，语义、映射、链接和适用回归/端到端测试通过。
-4. 可复现失败已进入 regressions；外部依赖失败有证据、恢复条件和责任位置。
+4. 可复现失败已进入 todo；外部依赖失败有证据、恢复条件和责任位置。
 5. D 类操作已经完成备份、回滚和完整差异复核，没有隐式执行。
-6. 计划正文、plans index 与 current 状态一致，关闭计划已按文档规范选择性保留或删除。
+6. 计划正文与 todo 状态一致，关闭任务已原子迁移到 completed，计划已按文档规范选择性保留或删除。

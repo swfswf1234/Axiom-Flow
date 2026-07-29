@@ -33,11 +33,11 @@ python -m pip install -e ".[dev]"
 3. 计划明确范围、验证、回滚和完成条件后再执行；C 实验、B 实现和 D 正式操作分别关闭。
 4. 同步 `code-map.md`、模块 `DesignRef`、活跃设计和适用的语义门禁。
 5. 通过定向、回归和关闭门禁后，按[文档规范](../standards/documentation.md)选择性保留或删除计划；
-   可复现失败登记到回归待办。
+   可复现失败登记到[待做任务](../trackers/todo.md)。
 
 Rudin 页码、预算和采纳门槛属于专项事实，只查[解析评测设计](../design/evaluation-governance.md)、
 [ADR 0010](../adr/0010-qwen-ocr-only-rudin-trial.md)、[20 页试跑报告](../../evaluation/reports/rudin-qwen-ocr-20-v1.md)
-和[后续候选待办](../trackers/backlog.md)，不作为通用开发命令。
+和[后续候选任务](../trackers/todo.md)，不作为通用开发命令。
 
 ## 数据库迁移开发
 

@@ -64,4 +64,4 @@ KnowledgeRelease 的不可变 snapshot 表达。
 
 **DES-002**：`sections` 和 `review_notes` 当前是必需但未消费的占位工作表。后续独立计划必须
 决定移除它们，或实现字段契约、持久化和校验；在此之前不得宣称章节与审阅备注已接入发布流程。
-本文件保持 `实现状态：In Progress`，关闭条件见[待办](../trackers/backlog.md)。
+本文件保持 `实现状态：In Progress`，关闭条件见[待做任务](../trackers/todo.md)。
