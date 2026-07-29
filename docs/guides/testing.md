@@ -18,7 +18,9 @@ v0.2 集成测试连接 `axiom_flow_test`，在不存在时创建它、执行 Al
 前后清空 `af_` 表。测试库名与运行库相同会立即失败；测试不得连接 `xqfm11` 的运行表。
 
 文档或受管代码改动时，必须运行 `python -m pytest tests/test_code_document_mapping.py -q`；
-该测试校验 `code-map.md`、模块文件头与活跃设计文档元数据的一致性。
+该测试校验 `code-map.md`、模块文件头与活跃设计文档元数据的一致性。架构同步触发项还必须运行
+`python -m pytest tests/test_architecture_documents.py tests/test_architecture_dependencies.py -q`，
+校验 Mermaid 关键节点、领域枚举、已知偏差和包依赖方向。
 
 历史测试命令与 MinerU 基线一同归档，不代表当前可执行命令。实现每个阶段后才将已验证
 的命令写入本文件。

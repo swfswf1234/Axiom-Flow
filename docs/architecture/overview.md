@@ -4,29 +4,42 @@
 实现状态：Implemented
 最后更新：2026-07-29
 关联代码：当前受管实现见 `docs/architecture/code-map.md`
-关联测试：`tests/test_code_document_mapping.py`
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`
+关联测试：`tests/test_architecture_documents.py`、`tests/test_code_document_mapping.py`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`
 
-Axiom-Flow 是本地单用户的技术文档质量与知识审阅工作台。首期交付从 PDF 导入、
-解析、页级质量审阅、教学语义单元审阅、Excel 发布到知识图谱浏览的闭环。
+## 定位与用户
 
-本页描述当前实现事实。详细分层见 [`runtime-architecture.md`](runtime-architecture.md)。
+Axiom-Flow 是 QED 的本地优先技术 PDF 解析与质量审阅组件。当前用户是需要检查数学教材、
+论文和习题集解析质量的本地操作者。系统接收技术 PDF 和人工审阅命令，输出可追溯解析产物、
+Excel 审阅草稿和显式发布的知识版本。
 
 ```mermaid
 flowchart LR
-    A[PDF 原件] --> B[处理任务]
-    B --> C[解析路由]
-    C --> D[规范化内容和页级证据]
-    D --> E[质量初筛与人工复核]
-    E --> F[知识候选抽取]
-    F --> G[Excel 审阅工作簿]
-    G --> H[版本校验与显式发布]
-    H --> I[已发布知识库与图谱]
+    U[用户 / 审阅者]
+    PDF[技术 PDF]
+    B[阿里百炼]
+    XLSX[Excel 审阅草稿]
+    RELEASE[已发布知识]
+    subgraph AF[Axiom-Flow]
+        WORKBENCH[解析与质量审阅工作台]
+    end
+
+    U -->|导入、审阅、发布| WORKBENCH
+    PDF -->|原始输入| WORKBENCH
+    WORKBENCH -->|OCR 与知识候选请求| B
+    B -->|模型响应| WORKBENCH
+    WORKBENCH <-->|显式导出与导入| XLSX
+    WORKBENCH -->|版本化发布| RELEASE
+    RELEASE -->|浏览与复核| U
 ```
 
-系统不把任何解析器或大模型的原始输出当作领域事实。解析结果先归一化为页、内容块、
-源证据和质量报告，再供审阅和知识抽取使用。
+## 系统边界
 
-运行数据使用 MySQL 的 `af_` 前缀表；API v1 将解析和抽取提交为持久任务，独立 Worker 通过租约
-执行。原文件与可追溯产物保存在本地数据目录；Excel 是人工编辑与发布的主要入口。后续聊天、
-图片问答、练习和学习进度只能读取已发布知识版本。
+系统负责 PDF 导入、页面解析、来源证据、质量审阅、知识候选、工作簿校验和知识发布。模型原始
+响应不是领域事实；只有经过规范化、持久化和审阅的数据才能进入后续流程。
+
+系统不负责训练或托管模型，不把 Excel 当作运行查询库，也不把未发布候选提供给下游学习功能。
+对话、图片问答、练习、学习进度、向量检索和图数据库投影不属于当前交付能力。
+
+内部进程、依赖方向和能力归属见[运行架构](runtime-architecture.md)，事实来源、状态和清理边界
+见[数据生命周期](data-lifecycle.md)。

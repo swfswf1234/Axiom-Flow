@@ -3,7 +3,7 @@
 状态：Current  
 维护位置：`docs/standards/code-document-traceability.md`
 关联代码：`evaluation/scorecard.py`、受管模块文件头  
-关联测试：`tests/test_code_document_mapping.py`  
+关联测试：`tests/test_code_document_mapping.py`、`tests/test_architecture_documents.py`
 关联 ADR：`docs/adr/0012-backend-package-boundaries.md`
 
 ## 目的
@@ -38,3 +38,16 @@
 3. 活跃架构/设计文档头部必须包含 `关联代码`、`关联测试`、`关联 ADR`；无实现时写
    `尚未实现`，不能指向无关旧代码。
 4. `tests/test_code_document_mapping.py` 是受管代码和活跃设计变更的必过定向测试。
+
+## 架构视图同步
+
+- 系统上下文、运行拓扑、代码依赖和数据状态使用活跃架构正文中的内嵌 Mermaid 维护；不另存
+  渲染图片或第二份图源。
+- 运行组件、包依赖、领域状态、事实来源、能力归属或 DesignRef 变化属于架构同步触发项，必须
+  同步正文、图、code-map 和架构语义测试。
+- 架构文档同时记录 Accepted 约束和实现符合度。尚未满足的约束必须有稳定偏差编号、代码证据和
+  tracker 关闭条件，文档实现状态不得写成完全实现。
+- 领域边界、公开 API、持久化语义、事实来源或解析路由发生决策变化时，先更新 ADR，再更新图和
+  实现映射。
+- `tests/test_architecture_documents.py` 守护目录集合、Mermaid 关键节点、领域枚举和已知偏差；
+  它与代码映射测试共同作为架构变更的必过门禁。

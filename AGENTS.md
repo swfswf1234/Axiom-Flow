@@ -12,7 +12,8 @@ Axiom-Flow 是 QED 的本地优先技术 PDF 解析与质量审阅组件。当�
 1. 检查工作树和当前分支，保留用户已有变更。
 2. 从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/current.md`、关联计划和回归记录。
 3. 在 `docs/architecture/code-map.md` 定位受影响模块、DesignRef、实现状态和测试。
-4. 阅读对应 architecture、design 和 Accepted ADR；旧协议再查 `docs/history/index.md`。
+4. 阅读对应 architecture、design 和 Accepted ADR；架构图以活跃文档内嵌 Mermaid 为准，旧协议
+   再查 `docs/history/index.md`。
 5. 用 `rg` 搜索实际调用、测试和历史定义，不根据文件名猜行为。
 
 常用定位命令：
@@ -68,6 +69,10 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 - 非平凡生产模块、评测脚本和测试必须有中文模块说明、`DesignRef` 和实现状态。
 - 新增、移动、删除模块或改变职责时，同步修改 code-map、文件头、设计文档和映射测试。
 - 活跃架构与设计声明关联代码、测试和 ADR；Legacy 只能关联 `docs/history/`。
+- 运行组件、包依赖、领域状态、事实来源、能力归属或 DesignRef 变化时，同步更新对应架构正文、
+  Mermaid 视图、code-map 和 `tests/test_architecture_documents.py`。
+- Accepted 架构与运行代码存在偏差时，在运行架构中写符合度并登记 tracker；禁止把目标状态写成
+  已实现事实。
 
 ## 中文与注释
 
@@ -80,7 +85,7 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 1. 实现与当前 Accepted 设计/ADR 一致，未恢复 Superseded 或 Historical 契约。
 2. 受影响模块、DesignRef、code-map、设计和测试已经同步。
-3. 定向测试、适用回归/端到端、文档映射、链接和 `git diff --check` 通过。
+3. 架构触发项已同步正文与 Mermaid，架构语义、映射、链接和适用回归/端到端测试通过。
 4. 可复现失败已进入 regressions；外部依赖失败有证据、恢复条件和责任位置。
 5. D 类操作已经完成备份、回滚和完整差异复核，没有隐式执行。
 6. 计划与 tracker 已关闭，Completed/Superseded 计划按规范归档。

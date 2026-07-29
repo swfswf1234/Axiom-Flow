@@ -5,8 +5,7 @@
 
 | 文档 | 职责 |
 | --- | --- |
-| [产品与系统边界](overview.md) | 产品边界和主数据流 |
-| [运行架构](runtime-architecture.md) | Backend 分层、任务和运行组件 |
-| [领域边界](domain-boundaries.md) | 领域职责与跨域约束 |
-| [数据生命周期](data-lifecycle.md) | 数据事实来源、版本和清理边界 |
+| [系统总览](overview.md) | 用户、系统边界、输入输出和外部依赖 |
+| [运行架构](runtime-architecture.md) | 运行拓扑、代码依赖、能力归属和架构符合度 |
+| [数据生命周期](data-lifecycle.md) | 事实来源、真实状态、版本和清理边界 |
 | [代码与设计映射](code-map.md) | 代码、设计和测试的唯一映射事实源 |
