@@ -3,7 +3,7 @@
 设计状态：Accepted
 实现状态：Implemented
 最后更新：2026-07-29
-关联代码：`backend/infrastructure/database.py`、`backend/migrations/env.py`、`backend/migrations/versions/20260727_0001_mysql_v02.py`
+关联代码：`alembic.ini`、`backend/infrastructure/database.py`、`backend/migrations/env.py`、`backend/migrations/script.py.mako`、`backend/migrations/versions/20260727_0001_mysql_v02.py`
 关联测试：`tests/test_document_workflow.py`、`tests/test_mysql_migrations.py`、`tests/test_current_parse_runs.py`、`tests/test_prune_parse_runs.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0003-excel-publish-source-of-truth.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`
 
@@ -22,6 +22,7 @@ stateDiagram-v2
 
 - 原 PDF 不可变，以内容哈希和文档版本标识。
 - MySQL 仅保存 `af_` 前缀的运行事实；表结构通过 Alembic 显式迁移，不允许启动时自动建表。
+- Alembic CLI 配置不保存数据库凭证；迁移路径相对配置文件定位，连接 URL 由环境或调用方注入。
 - 每次解析和抽取分别生成独立 `ParseRun`、`ExtractionRun`；旧页面、候选和审阅事件不被覆盖。
 - 文档通过 `current_parse_run_id` 显式选择审阅和抽取的事实来源；新成功运行仅为候选，切换历史追加保存。
 - 文档页图按渲染契约共享；旧运行文件可经受保护工具变为只保留摘要的 `pruned` 墓碑。

@@ -29,7 +29,7 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 | --- | --- | --- | --- |
 | OCR、PDF、页面事实、manifest | `backend/infrastructure/{bailian,pdf_pipeline,artifacts}.py` | `docs/design/document-pipeline.md`、ADR 0008/0010 | `test_providers.py`、`test_parse_artifacts.py`、`test_v03_jobs.py` |
 | API、持久任务、Worker | `backend/api/`、`backend/application/jobs.py`、`backend/worker/` | `background-jobs.md`、`web-workbench.md`、ADR 0006 | `test_v03_api.py`、`test_v03_jobs.py` |
-| MySQL、迁移、当前 ParseRun | `backend/infrastructure/{database,mysql}.py`、`backend/migrations/` | `data-lifecycle.md`、ADR 0005/0007/0011 | `test_mysql_migrations.py`、`test_current_parse_runs.py` |
+| MySQL、迁移、当前 ParseRun | `alembic.ini`、`backend/infrastructure/{database,mysql}.py`、`backend/migrations/` | `data-lifecycle.md`、ADR 0005/0007/0011 | `test_mysql_migrations.py`、`test_current_parse_runs.py` |
 | 产物或运行清理 | `backend/tools/prune_parse_runs.py`、`artifacts.py` | ADR 0011、`operations.md` | `test_prune_parse_runs.py`、`test_parse_artifacts.py` |
 | 知识、关系、工作簿、发布 | `backend/application/workbooks.py`、`mysql.py` | `knowledge-model.md`、`excel-release-workflow.md` | `test_document_workflow.py` |
 | Web 对照与交互 | `web/`、`backend/api/main.py`、`schemas.py` | `web-workbench.md` | `test_v03_api.py`、JavaScript 语法检查 |

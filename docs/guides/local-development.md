@@ -31,6 +31,19 @@ python -m backend.worker
 API 与 Web 工作台位于 `http://127.0.0.1:8000`。API 和 Worker 是独立进程；关闭浏览器不会
 取消持久任务。
 
+## 新增迁移
+
+`alembic.ini` 只保存迁移路径和日志配置，真实数据库 URL 由环境变量注入。新增 schema 变更时
+先按日期和当日顺序确定 revision ID，再生成满足项目追溯格式的空骨架：
+
+```powershell
+python -m alembic revision --rev-id 20260729_0005 -m "说明本次结构变更"
+```
+
+生成后人工实现并审阅 `upgrade()` 与 `downgrade()`，同步数据生命周期、code-map 和迁移测试。
+当前项目没有 SQLAlchemy 声明式模型元数据，禁止使用 `--autogenerate`。应用启动只校验版本，
+不会代替显式 `python -m alembic upgrade head`。
+
 扫描教材按 ADR 0010 只使用 `qwen-vl-ocr`。Rudin 工程试跑必须显式提交
 `{"page_start":20,"page_end":39}`；没有新的实验 manifest 和 ADR 时不得运行 317 页整书。
 

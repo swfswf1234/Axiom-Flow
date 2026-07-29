@@ -12,6 +12,7 @@
 
 | 代码路径 | 层级/职责 | 状态 | 设计关联 | 关联测试 | 备注 |
 | --- | --- | --- | --- | --- | --- |
+| `alembic.ini` | Alembic CLI 配置 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 定位迁移环境且不保存数据库凭证。 |
 | `backend/infrastructure/config.py` | v0.3 本地配置 | Current | `docs/design/document-pipeline.md` | `tests/test_document_workflow.py` | 仅读取本地 `.env` 与运行目录。 |
 | `backend/infrastructure/bailian.py` | 百炼模型适配 | Current | `docs/design/document-pipeline.md` | `tests/test_providers.py` | 隔离 DashScope OpenAI 兼容协议。 |
 | `backend/infrastructure/artifacts.py` | 不可变解析产物包 | Current | `docs/design/document-pipeline.md` | `tests/test_parse_artifacts.py` | 共享页图、v1/v2 哈希清单和完整性校验。 |
@@ -31,6 +32,7 @@
 | `backend/tools/reset_dev_database.py` | 受保护开发库重建 | Current | `docs/adr/0007-versioned-domain-records.md` | `tests/test_reset_safety.py` | 默认只允许测试库。 |
 | `backend/tools/prune_parse_runs.py` | 受保护解析运行清理 | Current | `docs/adr/0011-current-parse-run-and-prunable-artifacts.md` | `tests/test_prune_parse_runs.py` | dry-run、暂存、回滚和显式 purge。 |
 | `backend/migrations/env.py` | Alembic 迁移运行环境 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 只由显式迁移命令调用。 |
+| `backend/migrations/script.py.mako` | Alembic revision 生成模板 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 生成符合中文追溯规范的空迁移骨架。 |
 | `backend/migrations/versions/20260727_0001_mysql_v02.py` | MySQL 初始 schema | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 创建基础 `af_` 表。 |
 | `backend/migrations/versions/20260727_0002_v03_jobs_and_history.py` | 任务与历史 schema | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_jobs.py` | 增加任务和版本表。 |
 | `backend/migrations/versions/20260728_0003_parse_artifacts.py` | 解析产物元数据 schema | Current | `docs/adr/0008-immutable-parse-artifact-bundles.md` | `tests/test_mysql_migrations.py` | 增加 MIME、大小和定位元数据。 |

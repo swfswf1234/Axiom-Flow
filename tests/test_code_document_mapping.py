@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CODE_MAP = ROOT / "docs" / "architecture" / "code-map.md"
 MANAGED_DIRECTORIES = ("app", "backend", "evaluation", "scripts", "tests")
 MANAGED_WEB_FILES = ("web/index.html", "web/style.css", "web/app.js")
+MANAGED_TOOL_FILES = ("alembic.ini", "backend/migrations/script.py.mako")
 EXEMPT_FILENAMES = {"__init__.py"}
 ACTIVE_DOCUMENTS = tuple((ROOT / "docs" / "architecture").glob("*.md")) + tuple(
     (ROOT / "docs" / "design").glob("*.md")
@@ -47,6 +48,7 @@ def _managed_modules():
             if path.name not in EXEMPT_FILENAMES:
                 modules.add(relative)
     modules.update(MANAGED_WEB_FILES)
+    modules.update(MANAGED_TOOL_FILES)
     return modules
 
 
@@ -79,8 +81,12 @@ def test_mapped_paths_and_design_references_exist():
 def test_module_headers_match_mapping_status_and_design_reference():
     for entry in _parse_code_map():
         source = (ROOT / entry["path"]).read_text(encoding="utf-8")
-        assert f"设计关联（DesignRef）：{entry['design']}" in source
-        assert f"实现状态：{entry['status']}" in source
+        if entry["path"].endswith(".ini"):
+            assert f"DesignRef: {entry['design']}" in source
+            assert f"Status: {entry['status']}" in source
+        else:
+            assert f"设计关联（DesignRef）：{entry['design']}" in source
+            assert f"实现状态：{entry['status']}" in source
         if entry["status"] == "Legacy":
             assert entry["design"].startswith("docs/history/")
         else:
@@ -96,7 +102,11 @@ def test_active_architecture_and_design_documents_declare_metadata():
         assert "关联测试：" in content, document
         assert "关联 ADR：" in content, document
 
-        for code_path in _metadata_references(content, "关联代码：", ("app/", "backend/", "evaluation/", "scripts/", "web/")):
+        for code_path in _metadata_references(
+            content,
+            "关联代码：",
+            ("alembic.ini", "app/", "backend/", "evaluation/", "scripts/", "web/"),
+        ):
             assert (ROOT / code_path).is_file(), document
             assert code_path in entries_by_path, document
             assert entries_by_path[code_path]["design"] == document.relative_to(ROOT).as_posix()

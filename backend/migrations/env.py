@@ -15,7 +15,7 @@ from backend.infrastructure.config import Settings
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
-if config.get_main_option("sqlalchemy.url").startswith("mysql+pymysql://unused:"):
+if not config.get_main_option("sqlalchemy.url"):
     config.set_main_option("sqlalchemy.url", Settings().mysql_url.replace("%", "%%"))
 
 

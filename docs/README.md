@@ -10,13 +10,14 @@
 
 ```text
 Axiom-Flow/
+├── alembic.ini            # Alembic CLI 路径、URL 注入和日志入口
 ├── backend/
 │   ├── domain/            # 领域状态、资源和错误
 │   ├── application/       # 用例、策略和应用端口
 │   ├── infrastructure/    # MySQL、百炼、PDF 和产物适配器
 │   ├── api/               # API v1、Schema、错误翻译和静态入口
 │   ├── worker/            # 持久任务领取、租约、重试和取消
-│   ├── migrations/        # Alembic 版本化迁移
+│   ├── migrations/        # Alembic 环境、生成模板和版本化迁移
 │   └── tools/             # 受保护的数据重建与产物清理
 ├── web/                   # 本地单页审阅工作台
 ├── evaluation/            # 实验 manifest、执行、评分与报告
