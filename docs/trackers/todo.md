@@ -12,8 +12,6 @@
 | REG-001 | Defect | P0 | Open | GitHub Actions Pytest 失败 | `main@a6ec4e0` 的 Actions run `30350570456` 失败；本地 54 passed，需取得失败详情、补回归并使同一工作流通过。 |
 | EXP-002 | Candidate | P0 | Candidate | Rudin 扫描教材新解析候选 | 当前单模型工程链路人工抽检 3/5；新候选必须使用冻结样本重新评测。 |
 | EXP-003 | Candidate | P0 | Candidate | 通用新增类别解析评测 | 新类别样本到达后新建 manifest，不回写 Rudin 单类别实验。 |
-| ENG-001 | Candidate | P1 | Candidate | Python 包根与目录语义迁移 | 完成 Backend 审计，新增 ADR 取代 ADR 0012，再将 `backend.*` 一次性迁移到 `src/axiom_flow/*`，不保留长期双包兼容层。 |
-| ARCH-001 | Gap | P1 | Open | API 绕过应用服务 | [运行架构](../architecture/runtime-architecture.md)记录 API 仍直连 repository；补齐应用用例并通过架构门禁后关闭。 |
 | DES-001 | Gap | P1 | Open | 自动质量信号不足 | [解析设计](../design/document-pipeline.md)尚缺乱码、覆盖、页数、公式和表格风险的稳定规则或评测门槛。 |
 | DES-002 | Gap | P1 | Open | 工作簿占位表无语义 | [发布设计](../design/excel-release-workflow.md)中的 `sections`、`review_notes` 必须决定删除或实现。 |
 | OPS-001 | Gap | P1 | Open | 生产运维基线未实现 | [运维指南](../guides/operations.md)只支持本地手工运行；先以 ADR 选择部署边界，再完成备份恢复和发布演练。 |

@@ -2,7 +2,7 @@
 模块职责：验证 v0.2 从 PDF 到页面审阅、知识、工作簿和发布图谱的基本闭环。
 设计关联（DesignRef）：docs/architecture/data-lifecycle.md
 实现状态：Current
-被测代码：backend/infrastructure/pdf_pipeline.py、backend/infrastructure/mysql.py、backend/application/workbooks.py、backend/api/main.py
+被测代码：src/axiom_flow/infrastructure/pdf_pipeline.py、src/axiom_flow/infrastructure/mysql.py、src/axiom_flow/application/workbooks.py、src/axiom_flow/api/main.py
 """
 
 import asyncio
@@ -11,11 +11,14 @@ from pathlib import Path
 import fitz
 from fastapi.testclient import TestClient
 
-from backend.api.main import create_app
-from backend.application.workbooks import WorkbookService
-from backend.infrastructure.config import Settings
-from backend.infrastructure.mysql import MySQLRepository
-from backend.infrastructure.pdf_pipeline import PDFPipeline
+from axiom_flow.api.main import create_app
+from axiom_flow.application.workbooks import WorkbookService
+from axiom_flow.infrastructure.config import Settings
+from axiom_flow.infrastructure.files import LocalFileLocator
+from axiom_flow.infrastructure.mysql import MySQLRepository
+from axiom_flow.infrastructure.pdf_pipeline import PDFPipeline
+from axiom_flow.infrastructure.workbooks import OpenPyxlWorkbookGateway
+from axiom_flow.worker.runner import Worker
 
 
 class FakeProvider:
@@ -87,7 +90,9 @@ def test_pipeline_workbook_publish_and_supersede(
     assert len(edges) == 1
     store.review_edge(edges[0]["id"], "accepted")
 
-    workbook = WorkbookService(store, settings.data_dir)
+    workbook = WorkbookService(
+        store, OpenPyxlWorkbookGateway(settings.data_dir), LocalFileLocator(settings.data_dir),
+    )
     revision = workbook.export_draft(document["id"])
     assert Path(revision["path"]).is_file()
     workbook.import_draft(document["id"], Path(revision["path"]))
@@ -121,6 +126,75 @@ def test_http_api_accepts_upload_and_serves_static_workbench(
         command = client.post(f"/api/v1/documents/{document_id}/parse-jobs")
         assert command.status_code == 202
         assert command.json()["job"]["status"] == "queued"
+
+
+def test_http_worker_flow_reaches_a_traceable_release(
+    tmp_path: Path, mysql_settings: Settings, mysql_store: MySQLRepository,
+):
+    """主链验收只能经过公开 HTTP 命令和 Worker，不直接调用仓储或 pipeline。"""
+    source = tmp_path / "release.pdf"
+    _pdf(source)
+    settings = _settings(tmp_path, mysql_settings)
+    provider = FakeProvider()
+    application = create_app(settings, lambda: (provider, provider))
+
+    with TestClient(application) as client:
+        with source.open("rb") as stream:
+            document = client.post(
+                "/api/v1/documents",
+                files={"file": ("release.pdf", stream, "application/pdf")},
+            ).json()
+        parse_job = client.post(f"/api/v1/documents/{document['id']}/parse-jobs").json()["job"]
+        parsed = Worker(application.state.jobs, "release-worker").run_once()
+        assert parsed["id"] == parse_job["id"] and parsed["status"] == "succeeded"
+
+        run_id = parsed["result"]["run_id"]
+        selected = client.post(
+            f"/api/v1/documents/{document['id']}/current-parse-run",
+            json={"run_id": run_id, "reason": "完整主链验收"},
+        )
+        selected.raise_for_status()
+        pages = client.get(f"/api/v1/parse-runs/{run_id}/pages").json()
+        for page in pages:
+            accepted = client.post(
+                f"/api/v1/pages/{page['id']}/reviews",
+                json={"status": "accepted", "reason": "页图与正文一致"},
+            )
+            accepted.raise_for_status()
+
+        extraction = client.post(f"/api/v1/documents/{document['id']}/extraction-jobs")
+        extraction.raise_for_status()
+        assert Worker(application.state.jobs, "release-worker").run_once()["status"] == "succeeded"
+
+        nodes = client.get(f"/api/v1/documents/{document['id']}/knowledge-nodes").json()
+        edges = client.get(f"/api/v1/documents/{document['id']}/knowledge-edges").json()
+        for node in nodes:
+            client.post(
+                f"/api/v1/knowledge-nodes/{node['id']}/reviews",
+                json={"status": "accepted", "reason": "证据可定位"},
+            ).raise_for_status()
+        for edge in edges:
+            client.post(
+                f"/api/v1/knowledge-edges/{edge['id']}/reviews",
+                json={"status": "accepted", "reason": "关系有原文证据"},
+            ).raise_for_status()
+
+        client.post(f"/api/v1/documents/{document['id']}/workbook-exports").raise_for_status()
+        workbook = client.get(f"/api/v1/documents/{document['id']}/workbook")
+        workbook.raise_for_status()
+        imported = client.post(
+            f"/api/v1/documents/{document['id']}/workbook-imports",
+            files={"file": ("reviewed.xlsx", workbook.content, workbook.headers["content-type"])},
+        )
+        imported.raise_for_status()
+        release = client.post(f"/api/v1/documents/{document['id']}/releases")
+        release.raise_for_status()
+        graph = client.get(f"/api/v1/documents/{document['id']}/graph").json()
+
+        assert graph["release_id"] == release.json()["id"]
+        assert {node["title"] for node in graph["nodes"]} == {"Axiom", "Flow"}
+        assert graph["edges"][0]["relation"] == "DEFINES"
+        assert graph["nodes"][0]["evidence"][0]["page_no"] in {1, 2}
 
 
 def test_store_recovers_an_interrupted_parse_run(

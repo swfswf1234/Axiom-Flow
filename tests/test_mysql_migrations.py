@@ -2,7 +2,7 @@
 模块职责：验证 v0.2 MySQL 迁移版本、表隔离和测试库安全边界。
 设计关联（DesignRef）：docs/architecture/data-lifecycle.md
 实现状态：Current
-被测代码：alembic.ini、backend/infrastructure/database.py、backend/infrastructure/mysql.py、backend/migrations/env.py、backend/migrations/script.py.mako、backend/migrations/versions/20260727_0001_mysql_v02.py
+被测代码：alembic.ini、src/axiom_flow/infrastructure/database.py、src/axiom_flow/infrastructure/mysql.py、src/axiom_flow/migrations/env.py、src/axiom_flow/migrations/script.py.mako、src/axiom_flow/migrations/versions/20260727_0001_mysql_v02.py
 """
 
 from pathlib import Path
@@ -12,13 +12,13 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
-from backend.infrastructure.config import Settings
-from backend.infrastructure.database import alembic_config, upgrade_database
-from backend.infrastructure.mysql import MySQLRepository
+from axiom_flow.infrastructure.config import Settings
+from axiom_flow.infrastructure.database import alembic_config, upgrade_database
+from axiom_flow.infrastructure.mysql import MySQLRepository
 
 ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = ROOT / "alembic.ini"
-MIGRATION_TEMPLATE = ROOT / "backend" / "migrations" / "script.py.mako"
+MIGRATION_TEMPLATE = ROOT / "src" / "axiom_flow" / "migrations" / "script.py.mako"
 
 EXPECTED_TABLES = {
     "af_documents",
@@ -49,7 +49,7 @@ def test_alembic_paths_are_relative_to_config_file(monkeypatch, tmp_path, mysql_
     assert not config.get_main_option("sqlalchemy.url")
 
     explicit_config = alembic_config(mysql_settings.mysql_url)
-    assert Path(explicit_config.get_main_option("script_location")).resolve() == ROOT / "backend" / "migrations"
+    assert Path(explicit_config.get_main_option("script_location")).resolve() == ROOT / "src" / "axiom_flow" / "migrations"
     assert ScriptDirectory.from_config(explicit_config).get_current_head() == "20260728_0004"
 
 

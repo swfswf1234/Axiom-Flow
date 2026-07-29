@@ -2,14 +2,14 @@
 模块职责：验证解析运行产物包的固定目录、清单和完整性检查。
 设计关联（DesignRef）：docs/design/document-pipeline.md
 实现状态：Current
-被测代码：backend/infrastructure/artifacts.py
+被测代码：src/axiom_flow/infrastructure/artifacts.py
 """
 
 import json
 
 import pytest
 
-from backend.infrastructure.artifacts import ParseArtifactWriter
+from axiom_flow.infrastructure.artifacts import ParseArtifactWriter
 
 
 def test_parse_artifact_bundle_is_content_addressed_and_verifiable(tmp_path):

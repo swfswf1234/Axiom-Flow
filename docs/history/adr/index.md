@@ -11,3 +11,4 @@
 | [0001](0001-local-first-and-storage.md) | 本地优先与运行数据存储 | Superseded | [0005](../../adr/0005-mysql-runtime-storage.md) |
 | [0002](0002-parser-routing-and-provider-boundary.md) | 分层解析路由与供应商适配边界 | Superseded | [0010](../../adr/0010-qwen-ocr-only-rudin-trial.md) |
 | [0004](0004-v02-http-api-boundary.md) | v0.2 HTTP API 与静态工作台边界 | Superseded | [0006](../../adr/0006-persistent-jobs-and-api-v1.md) |
+| [0012](0012-backend-package-boundaries.md) | Backend 包边界一次性收口 | Superseded | [0018](../../adr/0018-src-package-and-application-owned-workflows.md) |

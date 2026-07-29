@@ -66,8 +66,8 @@ python -m alembic upgrade head
 分别在两个终端启动 API/Web 和 Worker：
 
 ```powershell
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
-python -m backend.worker
+python -m uvicorn axiom_flow.main:app --host 127.0.0.1 --port 8000
+python -m axiom_flow.worker
 ```
 
 打开 `http://127.0.0.1:8000`。开发环境和测试库隔离见[开发指南](docs/guides/development.md)，
@@ -87,7 +87,7 @@ python -m backend.worker
 
 | 路径 | 职责 |
 | --- | --- |
-| `backend/` | 领域、应用、基础设施、API、Worker 和数据库迁移 |
+| `src/axiom_flow/` | 领域、应用、基础设施、API、Worker 和数据库迁移 |
 | `web/` | 本地单页审阅工作台 |
 | `evaluation/` | 模型实验 manifest、评分工具和报告 |
 | `tests/` | 架构、单元、集成和工作流门禁 |

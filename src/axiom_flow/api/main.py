@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.api.schemas import (
+from axiom_flow.api.schemas import (
     ArtifactResponse,
     CommandResponse,
     CurrentParseRunRequest,
@@ -28,8 +28,9 @@ from backend.api.schemas import (
     ParseJobRequest,
     ReviewRequest,
 )
-from backend.application.ports import ProviderFactory
-from backend.bootstrap import build_container
+from axiom_flow.application.ports import ProviderFactory
+from axiom_flow.bootstrap import build_container
+from axiom_flow.domain.models import ConflictError, NotFoundError
 
 
 def create_app(
@@ -39,20 +40,20 @@ def create_app(
     """组装 API；测试可注入确定性供应商工厂，生产任务仅由 Worker 调用供应商。"""
     container = build_container(settings, provider_factory)
     resolved = container.settings
-    store = container.repository
+    documents = container.documents
     jobs = container.jobs
+    reviews = container.reviews
     workbooks = container.workbooks
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        store.require_schema()
+        container.start()
         try:
             yield
         finally:
-            store.dispose()
+            container.close()
 
     app = FastAPI(title="Axiom-Flow", version="0.3.0", lifespan=lifespan)
-    app.state.store = store
     app.state.jobs = jobs
     app.state.settings = resolved
     app.state.container = container
@@ -64,9 +65,13 @@ def create_app(
         allow_headers=["*"],
     )
 
-    @app.exception_handler(KeyError)
-    async def key_error_handler(_: Request, exc: KeyError) -> JSONResponse:
-        return _error(404, "not_found", str(exc).strip("'"))
+    @app.exception_handler(NotFoundError)
+    async def not_found_handler(_: Request, exc: NotFoundError) -> JSONResponse:
+        return _error(404, exc.code, str(exc))
+
+    @app.exception_handler(ConflictError)
+    async def conflict_handler(_: Request, exc: ConflictError) -> JSONResponse:
+        return _error(409, exc.code, str(exc))
 
     @app.exception_handler(ValueError)
     async def value_error_handler(_: Request, exc: ValueError) -> JSONResponse:
@@ -91,7 +96,7 @@ def create_app(
 
     @app.get("/api/v1/documents", response_model=list[DocumentResponse])
     def list_documents() -> list[dict]:
-        return store.list_documents()
+        return documents.list_documents()
 
     @app.post("/api/v1/documents", status_code=201, response_model=DocumentResponse)
     async def upload_document(file: Annotated[UploadFile, File()]) -> dict:
@@ -99,7 +104,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="只接受 PDF 文件")
         temporary = await _receive_upload(file, resolved.data_dir / "uploads", resolved.max_upload_bytes, ".pdf")
         try:
-            return container.import_pipeline.import_pdf(temporary, file.filename)
+            return documents.import_pdf(temporary, file.filename)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"无法导入 PDF：{str(exc)[:500]}") from exc
         finally:
@@ -107,7 +112,7 @@ def create_app(
 
     @app.get("/api/v1/documents/{document_id}", response_model=DocumentResponse)
     def get_document(document_id: str) -> dict:
-        return _document(store, document_id)
+        return documents.get_document(document_id)
 
     @app.post("/api/v1/documents/{document_id}/parse-jobs", status_code=202, response_model=CommandResponse)
     def submit_parse(document_id: str, request: ParseJobRequest | None = None) -> dict:
@@ -122,136 +127,102 @@ def create_app(
 
     @app.get("/api/v1/jobs", response_model=list[JobResponse])
     def list_jobs(document_id: str | None = None) -> list[dict]:
-        return store.list_jobs(document_id)
+        return jobs.list_jobs(document_id)
 
     @app.get("/api/v1/jobs/{job_id}", response_model=JobResponse)
     def get_job(job_id: str) -> dict:
-        job = store.get_job(job_id)
-        if not job:
-            raise KeyError("任务不存在")
-        return job
+        return jobs.get_job(job_id)
 
     @app.post("/api/v1/jobs/{job_id}/cancel", response_model=JobResponse)
     def cancel_job(job_id: str) -> dict:
-        return store.request_job_cancel(job_id)
+        return jobs.request_cancel(job_id)
 
     @app.get("/api/v1/documents/{document_id}/parse-runs")
     def list_parse_runs(document_id: str) -> list[dict]:
-        _document(store, document_id)
-        return store.list_parse_runs(document_id)
+        return documents.list_parse_runs(document_id)
 
     @app.get("/api/v1/documents/{document_id}/current-parse-run")
     def current_parse_run(document_id: str) -> dict:
-        _document(store, document_id)
-        run = store.get_current_parse_run(document_id)
-        if not run:
-            raise KeyError("尚未选择当前解析运行")
-        return {**run, "selection_history": store.list_parse_run_selections(document_id)}
+        return documents.current_parse_run(document_id)
 
     @app.post("/api/v1/documents/{document_id}/current-parse-run")
     def select_current_parse_run(document_id: str, request: CurrentParseRunRequest) -> dict:
-        _document(store, document_id)
-        return store.select_current_parse_run(document_id, request.run_id, request.reason, resolved.data_dir)
+        return documents.select_current_parse_run(document_id, request.run_id, request.reason)
 
     @app.get("/api/v1/parse-runs/{run_id}/pages", response_model=list[PageResponse])
     def list_run_pages(run_id: str) -> list[dict]:
-        pages = store.list_pages_for_run(run_id)
+        pages = documents.list_run_pages(run_id)
         for page in pages:
             page["image_url"] = f"/api/v1/pages/{page['id']}/image"
         return pages
 
     @app.get("/api/v1/parse-runs/{run_id}/pages/{page_no}", response_model=PageResponse)
     def get_run_page(run_id: str, page_no: int) -> dict:
-        page = store.get_page_for_run(run_id, page_no)
-        if not page:
-            raise KeyError("解析页面不存在")
+        page = documents.get_run_page(run_id, page_no)
         page["image_url"] = f"/api/v1/pages/{page['id']}/image"
         return page
 
     @app.get("/api/v1/parse-runs/{run_id}/artifact-summary")
     def get_artifact_summary(run_id: str) -> dict:
-        return store.get_artifact_summary(run_id)
+        return documents.artifact_summary(run_id)
 
     @app.get("/api/v1/parse-runs/{run_id}/page-index")
     def get_page_index(run_id: str) -> list[dict]:
-        return store.list_page_index(run_id)
+        return documents.page_index(run_id)
 
     @app.get("/api/v1/parse-runs/{run_id}/artifacts", response_model=list[ArtifactResponse])
     def list_run_artifacts(run_id: str) -> list[dict]:
-        artifacts = store.list_artifacts_for_run(run_id)
+        artifacts = documents.list_artifacts(run_id)
         for artifact in artifacts:
             artifact["download_url"] = f"/api/v1/artifacts/{artifact['id']}/content"
         return artifacts
 
     @app.get("/api/v1/artifacts/{artifact_id}/content")
     def artifact_content(artifact_id: str) -> FileResponse:
-        artifact = store.get_artifact(artifact_id)
-        if not artifact:
-            raise KeyError("解析产物不存在")
-        path = _data_path(resolved.data_dir, artifact["path"])
-        if not path.is_file():
-            raise KeyError("解析产物文件不存在")
-        return FileResponse(path, media_type=artifact["mime_type"], filename=path.name)
+        resource = documents.artifact_file(artifact_id)
+        return FileResponse(resource.path, media_type=resource.media_type, filename=resource.filename)
 
     @app.get("/api/v1/documents/{document_id}/pages", response_model=list[PageResponse])
     def list_latest_pages(document_id: str) -> list[dict]:
-        _document(store, document_id)
-        pages = store.list_pages(document_id)
+        pages = documents.list_current_pages(document_id)
         for page in pages:
             page["image_url"] = f"/api/v1/pages/{page['id']}/image"
         return pages
 
     @app.get("/api/v1/pages/{page_id}/image")
     def page_image(page_id: str) -> FileResponse:
-        page = store.get_page(page_id)
-        path = _data_path(resolved.data_dir, page["image_path"]) if page else None
-        if not page or path is None or not path.is_file():
-            raise KeyError("页面图像不存在")
-        return FileResponse(path, media_type="image/png")
+        resource = documents.page_image(page_id)
+        return FileResponse(resource.path, media_type=resource.media_type, filename=resource.filename)
 
     @app.post("/api/v1/pages/{page_id}/reviews", response_model=PageResponse)
     def review_page(page_id: str, request: ReviewRequest) -> dict:
-        store.review_page(page_id, request.status, request.reason)
-        page = store.get_page(page_id)
-        if not page:
-            raise KeyError("页面不存在")
+        page = reviews.review_page(page_id, request.status, request.reason)
         page["image_url"] = f"/api/v1/pages/{page_id}/image"
         return page
 
     @app.get("/api/v1/documents/{document_id}/knowledge-nodes", response_model=list[KnowledgeNodeResponse])
     def list_nodes(document_id: str) -> list[dict]:
-        _document(store, document_id)
-        return store.list_candidates(document_id)
+        return reviews.list_nodes(document_id)
 
     @app.post("/api/v1/knowledge-nodes/{node_id}/reviews", response_model=KnowledgeNodeResponse)
     def review_node(node_id: str, request: ReviewRequest) -> dict:
-        store.review_candidate(node_id, request.status, request.reason)
-        node = store.get_candidate(node_id)
-        if not node:
-            raise KeyError("知识节点不存在")
-        return node
+        return reviews.review_node(node_id, request.status, request.reason)
 
     @app.get("/api/v1/documents/{document_id}/knowledge-edges", response_model=list[KnowledgeEdgeResponse])
     def list_edges(document_id: str) -> list[dict]:
-        _document(store, document_id)
-        return store.list_edges(document_id)
+        return reviews.list_edges(document_id)
 
     @app.post("/api/v1/knowledge-edges/{edge_id}/reviews", response_model=KnowledgeEdgeResponse)
     def review_edge(edge_id: str, request: ReviewRequest) -> dict:
-        store.review_edge(edge_id, request.status, request.reason)
-        edge = store.get_edge(edge_id)
-        if not edge:
-            raise KeyError("知识关系不存在")
-        return edge
+        return reviews.review_edge(edge_id, request.status, request.reason)
 
     @app.post("/api/v1/documents/{document_id}/workbook-exports")
     def export_workbook(document_id: str) -> dict:
-        _document(store, document_id)
         return workbooks.export_draft(document_id)
 
     @app.post("/api/v1/documents/{document_id}/workbook-imports")
     async def import_workbook(document_id: str, file: Annotated[UploadFile, File()]) -> dict:
-        _document(store, document_id)
+        documents.get_document(document_id)
         if not file.filename or Path(file.filename).suffix.lower() != ".xlsx":
             raise HTTPException(status_code=400, detail="只接受 XLSX 工作簿")
         temporary = await _receive_upload(file, resolved.data_dir / "uploads", resolved.max_upload_bytes, ".xlsx")
@@ -262,48 +233,21 @@ def create_app(
 
     @app.get("/api/v1/documents/{document_id}/workbook")
     def download_workbook(document_id: str) -> FileResponse:
-        _document(store, document_id)
-        revision = store.latest_workbook_revision(document_id)
-        if not revision or not Path(revision["path"]).is_file():
-            raise KeyError("尚无工作簿草稿")
-        return FileResponse(revision["path"], filename="axiom-flow-draft.xlsx")
+        resource = workbooks.download(document_id)
+        return FileResponse(resource.path, media_type=resource.media_type, filename=resource.filename)
 
     @app.post("/api/v1/documents/{document_id}/releases")
     def publish(document_id: str) -> dict:
-        _document(store, document_id)
-        release = workbooks.publish_latest(document_id)
-        store.update_document_status(document_id, "published")
-        return release
+        return workbooks.publish_latest(document_id)
 
     @app.get("/api/v1/documents/{document_id}/graph")
     def graph(document_id: str) -> dict:
-        _document(store, document_id)
-        release = store.latest_release(document_id)
-        if not release:
-            raise KeyError("尚未发布知识图谱")
-        return {"release_id": release["id"], **release["snapshot"]}
+        return workbooks.graph(document_id)
 
-    web_dir = Path(__file__).resolve().parents[2] / "web"
+    web_dir = resolved.web_dir.resolve()
     if web_dir.is_dir():
         app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
     return app
-
-
-def _document(store: Any, document_id: str) -> dict:
-    document = store.get_document(document_id)
-    if not document:
-        raise KeyError("文档不存在")
-    return document
-
-
-def _data_path(data_dir: Path, stored_path: str) -> Path:
-    """解析数据库中的相对产物路径并拒绝数据目录逃逸。"""
-    root = data_dir.resolve()
-    candidate = Path(stored_path)
-    resolved = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
-    if not resolved.is_relative_to(root):
-        raise ValueError("解析产物路径超出数据目录")
-    return resolved
 
 
 async def _receive_upload(file: UploadFile, directory: Path, limit: int, suffix: str) -> Path:

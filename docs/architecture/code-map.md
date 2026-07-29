@@ -5,7 +5,7 @@
 维护位置：`docs/architecture/code-map.md`  
 关联代码：受管模块清单  
 关联测试：`tests/test_code_document_mapping.py`  
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0012-backend-package-boundaries.md`、`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`
 
 本表是代码与文档关系的唯一事实源。v0.1 运行代码已删除，其范围和 Git 恢复锚点见
 `docs/history/baselines/v01-mineru.md`。`__init__.py` 及无业务语义的极短文件豁免。
@@ -13,30 +13,34 @@
 | 代码路径 | 层级/职责 | 状态 | 设计关联 | 关联测试 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | `alembic.ini` | Alembic CLI 配置 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 定位迁移环境且不保存数据库凭证。 |
-| `backend/infrastructure/config.py` | v0.3 本地配置 | Current | `docs/design/document-pipeline.md` | `tests/test_document_workflow.py` | 仅读取本地 `.env` 与运行目录。 |
-| `backend/infrastructure/bailian.py` | 百炼模型适配 | Current | `docs/design/document-pipeline.md` | `tests/test_providers.py` | 隔离 DashScope OpenAI 兼容协议。 |
-| `backend/infrastructure/artifacts.py` | 不可变解析产物包 | Current | `docs/design/document-pipeline.md` | `tests/test_parse_artifacts.py` | 共享页图、v1/v2 哈希清单和完整性校验。 |
-| `backend/infrastructure/pdf_pipeline.py` | PDF 解析基础设施 pipeline | Current | `docs/design/document-pipeline.md` | `tests/test_v03_jobs.py` | 逐页提交规范化页面事实。 |
-| `backend/infrastructure/database.py` | MySQL 连接与迁移辅助 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 校验 schema 且不隐式迁移。 |
-| `backend/application/workbooks.py` | Excel 草稿与显式发布用例 | Current | `docs/design/excel-release-workflow.md` | `tests/test_document_workflow.py` | 导入必须完成模板和证据校验。 |
-| `backend/main.py` | 唯一 ASGI 入口 | Current | `docs/design/web-workbench.md` | `tests/test_v03_api.py` | 仅创建 API 应用。 |
-| `backend/domain/models.py` | 状态、任务资源和领域错误 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_jobs.py` | 不依赖框架和供应商 SDK。 |
-| `backend/bootstrap.py` | 应用与基础设施装配根 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_architecture_dependencies.py` | API 与 Worker 共用。 |
-| `backend/application/ports.py` | 供应商与 pipeline 端口 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_architecture_dependencies.py` | 应用层不依赖适配器。 |
-| `backend/infrastructure/mysql.py` | 唯一 MySQL 仓储适配器 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_jobs.py` | 追加式运行、任务租约和审阅历史。 |
-| `backend/application/jobs.py` | 任务提交与执行用例 | Current | `docs/design/background-jobs.md` | `tests/test_v03_jobs.py` | HTTP 和 Worker 共用。 |
-| `backend/api/schemas.py` | API v1 请求与响应模型 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_api.py` | 统一错误、任务和产物资源。 |
-| `backend/api/main.py` | API v1 与静态入口 | Current | `docs/design/web-workbench.md` | `tests/test_v03_api.py` | 长命令只入队。 |
-| `backend/worker/runner.py` | 独立任务 Worker | Current | `docs/design/background-jobs.md` | `tests/test_v03_jobs.py` | 租约、重试和取消。 |
-| `backend/worker/__main__.py` | Worker 命令入口 | Current | `docs/design/background-jobs.md` | `tests/test_v03_jobs.py` | 本地独立进程。 |
-| `backend/tools/reset_dev_database.py` | 受保护开发库重建 | Current | `docs/adr/0007-versioned-domain-records.md` | `tests/test_reset_safety.py` | 默认只允许测试库。 |
-| `backend/tools/prune_parse_runs.py` | 受保护解析运行清理 | Current | `docs/adr/0011-current-parse-run-and-prunable-artifacts.md` | `tests/test_prune_parse_runs.py` | dry-run、暂存、回滚和显式 purge。 |
-| `backend/migrations/env.py` | Alembic 迁移运行环境 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 只由显式迁移命令调用。 |
-| `backend/migrations/script.py.mako` | Alembic revision 生成模板 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 生成符合中文追溯规范的空迁移骨架。 |
-| `backend/migrations/versions/20260727_0001_mysql_v02.py` | MySQL 初始 schema | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 创建基础 `af_` 表。 |
-| `backend/migrations/versions/20260727_0002_v03_jobs_and_history.py` | 任务与历史 schema | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_jobs.py` | 增加任务和版本表。 |
-| `backend/migrations/versions/20260728_0003_parse_artifacts.py` | 解析产物元数据 schema | Current | `docs/adr/0008-immutable-parse-artifact-bundles.md` | `tests/test_mysql_migrations.py` | 增加 MIME、大小和定位元数据。 |
-| `backend/migrations/versions/20260728_0004_current_parse_run.py` | 当前运行与清理状态 schema | Current | `docs/adr/0011-current-parse-run-and-prunable-artifacts.md` | `tests/test_mysql_migrations.py` | 指针、选择历史、墓碑和回填。 |
+| `src/axiom_flow/infrastructure/config.py` | v0.3 本地配置 | Current | `docs/design/document-pipeline.md` | `tests/test_document_workflow.py` | 仅读取本地 `.env` 与运行目录。 |
+| `src/axiom_flow/infrastructure/bailian.py` | 百炼模型适配 | Current | `docs/design/document-pipeline.md` | `tests/test_providers.py` | 隔离 DashScope OpenAI 兼容协议。 |
+| `src/axiom_flow/infrastructure/artifacts.py` | 不可变解析产物包 | Current | `docs/design/document-pipeline.md` | `tests/test_parse_artifacts.py` | 共享页图、v1/v2 哈希清单和完整性校验。 |
+| `src/axiom_flow/infrastructure/pdf_pipeline.py` | PDF 解析基础设施 pipeline | Current | `docs/design/document-pipeline.md` | `tests/test_v03_jobs.py` | 逐页提交规范化页面事实。 |
+| `src/axiom_flow/infrastructure/database.py` | MySQL 连接与迁移辅助 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 校验 schema 且不隐式迁移。 |
+| `src/axiom_flow/infrastructure/files.py` | 受控本地文件定位适配器 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_v03_api.py` | 拒绝数据目录逃逸并返回文件资源。 |
+| `src/axiom_flow/application/workbooks.py` | Excel 草稿与显式发布用例 | Current | `docs/design/excel-release-workflow.md` | `tests/test_document_workflow.py` | 导入必须完成模板和证据校验。 |
+| `src/axiom_flow/infrastructure/workbooks.py` | OpenPyXL 工作簿格式适配器 | Current | `docs/design/excel-release-workflow.md` | `tests/test_document_workflow.py` | 只负责文件格式读写和结构校验。 |
+| `src/axiom_flow/main.py` | 唯一 ASGI 入口 | Current | `docs/design/web-workbench.md` | `tests/test_v03_api.py` | 仅创建 API 应用。 |
+| `src/axiom_flow/domain/models.py` | 状态、任务资源和领域错误 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_jobs.py` | 不依赖框架和供应商 SDK。 |
+| `src/axiom_flow/bootstrap.py` | 应用与基础设施装配根 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_architecture_dependencies.py` | API 与 Worker 共用。 |
+| `src/axiom_flow/application/ports.py` | 供应商与 pipeline 端口 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_architecture_dependencies.py` | 应用层不依赖适配器。 |
+| `src/axiom_flow/application/documents.py` | 文档、运行、页面与产物用例 | Current | `docs/design/document-pipeline.md` | `tests/test_v03_api.py` | API 不直接访问仓储或本地路径。 |
+| `src/axiom_flow/application/reviews.py` | 页面与知识人工审阅用例 | Current | `docs/design/web-workbench.md` | `tests/test_document_workflow.py` | 统一页面、节点和关系审阅入口。 |
+| `src/axiom_flow/infrastructure/mysql.py` | 唯一 MySQL 仓储适配器 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_jobs.py` | 追加式运行、任务租约和审阅历史。 |
+| `src/axiom_flow/application/jobs.py` | 任务提交与执行用例 | Current | `docs/design/background-jobs.md` | `tests/test_v03_jobs.py` | HTTP 和 Worker 共用。 |
+| `src/axiom_flow/api/schemas.py` | API v1 请求与响应模型 | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_api.py` | 统一错误、任务和产物资源。 |
+| `src/axiom_flow/api/main.py` | API v1 与静态入口 | Current | `docs/design/web-workbench.md` | `tests/test_v03_api.py` | 长命令只入队。 |
+| `src/axiom_flow/worker/runner.py` | 独立任务 Worker | Current | `docs/design/background-jobs.md` | `tests/test_v03_jobs.py` | 租约、重试和取消。 |
+| `src/axiom_flow/worker/__main__.py` | Worker 命令入口 | Current | `docs/design/background-jobs.md` | `tests/test_v03_jobs.py` | 本地独立进程。 |
+| `src/axiom_flow/tools/reset_dev_database.py` | 受保护开发库重建 | Current | `docs/adr/0007-versioned-domain-records.md` | `tests/test_reset_safety.py` | 默认只允许测试库。 |
+| `src/axiom_flow/tools/prune_parse_runs.py` | 受保护解析运行清理 | Current | `docs/adr/0011-current-parse-run-and-prunable-artifacts.md` | `tests/test_prune_parse_runs.py` | dry-run、暂存、回滚和显式 purge。 |
+| `src/axiom_flow/migrations/env.py` | Alembic 迁移运行环境 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 只由显式迁移命令调用。 |
+| `src/axiom_flow/migrations/script.py.mako` | Alembic revision 生成模板 | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 生成符合中文追溯规范的空迁移骨架。 |
+| `src/axiom_flow/migrations/versions/20260727_0001_mysql_v02.py` | MySQL 初始 schema | Current | `docs/architecture/data-lifecycle.md` | `tests/test_mysql_migrations.py` | 创建基础 `af_` 表。 |
+| `src/axiom_flow/migrations/versions/20260727_0002_v03_jobs_and_history.py` | 任务与历史 schema | Current | `docs/architecture/runtime-architecture.md` | `tests/test_v03_jobs.py` | 增加任务和版本表。 |
+| `src/axiom_flow/migrations/versions/20260728_0003_parse_artifacts.py` | 解析产物元数据 schema | Current | `docs/adr/0008-immutable-parse-artifact-bundles.md` | `tests/test_mysql_migrations.py` | 增加 MIME、大小和定位元数据。 |
+| `src/axiom_flow/migrations/versions/20260728_0004_current_parse_run.py` | 当前运行与清理状态 schema | Current | `docs/adr/0011-current-parse-run-and-prunable-artifacts.md` | `tests/test_mysql_migrations.py` | 指针、选择历史、墓碑和回填。 |
 | `web/index.html` | v0.3 工作台页面结构 | Current | `docs/design/web-workbench.md` | `tests/test_v03_api.py` | 显示任务进度和审阅视图。 |
 | `web/style.css` | v0.3 工作台样式 | Current | `docs/design/web-workbench.md` | `tests/test_v03_api.py` | 响应式桌面与窄屏布局。 |
 | `web/app.js` | v0.3 工作台交互 | Current | `docs/design/web-workbench.md` | `tests/test_v03_api.py` | 只调用 API v1。 |
@@ -44,7 +48,7 @@
 | `evaluation/preflight.py` | 百炼单页连通性预检 | Current | `docs/design/evaluation-governance.md` | `tests/test_evaluation_preflight.py` | 只调用 OCR 模型并沿用页级重试。 |
 | `evaluation/scanned_textbook.py` | 扫描教材候选评测执行 | Current | `docs/design/evaluation-governance.md` | `tests/test_scanned_textbook_evaluation.py` | 生成响应和人工评分模板。 |
 | `tests/conftest.py` | MySQL 测试库准备与清理 | Current | `docs/architecture/data-lifecycle.md` | — | 仅自动创建隔离测试库。 |
-| `tests/test_architecture_dependencies.py` | Backend 依赖方向测试 | Current | `docs/architecture/runtime-architecture.md` | — | 禁止领域和应用层反向依赖。 |
+| `tests/test_architecture_dependencies.py` | Python 包依赖方向测试 | Current | `docs/architecture/runtime-architecture.md` | — | 禁止领域和应用层反向依赖。 |
 | `tests/test_architecture_documents.py` | 架构文档语义同步测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护 Mermaid 视图、领域状态和已知架构偏差。 |
 | `tests/test_code_document_mapping.py` | 映射一致性测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护本表和文件头。 |
 | `tests/test_design_documents.py` | 设计契约语义同步测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护流程图、接口字段和关键常量。 |

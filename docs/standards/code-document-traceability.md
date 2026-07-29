@@ -3,7 +3,7 @@
 状态：Current
 最后更新：2026-07-29
 治理对象：code-map、模块 DesignRef、架构/设计关联和语义同步门禁
-依据 ADR：`docs/adr/0012-backend-package-boundaries.md`、`docs/adr/0015-standards-as-governance-source.md`
+依据 ADR：`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`
 关联测试：`tests/test_code_document_mapping.py`、`tests/test_architecture_documents.py`、`tests/test_design_documents.py`
 
 ## 目的与边界

@@ -2,21 +2,21 @@
 模块职责：验证 v0.3 任务幂等、租约、版本历史、任务级预算与审阅事件。
 设计关联（DesignRef）：docs/design/background-jobs.md
 实现状态：Current
-被测代码：backend/application/jobs.py、backend/infrastructure/mysql.py、backend/worker/runner.py
+被测代码：src/axiom_flow/application/jobs.py、src/axiom_flow/infrastructure/mysql.py、src/axiom_flow/worker/runner.py
 """
 
 from pathlib import Path
 
 import fitz
-import httpx
 import pytest
 from sqlalchemy import text
 
-from backend.application.jobs import JobApplicationService, JobPolicy
-from backend.infrastructure.config import Settings
-from backend.infrastructure.mysql import MySQLRepository
-from backend.infrastructure.pdf_pipeline import PDFPipeline
-from backend.worker.runner import Worker
+from axiom_flow.application.jobs import JobApplicationService, JobPolicy
+from axiom_flow.domain.models import RetryableJobError
+from axiom_flow.infrastructure.config import Settings
+from axiom_flow.infrastructure.mysql import MySQLRepository
+from axiom_flow.infrastructure.pdf_pipeline import PDFPipeline
+from axiom_flow.worker.runner import Worker
 
 
 class FakeProvider:
@@ -213,7 +213,7 @@ def test_scanned_parse_retry_reuses_page_checkpoint(tmp_path: Path, mysql_settin
             self.calls += 1
             parsed_page_numbers.append(page_no)
             if self.should_fail and page_no == 2:
-                raise httpx.ReadTimeout("temporary outage")
+                    raise RetryableJobError("temporary outage")
             return {
                 "markdown": f"扫描页 {page_no}", "page_kind": "content",
                 "blocks": [{

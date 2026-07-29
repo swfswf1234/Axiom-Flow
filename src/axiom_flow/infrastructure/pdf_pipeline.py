@@ -15,10 +15,10 @@ from typing import Any
 
 import fitz
 
-from backend.application.ports import KnowledgeProvider, VisionProvider
-from backend.infrastructure.artifacts import ArtifactFile, ParseArtifactWriter
-from backend.infrastructure.bailian import InvalidModelPage
-from backend.infrastructure.config import Settings
+from axiom_flow.application.ports import KnowledgeProvider, VisionProvider
+from axiom_flow.infrastructure.artifacts import ArtifactFile, ParseArtifactWriter
+from axiom_flow.infrastructure.bailian import InvalidModelPage
+from axiom_flow.infrastructure.config import Settings
 
 
 class PDFPipeline:

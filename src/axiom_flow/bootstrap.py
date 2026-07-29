@@ -7,13 +7,17 @@
 
 from dataclasses import dataclass
 
-from backend.application.jobs import JobApplicationService, JobPolicy
-from backend.application.ports import ProviderFactory
-from backend.application.workbooks import WorkbookService
-from backend.infrastructure.bailian import BailianProvider
-from backend.infrastructure.config import Settings
-from backend.infrastructure.mysql import MySQLRepository
-from backend.infrastructure.pdf_pipeline import PDFPipeline
+from axiom_flow.application.documents import DocumentApplicationService
+from axiom_flow.application.jobs import JobApplicationService, JobPolicy
+from axiom_flow.application.ports import ProviderFactory
+from axiom_flow.application.reviews import ReviewApplicationService
+from axiom_flow.application.workbooks import WorkbookService
+from axiom_flow.infrastructure.bailian import BailianProvider
+from axiom_flow.infrastructure.config import Settings
+from axiom_flow.infrastructure.files import LocalFileLocator
+from axiom_flow.infrastructure.mysql import MySQLRepository
+from axiom_flow.infrastructure.pdf_pipeline import PDFPipeline
+from axiom_flow.infrastructure.workbooks import OpenPyxlWorkbookGateway
 
 
 @dataclass(slots=True)
@@ -21,10 +25,18 @@ class ApplicationContainer:
     """API 与 Worker 共享的进程级依赖集合。"""
 
     settings: Settings
-    repository: MySQLRepository
+    documents: DocumentApplicationService
     jobs: JobApplicationService
-    import_pipeline: PDFPipeline
+    reviews: ReviewApplicationService
     workbooks: WorkbookService
+    _repository: MySQLRepository
+
+    def start(self) -> None:
+        """校验运行 schema，不隐式迁移。"""
+        self._repository.require_schema()
+
+    def close(self) -> None:
+        self._repository.dispose()
 
 
 def build_container(
@@ -61,10 +73,14 @@ def build_container(
         worker_lease_seconds=resolved.worker_lease_seconds,
     )
     jobs = JobApplicationService(repository, policy, pipeline_factory)
+    files = LocalFileLocator(resolved.data_dir)
     return ApplicationContainer(
         settings=resolved,
-        repository=repository,
+        documents=DocumentApplicationService(repository, pipeline_factory(), files, resolved.data_dir),
         jobs=jobs,
-        import_pipeline=pipeline_factory(),
-        workbooks=WorkbookService(repository, resolved.data_dir),
+        reviews=ReviewApplicationService(repository),
+        workbooks=WorkbookService(
+            repository, OpenPyxlWorkbookGateway(resolved.data_dir), files,
+        ),
+        _repository=repository,
     )

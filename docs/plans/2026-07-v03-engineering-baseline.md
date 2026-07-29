@@ -3,7 +3,7 @@
 状态：Blocked
 任务类型：D
 最后更新：2026-07-29
-关联 ADR：`docs/adr/0012-backend-package-boundaries.md`、`docs/adr/0013-selective-history-retention.md`、`docs/adr/0014-risk-based-plan-lifecycle.md`
+关联 ADR：`docs/adr/0013-selective-history-retention.md`、`docs/adr/0014-risk-based-plan-lifecycle.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`
 关联设计：`docs/architecture/runtime-architecture.md`
 关联 Tracker：`docs/trackers/todo.md`（REL-001、REG-001）
 归档判定：Retain；发布后保留远端 CI、标签和发布锚点作为里程碑证据。

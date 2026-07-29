@@ -3,7 +3,7 @@
 设计状态：Accepted
 实现状态：Implemented
 最后更新：2026-07-29
-关联代码：`backend/application/jobs.py`、`backend/worker/runner.py`、`backend/worker/__main__.py`
+关联代码：`src/axiom_flow/application/jobs.py`、`src/axiom_flow/worker/runner.py`、`src/axiom_flow/worker/__main__.py`
 关联测试：`tests/test_design_documents.py`、`tests/test_v03_jobs.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`
 

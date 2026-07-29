@@ -7,6 +7,7 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 
@@ -86,6 +87,21 @@ class PermanentJobError(DomainError):
 
 class JobCancelled(DomainError):
     code = "job_cancelled"
+
+
+class RetryableJobError(DomainError):
+    """基础设施暂时失败，允许任务按既定 attempt 策略重试。"""
+
+    code = "retryable_job_error"
+
+
+@dataclass(frozen=True, slots=True)
+class FileResource:
+    """应用层交给传输层的受约束本地文件。"""
+
+    path: Path
+    media_type: str
+    filename: str
 
 
 @dataclass(frozen=True, slots=True)

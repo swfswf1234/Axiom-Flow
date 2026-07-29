@@ -13,8 +13,8 @@ from pathlib import Path
 from alembic import command
 from sqlalchemy import create_engine, text
 
-from backend.infrastructure.config import Settings
-from backend.infrastructure.database import alembic_config
+from axiom_flow.infrastructure.config import Settings
+from axiom_flow.infrastructure.database import alembic_config
 
 SYSTEM_DATABASES = {"mysql", "information_schema", "performance_schema", "sys"}
 

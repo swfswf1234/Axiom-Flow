@@ -10,7 +10,7 @@ import logging
 import time
 from typing import Any
 
-from backend.application.jobs import JobApplicationService
+from axiom_flow.application.jobs import JobApplicationService
 
 LOGGER = logging.getLogger("axiom_flow.worker")
 
@@ -20,27 +20,24 @@ class Worker:
 
     def __init__(self, service: JobApplicationService, worker_id: str, poll_seconds: float = 1.0) -> None:
         self.service = service
-        self.store = service.store
         self.worker_id = worker_id
         self.poll_seconds = poll_seconds
 
     def run_once(self) -> dict[str, Any] | None:
-        job = self.store.claim_next_job(self.worker_id, self.service.policy.worker_lease_seconds)
+        job = self.service.claim_next(self.worker_id)
         if not job:
             return None
         try:
             result = asyncio.run(self.service.execute(job, self.worker_id))
-            if self.store.job_cancel_requested(job["id"]):
-                self.store.cancel_job(job["id"], self.worker_id)
+            if self.service.cancel_requested(job["id"]):
+                return self.service.cancel(job["id"], self.worker_id)
             else:
-                self.store.complete_job(job["id"], self.worker_id, result)
+                return self.service.complete(job["id"], self.worker_id, result)
         except InterruptedError:
-            self.store.cancel_job(job["id"], self.worker_id)
+            return self.service.cancel(job["id"], self.worker_id)
         except BaseException as exc:
-            error = {"code": type(exc).__name__, "message": str(exc)[:1000]}
-            self.store.fail_job(job["id"], self.worker_id, error, self.service.is_retryable(exc))
             LOGGER.exception("任务执行失败：%s", job["id"])
-        return self.store.get_job(job["id"])
+            return self.service.fail(job["id"], self.worker_id, exc)
 
     def run_forever(self) -> None:
         while True:
@@ -49,8 +46,8 @@ class Worker:
 
 
 def build_worker(settings: Any | None = None) -> Worker:
-    from backend.bootstrap import build_container
+    from axiom_flow.bootstrap import build_container
 
     container = build_container(settings)
-    container.repository.require_schema()
+    container.start()
     return Worker(container.jobs, container.settings.worker_id, container.settings.worker_poll_seconds)

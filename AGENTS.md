@@ -21,8 +21,8 @@ Axiom-Flow 是 QED 的本地优先技术 PDF 解析与质量审阅组件。当�
 常用定位命令：
 
 ```powershell
-rg -n "<关键词>" backend evaluation tests docs
-rg -n "设计关联（DesignRef）|被测代码" backend evaluation tests
+rg -n "<关键词>" src evaluation tests docs
+rg -n "设计关联（DesignRef）|被测代码" src evaluation tests
 rg -n "<接口或状态名>" docs/adr docs/design docs/history
 ```
 
@@ -30,12 +30,12 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 | 任务 | 首查实现 | 设计/协议 | 定向测试 |
 | --- | --- | --- | --- |
-| OCR、PDF、页面事实、manifest | `backend/infrastructure/{bailian,pdf_pipeline,artifacts}.py` | `docs/design/document-pipeline.md`、ADR 0008/0010 | `test_providers.py`、`test_parse_artifacts.py`、`test_v03_jobs.py` |
-| API、持久任务、Worker | `backend/api/`、`backend/application/jobs.py`、`backend/worker/` | `background-jobs.md`、`web-workbench.md`、ADR 0006 | `test_v03_api.py`、`test_v03_jobs.py` |
-| MySQL、迁移、当前 ParseRun | `alembic.ini`、`backend/infrastructure/{database,mysql}.py`、`backend/migrations/` | `data-lifecycle.md`、ADR 0005/0007/0011 | `test_mysql_migrations.py`、`test_current_parse_runs.py` |
-| 产物或运行清理 | `backend/tools/prune_parse_runs.py`、`artifacts.py` | ADR 0011、`operations.md` | `test_prune_parse_runs.py`、`test_parse_artifacts.py` |
-| 知识、关系、工作簿、发布 | `backend/application/workbooks.py`、`mysql.py` | `excel-release-workflow.md` | `test_document_workflow.py` |
-| Web 对照与交互 | `web/`、`backend/api/main.py`、`schemas.py` | `web-workbench.md` | `test_v03_api.py`、JavaScript 语法检查 |
+| OCR、PDF、页面事实、manifest | `src/axiom_flow/infrastructure/{bailian,pdf_pipeline,artifacts}.py` | `docs/design/document-pipeline.md`、ADR 0008/0010 | `test_providers.py`、`test_parse_artifacts.py`、`test_v03_jobs.py` |
+| API、持久任务、Worker | `src/axiom_flow/api/`、`src/axiom_flow/application/jobs.py`、`src/axiom_flow/worker/` | `background-jobs.md`、`web-workbench.md`、ADR 0006 | `test_v03_api.py`、`test_v03_jobs.py` |
+| MySQL、迁移、当前 ParseRun | `alembic.ini`、`src/axiom_flow/infrastructure/{database,mysql}.py`、`src/axiom_flow/migrations/` | `data-lifecycle.md`、ADR 0005/0007/0011 | `test_mysql_migrations.py`、`test_current_parse_runs.py` |
+| 产物或运行清理 | `src/axiom_flow/tools/prune_parse_runs.py`、`artifacts.py` | ADR 0011、`operations.md` | `test_prune_parse_runs.py`、`test_parse_artifacts.py` |
+| 知识、关系、工作簿、发布 | `src/axiom_flow/application/workbooks.py`、`mysql.py` | `excel-release-workflow.md` | `test_document_workflow.py` |
+| Web 对照与交互 | `web/`、`src/axiom_flow/api/main.py`、`schemas.py` | `web-workbench.md` | `test_v03_api.py`、JavaScript 语法检查 |
 | 模型评测与评分 | `evaluation/` | `evaluation-governance.md`、实验 ADR | `test_evaluation_*.py`、`test_scanned_textbook_evaluation.py` |
 | 计划、ADR 与文档目录 | `docs/`、`AGENTS.md` | `task-lifecycle.md`、`documentation.md`、`adr-governance.md` | `test_plan_governance.py`、`test_standard_governance.py`、`test_adr_structure.py` |
 | DesignRef 与语义同步 | 模块文件头、`code-map.md`、架构/设计 | `code-document-traceability.md` | 映射、架构和设计语义测试 |
@@ -46,7 +46,7 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 | 现象 | 首查位置 | 首个验证 |
 | --- | --- | --- |
-| API 404、422 或错误格式异常 | `backend/api/main.py`、`schemas.py` | `pytest tests/test_v03_api.py -q` |
+| API 404、422 或错误格式异常 | `src/axiom_flow/api/main.py`、`schemas.py` | `pytest tests/test_v03_api.py -q` |
 | 任务排队、租约、取消或重试异常 | `application/jobs.py`、`worker/runner.py`、`mysql.py` | `pytest tests/test_v03_jobs.py -q` |
 | OCR 空内容、截断或供应商响应非法 | `infrastructure/bailian.py`、`pdf_pipeline.py` | `pytest tests/test_providers.py -q` |
 | manifest、哈希或文件下载失败 | `infrastructure/artifacts.py`、`api/main.py` | `pytest tests/test_parse_artifacts.py -q` |

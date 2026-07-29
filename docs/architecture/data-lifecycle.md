@@ -3,7 +3,7 @@
 设计状态：Accepted
 实现状态：Implemented
 最后更新：2026-07-29
-关联代码：`alembic.ini`、`backend/infrastructure/database.py`、`backend/migrations/env.py`、`backend/migrations/script.py.mako`、`backend/migrations/versions/20260727_0001_mysql_v02.py`
+关联代码：`alembic.ini`、`src/axiom_flow/infrastructure/database.py`、`src/axiom_flow/infrastructure/files.py`、`src/axiom_flow/migrations/env.py`、`src/axiom_flow/migrations/script.py.mako`、`src/axiom_flow/migrations/versions/20260727_0001_mysql_v02.py`
 关联测试：`tests/test_architecture_documents.py`、`tests/test_document_workflow.py`、`tests/test_mysql_migrations.py`、`tests/test_current_parse_runs.py`、`tests/test_prune_parse_runs.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0003-excel-publish-source-of-truth.md`、`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`
 

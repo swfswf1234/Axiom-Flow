@@ -15,7 +15,8 @@ from typing import Any
 import httpx
 from json_repair import repair_json
 
-from backend.infrastructure.config import Settings
+from axiom_flow.domain.models import RetryableJobError
+from axiom_flow.infrastructure.config import Settings
 
 
 class ModelBudgetExceeded(RuntimeError):
@@ -121,17 +122,24 @@ class BailianProvider:
         if self.calls >= self.settings.model_call_budget:
             raise ModelBudgetExceeded("已达到 AXIOM_MODEL_CALL_BUDGET 调用上限")
         self.calls += 1
-        async with httpx.AsyncClient(timeout=self.settings.model_timeout_seconds) as client:
-            response = await client.post(
-                f"{self.settings.dashscope_base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {self.settings.api_key_value}"},
-                json={
-                    "model": model, "messages": messages, "temperature": 0,
-                    "max_tokens": self.settings.vision_max_tokens,
-                },
-            )
-            response.raise_for_status()
-            body = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.model_timeout_seconds) as client:
+                response = await client.post(
+                    f"{self.settings.dashscope_base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.settings.api_key_value}"},
+                    json={
+                        "model": model, "messages": messages, "temperature": 0,
+                        "max_tokens": self.settings.vision_max_tokens,
+                    },
+                )
+                response.raise_for_status()
+                body = response.json()
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise RetryableJobError("百炼网络请求暂时失败") from exc
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429 or exc.response.status_code >= 500:
+                raise RetryableJobError(f"百炼暂时返回 HTTP {exc.response.status_code}") from exc
+            raise
         choice = body["choices"][0]
         metadata = {
             "model": str(body.get("model") or model),
@@ -232,10 +240,8 @@ bbox_1000 使用左上角为原点、页面宽高均归一化到 1000 的坐标�
 
     @staticmethod
     def _retryable_page_error(exc: Exception) -> bool:
-        if isinstance(exc, InvalidModelPage | httpx.TimeoutException | httpx.NetworkError):
+        if isinstance(exc, InvalidModelPage | RetryableJobError):
             return True
-        if isinstance(exc, httpx.HTTPStatusError):
-            return exc.response.status_code == 429 or exc.response.status_code >= 500
         return False
 
     async def extract_knowledge(self, markdown: str) -> dict[str, Any]:

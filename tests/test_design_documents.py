@@ -11,8 +11,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import get_args
 
-from backend.api.schemas import PageResponse, ReviewRequest
-from backend.domain.models import JobKind, JobStatus
+from axiom_flow.api.schemas import PageResponse, ReviewRequest
+from axiom_flow.domain.models import JobKind, JobStatus
 from evaluation.scorecard import (
     DEFAULT_MAX_MODEL_CALLS,
     MINIMUM_AVERAGE_SCORE,
@@ -94,7 +94,7 @@ def test_background_job_design_tracks_domain_kinds_and_statuses():
 
 
 def test_workbook_design_tracks_required_sheets_and_relation_types():
-    source = ROOT / "backend" / "application" / "workbooks.py"
+    source = ROOT / "src" / "axiom_flow" / "infrastructure" / "workbooks.py"
     string_sets = _string_sets(source)
     required_sheets = next(values for values in string_sets if "documents" in values)
     relations = next(values for values in string_sets if "RELATED_TO" in values)

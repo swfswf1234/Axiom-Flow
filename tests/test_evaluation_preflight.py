@@ -2,7 +2,7 @@
 模块职责：验证百炼 OCR 单模型连通性预检和脱敏报告。
 设计关联（DesignRef）：docs/design/evaluation-governance.md
 实现状态：Current
-被测代码：evaluation/preflight.py、backend/infrastructure/bailian.py
+被测代码：evaluation/preflight.py、src/axiom_flow/infrastructure/bailian.py
 """
 
 import asyncio

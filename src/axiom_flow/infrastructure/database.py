@@ -16,7 +16,18 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-ROOT = Path(__file__).resolve().parents[2]
+SOURCE_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _alembic_ini() -> Path:
+    """优先使用运行目录配置，源码检出中兼容从子目录调用。"""
+    runtime = Path.cwd() / "alembic.ini"
+    if runtime.is_file():
+        return runtime
+    source = SOURCE_ROOT / "alembic.ini"
+    if source.is_file():
+        return source
+    raise RuntimeError("找不到 alembic.ini，请从项目根目录运行")
 
 
 def utc_now() -> datetime:
@@ -26,7 +37,7 @@ def utc_now() -> datetime:
 
 def alembic_config(database_url: str) -> Config:
     """构造显式数据库 URL 的 Alembic 配置。"""
-    config = Config(str(ROOT / "alembic.ini"))
+    config = Config(str(_alembic_ini()))
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     return config
 

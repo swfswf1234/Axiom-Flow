@@ -13,7 +13,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from backend.domain.models import (
+from axiom_flow.domain.models import (
     DocumentStatus,
     ExtractionRunStatus,
     JobKind,
@@ -22,8 +22,8 @@ from backend.domain.models import (
     ParseRunStatus,
     ReviewStatus,
 )
-from backend.infrastructure.artifacts import ArtifactFile, ParseArtifactWriter
-from backend.infrastructure.database import DatabaseConnection, utc_now
+from axiom_flow.infrastructure.artifacts import ArtifactFile, ParseArtifactWriter
+from axiom_flow.infrastructure.database import DatabaseConnection, utc_now
 
 
 class MySQLRepository(DatabaseConnection):

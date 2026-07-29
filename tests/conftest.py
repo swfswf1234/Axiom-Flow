@@ -10,9 +10,9 @@ import re
 import pymysql
 import pytest
 
-from backend.infrastructure.config import Settings
-from backend.infrastructure.database import upgrade_database
-from backend.infrastructure.mysql import MySQLRepository
+from axiom_flow.infrastructure.config import Settings
+from axiom_flow.infrastructure.database import upgrade_database
+from axiom_flow.infrastructure.mysql import MySQLRepository
 
 
 @pytest.fixture(scope="session")

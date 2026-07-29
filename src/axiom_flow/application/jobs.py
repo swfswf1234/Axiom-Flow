@@ -8,10 +8,8 @@
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-import httpx
-
-from backend.application.ports import PipelineFactory
-from backend.domain.models import JobKind
+from axiom_flow.application.ports import PipelineFactory
+from axiom_flow.domain.models import JobKind, NotFoundError, RetryableJobError
 
 
 class JobRepository(Protocol):
@@ -28,6 +26,15 @@ class JobRepository(Protocol):
         progress_current: int | None = None, progress_total: int | None = None,
     ) -> bool: ...
     def job_cancel_requested(self, job_id: str) -> bool: ...
+    def list_jobs(self, aggregate_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]: ...
+    def get_job(self, job_id: str) -> dict[str, Any] | None: ...
+    def request_job_cancel(self, job_id: str) -> dict[str, Any]: ...
+    def claim_next_job(self, worker_id: str, lease_seconds: int) -> dict[str, Any] | None: ...
+    def complete_job(self, job_id: str, worker_id: str, result: dict[str, Any]) -> None: ...
+    def cancel_job(self, job_id: str, worker_id: str) -> None: ...
+    def fail_job(
+        self, job_id: str, worker_id: str, error: dict[str, Any], retryable: bool,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +91,38 @@ class JobApplicationService:
         version = f"{pages[0]['run_id']}:{self.policy.knowledge_model}"
         return self.store.enqueue_job(JobKind.EXTRACT_KNOWLEDGE, document_id, version)
 
+    def list_jobs(self, document_id: str | None = None) -> list[dict[str, Any]]:
+        return self.store.list_jobs(document_id)
+
+    def get_job(self, job_id: str) -> dict[str, Any]:
+        job = self.store.get_job(job_id)
+        if not job:
+            raise NotFoundError("任务不存在")
+        return job
+
+    def request_cancel(self, job_id: str) -> dict[str, Any]:
+        self.get_job(job_id)
+        return self.store.request_job_cancel(job_id)
+
+    def claim_next(self, worker_id: str) -> dict[str, Any] | None:
+        return self.store.claim_next_job(worker_id, self.policy.worker_lease_seconds)
+
+    def cancel_requested(self, job_id: str) -> bool:
+        return self.store.job_cancel_requested(job_id)
+
+    def complete(self, job_id: str, worker_id: str, result: dict[str, Any]) -> dict[str, Any]:
+        self.store.complete_job(job_id, worker_id, result)
+        return self.get_job(job_id)
+
+    def cancel(self, job_id: str, worker_id: str) -> dict[str, Any]:
+        self.store.cancel_job(job_id, worker_id)
+        return self.get_job(job_id)
+
+    def fail(self, job_id: str, worker_id: str, exc: BaseException) -> dict[str, Any]:
+        error = {"code": type(exc).__name__, "message": str(exc)[:1000]}
+        self.store.fail_job(job_id, worker_id, error, self.is_retryable(exc))
+        return self.get_job(job_id)
+
     async def execute(self, job: dict[str, Any], worker_id: str) -> dict[str, Any]:
         bound_budget = int(job.get("payload", {}).get("model_call_budget", self.policy.model_call_budget))
         pipeline = self.pipeline_factory(bound_budget)
@@ -113,14 +152,10 @@ class JobApplicationService:
 
     @staticmethod
     def is_retryable(exc: BaseException) -> bool:
-        if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
-            return True
-        if isinstance(exc, httpx.HTTPStatusError):
-            return exc.response.status_code == 429 or exc.response.status_code >= 500
-        return False
+        return isinstance(exc, RetryableJobError)
 
     def _document(self, document_id: str) -> dict[str, Any]:
         document = self.store.get_document(document_id)
         if not document:
-            raise KeyError("文档不存在")
+            raise NotFoundError("文档不存在")
         return document

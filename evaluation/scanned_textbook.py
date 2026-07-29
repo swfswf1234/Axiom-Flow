@@ -17,8 +17,8 @@ from typing import Any
 
 import fitz
 
-from backend.infrastructure.bailian import BailianProvider
-from backend.infrastructure.config import Settings
+from axiom_flow.infrastructure.bailian import BailianProvider
+from axiom_flow.infrastructure.config import Settings
 from evaluation.scorecard import validate_manifest
 
 

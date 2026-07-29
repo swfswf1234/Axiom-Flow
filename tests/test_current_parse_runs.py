@@ -2,7 +2,7 @@
 模块职责：验证当前 ParseRun 的显式选择、历史记录和非法候选保护。
 设计关联（DesignRef）：docs/adr/0011-current-parse-run-and-prunable-artifacts.md
 实现状态：Current
-被测代码：backend/infrastructure/mysql.py、backend/infrastructure/artifacts.py
+被测代码：src/axiom_flow/infrastructure/mysql.py、src/axiom_flow/infrastructure/artifacts.py
 """
 
 from pathlib import Path
@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
-from backend.infrastructure.artifacts import ParseArtifactWriter
-from backend.infrastructure.mysql import MySQLRepository
+from axiom_flow.infrastructure.artifacts import ParseArtifactWriter
+from axiom_flow.infrastructure.mysql import MySQLRepository
 
 
 def _document(store: MySQLRepository, root: Path, name: str) -> dict:

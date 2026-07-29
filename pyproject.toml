@@ -29,8 +29,15 @@ dev = [
   "pytest-cov>=5.0.0",
   "ruff>=0.5.0",
 ]
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
-include = ["backend*", "evaluation*"]
+where = ["src"]
+include = ["axiom_flow*"]
+
+[tool.setuptools.package-data]
+axiom_flow = ["migrations/script.py.mako"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

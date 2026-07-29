@@ -1,11 +1,11 @@
 # Web 与 API v1 工作台
 
 设计状态：Accepted
-实现状态：In Progress
+实现状态：Implemented
 最后更新：2026-07-29
-关联代码：`backend/main.py`、`backend/api/main.py`、`web/index.html`、`web/style.css`、`web/app.js`
+关联代码：`src/axiom_flow/main.py`、`src/axiom_flow/api/main.py`、`src/axiom_flow/application/reviews.py`、`web/index.html`、`web/style.css`、`web/app.js`
 关联测试：`tests/test_design_documents.py`、`tests/test_v03_api.py`、`tests/test_code_document_mapping.py`
-关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0012-backend-package-boundaries.md`
+关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`
 
 ## 工作台结构
 
@@ -51,7 +51,5 @@ HTTP 统一使用 `/api/v1`。文档导入返回 `201`；解析和抽取命令�
 状态。当前解析结果只能由带原因的显式选择命令改变。页图、工作簿和产物内容使用后端文件响应，
 浏览器不读取数据库、本地绝对路径或百炼凭证。
 
-API 负责请求校验、资源表示和错误翻译，模型任务只由 Worker 执行。Accepted 目标要求业务能力
-通过应用服务访问；当前部分查询、审阅和发布状态仍直接调用 repository，该符合度偏差统一由
-[运行架构中的 ARCH-001](../architecture/runtime-architecture.md) 跟踪，因此本文件保持
-`实现状态：In Progress`。
+API 负责请求校验、资源表示和错误翻译，模型任务只由 Worker 执行。文档、任务、审阅和发布操作
+全部通过应用服务访问；API 不取得 repository，也不解析数据库保存的本地路径。

@@ -1,11 +1,11 @@
 # ADR 0012：Backend 包边界一次性收口
 
-状态：Accepted
+状态：Superseded
 日期：2026-07-28
 领域：工程治理
 决策阶段：v0.3
 取代：—
-被取代：—
+被取代：[ADR 0018](../../adr/0018-src-package-and-application-owned-workflows.md)
 
 ## 背景
 

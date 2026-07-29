@@ -2,7 +2,7 @@
 模块职责：验证 v0.3 API v1 的上传、任务协议、统一错误与静态工作台。
 设计关联（DesignRef）：docs/design/web-workbench.md
 实现状态：Current
-被测代码：backend/api/main.py、backend/api/schemas.py、backend/main.py
+被测代码：src/axiom_flow/api/main.py、src/axiom_flow/api/schemas.py、src/axiom_flow/main.py
 """
 
 from pathlib import Path
@@ -10,9 +10,9 @@ from pathlib import Path
 import fitz
 from fastapi.testclient import TestClient
 
-from backend.api.main import create_app
-from backend.infrastructure.config import Settings
-from backend.worker.runner import Worker
+from axiom_flow.api.main import create_app
+from axiom_flow.infrastructure.config import Settings
+from axiom_flow.worker.runner import Worker
 
 
 class UnusedProvider:

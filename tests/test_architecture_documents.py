@@ -2,14 +2,14 @@
 模块职责：守护架构正文、Mermaid 视图、领域状态和已知实现偏差保持同步。
 设计关联（DesignRef）：docs/standards/code-document-traceability.md
 实现状态：Current
-被测代码：docs/architecture、backend/domain/models.py、backend/api/main.py
+被测代码：docs/architecture、src/axiom_flow/domain/models.py、src/axiom_flow/api/main.py
 """
 
 import ast
 import re
 from pathlib import Path
 
-from backend.domain.models import (
+from axiom_flow.domain.models import (
     DocumentStatus,
     ExtractionRunStatus,
     JobStatus,
@@ -27,7 +27,7 @@ def _mermaid(document: str) -> list[str]:
 
 
 def _api_gets_repository_from_container() -> bool:
-    source = (ROOT / "backend" / "api" / "main.py").read_text(encoding="utf-8")
+    source = (ROOT / "src" / "axiom_flow" / "api" / "main.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     return any(
         isinstance(node, ast.Attribute)

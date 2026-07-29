@@ -2,13 +2,13 @@
 模块职责：验证开发数据库重建必须使用安全目标和完整确认词。
 设计关联（DesignRef）：docs/adr/0007-versioned-domain-records.md
 实现状态：Current
-被测代码：backend/tools/reset_dev_database.py
+被测代码：src/axiom_flow/tools/reset_dev_database.py
 """
 
 import pytest
 
-from backend.infrastructure.config import Settings
-from backend.tools.reset_dev_database import reset
+from axiom_flow.infrastructure.config import Settings
+from axiom_flow.tools.reset_dev_database import reset
 
 
 def test_reset_rejects_system_database_before_connecting():

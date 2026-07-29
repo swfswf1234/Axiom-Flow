@@ -32,8 +32,8 @@ python -m alembic upgrade head
 分别在两个终端启动 API/Web 和 Worker：
 
 ```powershell
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
-python -m backend.worker
+python -m uvicorn axiom_flow.main:app --host 127.0.0.1 --port 8000
+python -m axiom_flow.worker
 ```
 
 使用健康接口确认 API 和数据库装配成功：
@@ -59,7 +59,7 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 受保护工具默认只允许重建测试库，并要求输入完整确认词：
 
 ```powershell
-python -m backend.tools.reset_dev_database --database axiom_flow_test
+python -m axiom_flow.tools.reset_dev_database --database axiom_flow_test
 ```
 
 工具写入 `data/backups/reset-*.json` 的只是数据库 revision、表名和行数清单，不包含业务数据，
@@ -68,37 +68,37 @@ MySQL 数据备份、产物备份和恢复演练时禁止对运行库执行重�
 
 ## 解析运行清理
 
-旧 ParseRun 只能通过 `backend.tools.prune_parse_runs` 清理。先设置从 API 或数据库核验得到的完整
+旧 ParseRun 只能通过 `axiom_flow.tools.prune_parse_runs` 清理。先设置从 API 或数据库核验得到的完整
 值，并执行默认 dry-run：
 
 ```powershell
 $documentSha = "完整的文档 SHA-256"
 $keepRunId = "当前 ParseRun ID"
 $targetRunId = "待清理 ParseRun ID"
-python -m backend.tools.prune_parse_runs stage --document-sha256 $documentSha --keep-run-id $keepRunId --run-id $targetRunId
+python -m axiom_flow.tools.prune_parse_runs stage --document-sha256 $documentSha --keep-run-id $keepRunId --run-id $targetRunId
 ```
 
 审阅计划无误后才允许暂存。暂存会把私有目录移到 trash、删除页面和产物明细，并保留 ParseRun
 墓碑及可恢复的 `operation.json`：
 
 ```powershell
-python -m backend.tools.prune_parse_runs stage --document-sha256 $documentSha --keep-run-id $keepRunId --run-id $targetRunId --apply
+python -m axiom_flow.tools.prune_parse_runs stage --document-sha256 $documentSha --keep-run-id $keepRunId --run-id $targetRunId --apply
 ```
 
 记录输出中的 operation ID。需要恢复时先 dry-run，再显式应用：
 
 ```powershell
 $operationId = "清理操作 ID"
-python -m backend.tools.prune_parse_runs rollback --operation-id $operationId --document-sha256 $documentSha --keep-run-id $keepRunId
-python -m backend.tools.prune_parse_runs rollback --operation-id $operationId --document-sha256 $documentSha --keep-run-id $keepRunId --apply
+python -m axiom_flow.tools.prune_parse_runs rollback --operation-id $operationId --document-sha256 $documentSha --keep-run-id $keepRunId
+python -m axiom_flow.tools.prune_parse_runs rollback --operation-id $operationId --document-sha256 $documentSha --keep-run-id $keepRunId --apply
 ```
 
 只有复验当前 manifest、页面 API 和清理墓碑后才可 purge。purge 同样先 dry-run；执行后项目内
 没有恢复路径：
 
 ```powershell
-python -m backend.tools.prune_parse_runs purge --operation-id $operationId --document-sha256 $documentSha --keep-run-id $keepRunId
-python -m backend.tools.prune_parse_runs purge --operation-id $operationId --document-sha256 $documentSha --keep-run-id $keepRunId --apply
+python -m axiom_flow.tools.prune_parse_runs purge --operation-id $operationId --document-sha256 $documentSha --keep-run-id $keepRunId
+python -m axiom_flow.tools.prune_parse_runs purge --operation-id $operationId --document-sha256 $documentSha --keep-run-id $keepRunId --apply
 ```
 
 禁止直接删除 `parse-runs/`、`page-assets/`、`data/trash/` 或对应数据库行。清理工具会拒绝当前、

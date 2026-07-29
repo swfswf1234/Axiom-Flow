@@ -2,7 +2,7 @@
 模块职责：验证旧解析运行清理的预演、保护、墓碑、回滚和显式清空。
 设计关联（DesignRef）：docs/adr/0011-current-parse-run-and-prunable-artifacts.md
 实现状态：Current
-被测代码：backend/tools/prune_parse_runs.py
+被测代码：src/axiom_flow/tools/prune_parse_runs.py
 """
 
 import json
@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from backend.infrastructure.artifacts import ParseArtifactWriter
-from backend.infrastructure.mysql import MySQLRepository
-from backend.tools.prune_parse_runs import ParseRunPruner
+from axiom_flow.infrastructure.artifacts import ParseArtifactWriter
+from axiom_flow.infrastructure.mysql import MySQLRepository
+from axiom_flow.tools.prune_parse_runs import ParseRunPruner
 
 
 def _run(store: MySQLRepository, root: Path, document: dict, text: str) -> dict:

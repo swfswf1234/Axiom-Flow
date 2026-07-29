@@ -5,6 +5,6 @@
 关联测试：tests/test_v03_api.py
 """
 
-from backend.api.main import create_app
+from axiom_flow.api.main import create_app
 
 app = create_app()

@@ -2,7 +2,7 @@
 模块职责：验证百炼供应商响应归一化不会因尾随说明拒绝合法 JSON。
 设计关联（DesignRef）：docs/design/document-pipeline.md
 实现状态：Current
-被测代码：backend/infrastructure/bailian.py
+被测代码：src/axiom_flow/infrastructure/bailian.py
 """
 
 import asyncio
@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from backend.infrastructure.bailian import BailianProvider, InvalidModelPage, _json_object, _repair_json_object
-from backend.infrastructure.config import Settings
+from axiom_flow.infrastructure.bailian import BailianProvider, InvalidModelPage, _json_object, _repair_json_object
+from axiom_flow.infrastructure.config import Settings
 
 
 def test_json_object_accepts_a_valid_object_followed_by_model_explanation():

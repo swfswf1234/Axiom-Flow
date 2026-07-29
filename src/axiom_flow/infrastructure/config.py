@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     """v0.2 配置描述 MySQL 运行库、本地文件产物和百炼模型。"""
 
     data_dir: Path = Path("data")
+    web_dir: Path = Path("web")
     api_key: SecretStr = Field(default=SecretStr(""), validation_alias=AliasChoices("AXIOM_API_KEY", "API_KEY"))
     vision_model: str = "qwen-vl-ocr"
     vision_contract_version: str = "qwen-ocr-markdown-v2"

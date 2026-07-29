@@ -8,7 +8,7 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 [ADR 治理规范](../standards/adr-governance.md)；新文件遵守对应 standard，并参考最近一份仍有效的
 同类文档组织内容。
 
-下一个可用编号：0018
+下一个可用编号：0019
 
 | ADR | 标题 | 领域 | 决策阶段 | 状态 | 取代关系 |
 | --- | --- | --- | --- | --- | --- |
@@ -23,9 +23,10 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 | [`0009`](0009-reject-current-rudin-parser-route.md) | 拒绝当前 Rudin 扫描教材解析路线 | 解析与评测 | v0.3 | Accepted | — |
 | [`0010`](0010-qwen-ocr-only-rudin-trial.md) | Rudin 试跑采用 qwen-vl-ocr 单模型路线 | 解析与评测 | v0.3 | Accepted | 取代 0002 |
 | [`0011`](0011-current-parse-run-and-prunable-artifacts.md) | 显式当前解析运行与可清理产物 | 数据与持久化 | v0.3 | Accepted | — |
-| [`0012`](0012-backend-package-boundaries.md) | Backend 包边界一次性收口 | 工程治理 | v0.3 | Accepted | — |
+| [`0012`](../history/adr/0012-backend-package-boundaries.md) | Backend 包边界一次性收口 | 工程治理 | v0.3 | Superseded | 被 0018 取代 |
 | [`0013`](0013-selective-history-retention.md) | 选择性历史保留与 Git 锚点 | 工程治理 | v0.3 | Accepted | — |
 | [`0014`](0014-risk-based-plan-lifecycle.md) | 风险分级计划准入与单一生命周期 | 工程治理 | v0.3 | Accepted | — |
 | [`0015`](0015-standards-as-governance-source.md) | 标准作为治理事实源与变更门禁 | 工程治理 | v0.3 | Accepted | — |
 | [`0016`](0016-remove-document-templates.md) | 删除文档模板目录 | 工程治理 | v0.3 | Accepted | — |
 | [`0017`](0017-consolidated-task-ledgers-and-roadmap.md) | 统一任务台账与无状态能力路线图 | 工程治理 | v0.3 | Accepted | — |
+| [`0018`](0018-src-package-and-application-owned-workflows.md) | 标准包根与应用用例主导工作流 | 工程治理 | v0.3 | Accepted | 取代 0012 |
