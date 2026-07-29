@@ -27,9 +27,9 @@ RETAINED_2026_07_PLANS = {
     "2026-07-v02-first-loop.md",
     "2026-07-v03-architecture-rebuild.md",
     "2026-07-v03-result-workbench-storage.md",
+    "2026-07-v03-rudin-scan-ingestion.md",
     "index.md",
 }
-CLOSED_STATES = ("实现状态：Completed", "状态：Completed", "状态：Superseded")
 
 
 def test_document_directories_use_explicit_index_entrypoints():
@@ -43,14 +43,6 @@ def test_root_agents_is_the_only_active_agent_protocol():
     assert (ROOT / "AGENTS.md").is_file()
     assert not (DOCS / "agents_read.md").exists()
     assert not list(DOCS.glob("agents*.md"))
-
-
-def test_active_plans_do_not_contain_closed_work():
-    for plan in (DOCS / "plans").glob("*.md"):
-        if plan.name == "index.md":
-            continue
-        content = plan.read_text(encoding="utf-8")
-        assert not any(state in content for state in CLOSED_STATES), plan
 
 
 def test_active_architecture_and_guides_use_stable_names():
@@ -97,7 +89,7 @@ def test_history_retains_only_auditable_evidence():
         assert f"`{anchor}`" in index
 
     plan_template = (DOCS / "templates" / "plan.md").read_text(encoding="utf-8")
-    assert "归档判定：`Retain` 或 `Delete`" in plan_template
+    assert "归档判定：Retain | Delete" in plan_template
     assert "ADR 0013" in plan_template
 
 

@@ -1,7 +1,7 @@
 # 任务生命周期
 
 状态：Current  
-最后更新：2026-07-27
+最后更新：2026-07-29
 
 ## 变更分类
 
@@ -14,6 +14,49 @@
 
 不是所有任务都需要实验。只有结果依赖外部模型质量或存在不可由确定性测试回答的方案取舍时，
 才进入实验阶段。
+
+## 计划准入与分拆
+
+- B、C、D 类任务必须在 `docs/plans/` 建立独立计划。跨模块、跨会话或需要显式回滚的非平凡 A
+  类也必须建立计划；简单链接、措辞或局部无行为修正只由差异、验证和提交记录承接。
+- 每份计划只有一个 `任务类型`。C 类计划输出冻结实验、报告和决策 ADR；B 类计划在决定接受后
+  实现确定性契约；D 类计划在实现门禁通过后执行发布或真实数据操作。三类计划分别关闭。
+- backlog 只有在范围、前置条件、验证和完成条件已经明确时才能转为 Accepted 计划。转入后不在
+  backlog 重复维护；缺陷证据仍可保留在 regressions，并由计划链接。
+
+## 计划状态
+
+计划使用单一 `状态`，正文是唯一事实源：
+
+```mermaid
+stateDiagram-v2
+    [*] --> Accepted
+    Accepted --> InProgress: 开始执行
+    Accepted --> Cancelled
+    Accepted --> Superseded
+    InProgress --> Blocked: 原范围暂时不可继续
+    Blocked --> InProgress: 恢复条件满足
+    InProgress --> Completed
+    InProgress --> Cancelled
+    InProgress --> Superseded
+```
+
+- `Accepted` 表示范围和门禁已批准但尚未执行；`In Progress` 表示正在执行；`Blocked` 表示同一
+  范围可在明确条件满足后恢复。
+- `Completed`、`Cancelled`、`Superseded` 是终态，不得留在活跃 Plans。终态另写 `关闭结果`：
+  `Achieved`、`Rejected`、`Partial` 或 `Not Applicable`；Completed 不等于方案被采纳。
+- Blocked 计划必须包含阻塞证据、恢复条件、责任位置和复核触发点。需要新候选、重新设计或新
+  ADR 时不能继续 Blocked，应关闭旧计划并把新工作返回 backlog。
+
+## 计划正文与状态导航
+
+活跃计划必须声明 `状态`、`任务类型`、`最后更新`、`关联 ADR`、`关联设计`、`关联 Tracker` 和
+`归档判定`，并包含目标与成功标准、范围与非目标、前置条件、工作项、验证与验收、回滚、关闭与
+归档。Blocked 计划追加“阻塞与恢复”。
+
+- `plans/index.md` 只汇总全部 Accepted、In Progress 和 Blocked 计划的状态、类型和下一条件。
+- `trackers/current.md` 只镜像全部 In Progress 计划；没有执行中计划时明确写空。
+- 计划不复制通用命令、设计正文、实验结果或逐日工作日志，只链接相应指南、设计、报告和 tracker。
 
 ## 流程
 

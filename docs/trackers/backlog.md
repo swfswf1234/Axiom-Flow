@@ -7,7 +7,6 @@
 
 | 优先级 | 项目 | 状态/前置条件 |
 | --- | --- | --- |
-| P0 | v0.3 工程基线发布 | GitHub Actions Pytest 失败尚未定位；修复后才能关闭计划和创建标签。 |
 | P0 | Rudin 扫描教材新解析候选 | 当前单模型工程链路人工抽检 3/5；新候选必须使用冻结样本重新评测。 |
 | P0 | 通用新增类别解析评测 | 新类别样本到达后新建 manifest，不回写 Rudin 单类别实验。 |
 | P1 | Python 包根与目录语义迁移 | Backend 目录审计完成后，新增 Accepted ADR 取代 ADR 0012，并以独立计划将 `backend.*` 一次性迁移到 `src/axiom_flow/*`；同步导入路径、ASGI/Worker 入口、Alembic、测试、文档和 code-map，不保留长期双包兼容层。 |

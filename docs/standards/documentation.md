@@ -15,14 +15,18 @@
 ## 元数据
 
 活跃架构和设计必须声明 `设计状态`、`实现状态`、`最后更新`、`关联代码`、`关联测试` 和
-`关联 ADR`。计划声明设计与实现状态、范围、验证、回滚和完成条件。指南、标准、索引和追踪器
-至少声明状态与最后更新。
+`关联 ADR`。计划使用单一 `状态`，并声明任务类型、关联 ADR/设计/Tracker、范围、验证、回滚、
+完成条件和归档判定。指南、标准、索引和追踪器至少声明状态与最后更新。
 
 - 设计状态：`Draft`、`Proposed`、`Accepted`、`Rejected`、`Superseded`、`Historical`。
 - 实现状态：`Not Started`、`In Progress`、`Implemented`、`Verified`、`Blocked`、`Completed`。
 
 `Implemented` 表示实现和本地定向门禁已完成；`Verified` 还要求适用的全量与远端门禁通过。
 `Blocked` 必须写明阻塞证据、恢复条件和责任位置。
+
+计划状态只允许 `Accepted`、`In Progress`、`Blocked`、`Completed`、`Cancelled`、`Superseded`；
+活跃 `docs/plans/` 只允许前三种。终态计划还必须声明关闭结果，并立即按 ADR 0013 选择性保留或
+删除。
 
 ## 索引与归档
 

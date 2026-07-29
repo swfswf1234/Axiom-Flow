@@ -29,14 +29,14 @@ python -m pip install -e ".[dev]"
 
 1. 按 [AGENTS.md](../../AGENTS.md) 定位当前计划、架构、设计、ADR、代码映射和定向测试。
 2. 按[任务生命周期](../standards/task-lifecycle.md)分类；涉及边界、公开接口、持久化或解析路由时
-   先更新 ADR。
-3. 建立包含范围、验证、回滚和完成条件的 Accepted 计划，再修改实现与测试。
+   先更新 ADR。B/C/D 与非平凡 A 类建立单类型 Accepted 计划，简单 A 类不创建计划文件。
+3. 计划明确范围、验证、回滚和完成条件后再执行；C 实验、B 实现和 D 正式操作分别关闭。
 4. 同步 `code-map.md`、模块 `DesignRef`、活跃设计和适用的语义门禁。
-5. 通过定向、回归和关闭门禁后归档计划；可复现失败登记到回归待办。
+5. 通过定向、回归和关闭门禁后，按 ADR 0013 选择性保留或删除计划；可复现失败登记到回归待办。
 
-Rudin 页码、预算和采纳门槛属于实验事实，只查[解析评测设计](../design/evaluation-governance.md)、
-[ADR 0010](../adr/0010-qwen-ocr-only-rudin-trial.md)和[Rudin 活跃计划](../plans/2026-07-v03-rudin-scan-ingestion.md)，
-不作为通用开发命令。
+Rudin 页码、预算和采纳门槛属于专项事实，只查[解析评测设计](../design/evaluation-governance.md)、
+[ADR 0010](../adr/0010-qwen-ocr-only-rudin-trial.md)、[20 页试跑报告](../../evaluation/reports/rudin-qwen-ocr-20-v1.md)
+和[后续候选待办](../trackers/backlog.md)，不作为通用开发命令。
 
 ## 数据库迁移开发
 

@@ -59,7 +59,8 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 - 修改领域边界、公开 API、持久化语义、事实来源或解析路由前，先新增或更新 ADR。
 - ADR 使用全局顺序编号；路径随生命周期状态变化，完整登记以 `docs/adr/index.md` 为准。
-- 每项实现必须关联计划，包含范围、验证、回滚和完成条件。
+- B/C/D 与跨模块、跨会话或需要回滚的非平凡 A 类必须关联单类型计划；简单 A 类由差异、验证和
+  提交记录承接。计划包含范围、验证、回滚和完成条件，C/B/D 分别关闭。
 - 计划关闭时按 ADR 0013 判定 Retain/Delete；History 只保存长期审计证据，完整旧基线从登记的
   Git commit 恢复。
 - 按 `docs/standards/task-lifecycle.md` 分类 A/B/C/D；不是所有任务都需要实验。
@@ -93,4 +94,4 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 3. 架构与设计触发项已同步正文与 Mermaid，语义、映射、链接和适用回归/端到端测试通过。
 4. 可复现失败已进入 regressions；外部依赖失败有证据、恢复条件和责任位置。
 5. D 类操作已经完成备份、回滚和完整差异复核，没有隐式执行。
-6. 计划与 tracker 已关闭，关闭计划已按 ADR 0013 选择性保留或删除。
+6. 计划正文、plans index 与 current 状态一致，关闭计划已按 ADR 0013 选择性保留或删除。
