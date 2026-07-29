@@ -29,7 +29,16 @@ class PreflightVisionProvider(Protocol):
 def _safe_error(error: Exception, api_key: str) -> str:
     """报告只保留诊断摘要，屏蔽密钥和本地绝对路径。"""
     message = str(error).replace(api_key, "[REDACTED]") if api_key else str(error)
-    message = re.sub(r"[A-Za-z]:\\[^\s]+", "[local-path]", message)
+    message = re.sub(
+        r"(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\)[^\s'\"<>|]+",
+        "[local-path]",
+        message,
+    )
+    message = re.sub(
+        r"(?<![A-Za-z0-9_:/])/(?:[^/\s'\"<>]+/)*[^/\s'\"<>]+",
+        "[local-path]",
+        message,
+    )
     return message[:300]
 
 

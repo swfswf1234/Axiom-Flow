@@ -10,7 +10,7 @@ from pathlib import Path
 
 import fitz
 
-from evaluation.preflight import run_preflight
+from evaluation.preflight import _safe_error, run_preflight
 
 
 class FakePreflightProvider:
@@ -72,3 +72,16 @@ def test_failure_does_not_expose_source_path(tmp_path: Path):
     assert report["status"] == "unavailable"
     assert report["model_calls"] == 1
     assert str(source) not in str(report)
+
+
+def test_error_summary_masks_paths_independently_of_host_os():
+    summary = _safe_error(RuntimeError(
+        r"windows=C:\Users\name\sample.pdf unc=\\server\share\sample.pdf "
+        "posix=/tmp/private/sample.pdf url=https://example.com/api/v1",
+    ), "")
+
+    assert r"C:\Users\name\sample.pdf" not in summary
+    assert r"\\server\share\sample.pdf" not in summary
+    assert "/tmp/private/sample.pdf" not in summary
+    assert summary.count("[local-path]") == 3
+    assert "https://example.com/api/v1" in summary
