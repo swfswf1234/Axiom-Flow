@@ -5,7 +5,7 @@
 维护位置：`docs/architecture/code-map.md`  
 关联代码：受管模块清单  
 关联测试：`tests/test_code_document_mapping.py`  
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0012-backend-package-boundaries.md`、`docs/adr/0013-selective-history-retention.md`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0012-backend-package-boundaries.md`、`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`
 
 本表是代码与文档关系的唯一事实源。v0.1 运行代码已删除，其范围和 Git 恢复锚点见
 `docs/history/baselines/v01-mineru.md`。`__init__.py` 及无业务语义的极短文件豁免。
@@ -48,10 +48,11 @@
 | `tests/test_architecture_documents.py` | 架构文档语义同步测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护 Mermaid 视图、领域状态和已知架构偏差。 |
 | `tests/test_code_document_mapping.py` | 映射一致性测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护本表和文件头。 |
 | `tests/test_design_documents.py` | 设计契约语义同步测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护流程图、接口字段和关键常量。 |
-| `tests/test_markdown_links.py` | Markdown 链接测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护仓库本地相对链接。 |
+| `tests/test_markdown_links.py` | Markdown 链接测试 | Current | `docs/standards/documentation.md` | — | 守护仓库本地相对链接。 |
 | `tests/test_document_structure.py` | 文档结构测试 | Current | `docs/standards/documentation.md` | — | 守护入口、目录边界、计划归档和 Agent 协议。 |
 | `tests/test_adr_structure.py` | ADR 治理测试 | Current | `docs/standards/adr-governance.md` | — | 守护全局编号、登记表、元数据和完整取代关系。 |
 | `tests/test_plan_governance.py` | 计划治理测试 | Current | `docs/standards/task-lifecycle.md` | — | 守护活跃计划元数据、状态、索引和 current 镜像。 |
+| `tests/test_standard_governance.py` | Standards 治理测试 | Current | `docs/standards/documentation.md` | — | 守护标准目录边界、统一契约、索引和测试反向关联。 |
 | `tests/test_evaluation_scorecard.py` | 评分门禁测试 | Current | `docs/design/evaluation-governance.md` | — | 被测代码为 scorecard。 |
 | `tests/test_evaluation_preflight.py` | 百炼预检测试 | Current | `docs/design/evaluation-governance.md` | — | 使用假视觉供应商。 |
 | `tests/test_providers.py` | 百炼响应归一化测试 | Current | `docs/design/document-pipeline.md` | — | 覆盖截断、顶层结构、重试和元数据。 |

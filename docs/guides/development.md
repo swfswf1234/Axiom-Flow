@@ -32,7 +32,8 @@ python -m pip install -e ".[dev]"
    先更新 ADR。B/C/D 与非平凡 A 类建立单类型 Accepted 计划，简单 A 类不创建计划文件。
 3. 计划明确范围、验证、回滚和完成条件后再执行；C 实验、B 实现和 D 正式操作分别关闭。
 4. 同步 `code-map.md`、模块 `DesignRef`、活跃设计和适用的语义门禁。
-5. 通过定向、回归和关闭门禁后，按 ADR 0013 选择性保留或删除计划；可复现失败登记到回归待办。
+5. 通过定向、回归和关闭门禁后，按[文档规范](../standards/documentation.md)选择性保留或删除计划；
+   可复现失败登记到回归待办。
 
 Rudin 页码、预算和采纳门槛属于专项事实，只查[解析评测设计](../design/evaluation-governance.md)、
 [ADR 0010](../adr/0010-qwen-ocr-only-rudin-trial.md)、[20 页试跑报告](../../evaluation/reports/rudin-qwen-ocr-20-v1.md)

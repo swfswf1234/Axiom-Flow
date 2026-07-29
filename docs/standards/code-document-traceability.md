@@ -1,64 +1,68 @@
 # 文档与代码双向追溯规范
 
-状态：Current  
-维护位置：`docs/standards/code-document-traceability.md`
-关联代码：`evaluation/scorecard.py`、受管模块文件头  
+状态：Current
+最后更新：2026-07-29
+治理对象：code-map、模块 DesignRef、架构/设计关联和语义同步门禁
+依据 ADR：`docs/adr/0012-backend-package-boundaries.md`、`docs/adr/0015-standards-as-governance-source.md`
 关联测试：`tests/test_code_document_mapping.py`、`tests/test_architecture_documents.py`、`tests/test_design_documents.py`
-关联 ADR：`docs/adr/0012-backend-package-boundaries.md`
 
-## 目的
+## 目的与边界
 
-让人工和 Agent 都能从代码定位设计依据，也能从设计定位实际落地代码与测试。映射的唯一
-事实源是 `docs/architecture/code-map.md`；文件头的 `DesignRef` 只用于代码阅读时反查。
+本标准让人工和 Agent 能从代码定位设计依据，也能从设计定位实际代码与测试。
+`docs/architecture/code-map.md` 是代码、设计与测试映射的唯一事实源；文件头 DesignRef 只用于
+阅读代码时反查，不是第二份映射表。文档分类查[文档规范](documentation.md)，决策准入查
+[ADR 治理](adr-governance.md)。
 
-## 文件头格式
+## 强制规则
 
-非豁免 Python 模块在首个 import 前使用模块 docstring：
+### code-map 与文件头
+
+- 所有受管且非豁免模块必须在 code-map 恰好登记一次；新增、移动、删除模块或改变 DesignRef
+  时，同步更新 code-map、文件头和关联测试。
+- 非豁免 Python 模块在首个 import 前使用中文模块 docstring，声明模块职责、
+  `设计关联（DesignRef）` 和实现状态；测试模块还声明被测代码。
+- `__init__.py`、纯常量和极短无业务语义文件可豁免，但不得承载业务规则。
+- 外部工具存在编码约束的配置文件使用 ASCII `DesignRef:` 和 `Status:`；中文职责保留在
+  code-map 与关联设计。
+- Legacy 模块只能指向 `docs/history/`，并明确不属于当前目标架构；Current 模块不得指向 History。
+
+推荐 Python 文件头：
 
 ```python
 """
 模块职责：说明本模块承担的业务或技术责任。
 设计关联（DesignRef）：docs/design/example.md
 实现状态：Current
-关联测试：tests/test_example.py
 """
 ```
 
-测试模块额外使用 `被测代码：`。`Legacy` 模块的 DesignRef 必须指向 `docs/history/`，并
-明确其不属于当前目标架构。`__init__.py`、纯常量和极短辅助文件可不写文件头，但不得承载
-业务规则。
+### 架构同步
 
-受外部工具区域编码约束的配置文件使用 ASCII `DesignRef:` 和 `Status:` 元数据，避免工具按
-系统编码读取 UTF-8 中文注释失败；中文职责说明保留在 code-map 与关联设计中。
+- 活跃架构声明关联代码、关联测试和关联 ADR；无实现时写“尚未实现”，不得指向无关代码。
+- 运行组件、包依赖、领域状态、事实来源、能力归属或 DesignRef 变化时，同步正文、Mermaid、
+  code-map 和架构语义测试。
+- Accepted 约束与当前实现有偏差时，使用稳定 `ARCH-NNN` 在架构符合度和 tracker 双向登记，文档
+  实现状态不得写成完全实现。
 
-## 维护规则
+### 设计同步
 
-1. 新增、移动、删除受管模块时，先更新 `code-map.md`，再写代码文件头。
-2. 修改模块职责、接口或数据语义时，同步更新关联设计、测试和必要的 ADR。
-3. 活跃架构/设计文档头部必须包含 `关联代码`、`关联测试`、`关联 ADR`；无实现时写
-   `尚未实现`，不能指向无关旧代码。
-4. `tests/test_code_document_mapping.py` 是受管代码和活跃设计变更的必过定向测试。
+- Design 按可执行流程划分，描述输入输出、接口与数据、状态、失败语义和当前符合度；没有代码
+  所有权的概念说明不得单独成为活跃设计。
+- 接口字段、审阅/任务状态、工作簿、关系类型、Web 主视图、评测阈值或 DesignRef 变化时，同步
+  正文、Mermaid、code-map 和设计语义测试。
+- 已接受但未实现的能力使用稳定 `DES-NNN` 在设计符合度和 tracker 双向登记，文档不得标记为
+  完全实现。
 
-## 架构视图同步
+## 执行与门禁
 
-- 系统上下文、运行拓扑、代码依赖和数据状态使用活跃架构正文中的内嵌 Mermaid 维护；不另存
-  渲染图片或第二份图源。
-- 运行组件、包依赖、领域状态、事实来源、能力归属或 DesignRef 变化属于架构同步触发项，必须
-  同步正文、图、code-map 和架构语义测试。
-- 架构文档同时记录 Accepted 约束和实现符合度。尚未满足的约束必须有稳定偏差编号、代码证据和
-  tracker 关闭条件，文档实现状态不得写成完全实现。
-- 领域边界、公开 API、持久化语义、事实来源或解析路由发生决策变化时，先更新 ADR，再更新图和
-  实现映射。
-- `tests/test_architecture_documents.py` 守护目录集合、Mermaid 关键节点、领域枚举和已知偏差；
-  它与代码映射测试共同作为架构变更的必过门禁。
+1. 先在 code-map 定位模块职责、DesignRef、状态和定向测试，再修改代码或文档。
+2. 职责或契约变化时先完成适用 ADR/设计，再同步实现、文件头、code-map 和语义测试。
+3. `tests/test_code_document_mapping.py` 守护受管路径、文件头和双向引用；架构与设计语义测试分别
+   从代码类型、AST、HTML 和常量验证当前契约。
+4. 自动测试不能判断设计是否合理；计划必须声明人工审阅边界、当前符合度和未实现偏差。
 
-## 设计契约同步
+## 变更与取代
 
-- Design 按可执行流程划分，描述输入输出、接口与数据、状态、失败语义和当前符合度；概念说明不
-  单独占用没有代码所有权的活跃设计文件。
-- 接口字段、审阅/任务状态、工作簿、关系类型、Web 主视图、评测阈值或 DesignRef 变化属于设计
-  同步触发项，必须同步正文、Mermaid 流程、code-map 和设计语义测试。
-- 已接受但尚未实现的能力使用稳定 `DES-NNN` 编号，在设计符合度与 tracker 中双向登记；对应
-  文档不能标记为完全实现。
-- `tests/test_design_documents.py` 从代码类型、AST、HTML 和评测常量读取当前契约，与代码映射测试
-  共同作为设计变更的必过门禁。
+改变 code-map 的事实源地位、受管范围、文件头必需字段、同步触发项或语义门禁时必须先新增 ADR。
+模块清单和 DesignRef 的普通增删属于实现同步，不单独建立治理 ADR。旧映射由 Git 历史恢复，
+Legacy 依据只进入 History，不在 standards 保存版本副本。

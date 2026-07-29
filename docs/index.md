@@ -14,7 +14,7 @@
 | `guides/` | 可重复执行的开发、测试和运维步骤 | [指南索引](guides/index.md) |
 | `plans/` | 尚未关闭的实施计划 | [计划索引](plans/index.md) |
 | `trackers/` | 当前工作、回归、待办和路线图 | [追踪索引](trackers/index.md) |
-| `standards/` | 任务、文档、ADR 和追溯规范 | [规范索引](standards/index.md) |
+| `standards/` | 工程治理规则的唯一事实源 | [规范索引](standards/index.md) |
 | `templates/` | ADR、设计、计划和实验模板 | [模板索引](templates/index.md) |
 | `history/` | 被取代 ADR、选择性执行记录和 Git 锚点基线 | [历史索引](history/index.md) |
 
