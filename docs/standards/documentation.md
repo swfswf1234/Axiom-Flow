@@ -3,14 +3,15 @@
 状态：Current
 最后更新：2026-07-29
 治理对象：文档分类、写作、元数据、索引、命名、归档与删除
-依据 ADR：`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`
+依据 ADR：`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0016-remove-document-templates.md`
 关联测试：`tests/test_document_structure.py`、`tests/test_markdown_links.py`、`tests/test_standard_governance.py`
 
 ## 目的与边界
 
 本标准规定每类文档保存什么事实、采用什么元数据，以及何时归档或删除。具体任务状态查
 [任务生命周期](task-lifecycle.md)，ADR 状态查 [ADR 治理](adr-governance.md)，代码映射查
-[代码与文档追溯](code-document-traceability.md)。指南只维护可重复操作，模板只维护格式骨架。
+[代码与文档追溯](code-document-traceability.md)。指南只维护可重复操作；新文档遵守对应 standard，
+再参考最近一份仍有效的同类文档组织内容。
 
 ## 强制规则
 
@@ -27,11 +28,10 @@
 | `guides/` | 当前可重复执行的开发与运维步骤。 |
 | `plans/` | 已批准且尚未关闭的短期执行合同。 |
 | `trackers/` | 当前工作镜像、候选队列、回归证据和路线图。 |
-| `templates/` | 新文档格式骨架，不保存项目事实。 |
 | `history/` | 选择性保留的长期审计证据和旧基线 Git 锚点。 |
 
 一个事实只设一个维护位置，其他文档使用链接。实验参数、结果和评分保存在 `evaluation/`，标准
-不得复制操作命令、模板正文、设计契约或 ADR 决策理由。
+不得复制操作命令、设计契约或 ADR 决策理由。仓库不维护 Markdown 文档模板目录。
 
 ### 写作、命名与索引
 
@@ -53,6 +53,9 @@
 
 `Implemented` 表示实现和本地定向门禁完成；`Verified` 还要求适用全量与远端门禁通过；Blocked
 必须声明证据、恢复条件和责任位置。
+
+创建新文档时，standard 的字段、状态和章节规则优先于任何现有示例。参考同类文档只能借用组织
+方式，必须重新确认编号、状态、关联、范围和项目事实。
 
 ### 归档与删除
 

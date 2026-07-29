@@ -5,9 +5,10 @@
 
 ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Superseded 位于
 [`../history/adr/`](../history/adr/index.md)；完整规则见
-[ADR 治理规范](../standards/adr-governance.md)，新文件使用 [ADR 模板](../templates/adr.md)。
+[ADR 治理规范](../standards/adr-governance.md)；新文件遵守对应 standard，并参考最近一份仍有效的
+同类文档组织内容。
 
-下一个可用编号：0016
+下一个可用编号：0017
 
 | ADR | 标题 | 领域 | 决策阶段 | 状态 | 取代关系 |
 | --- | --- | --- | --- | --- | --- |
@@ -26,3 +27,4 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 | [`0013`](0013-selective-history-retention.md) | 选择性历史保留与 Git 锚点 | 工程治理 | v0.3 | Accepted | — |
 | [`0014`](0014-risk-based-plan-lifecycle.md) | 风险分级计划准入与单一生命周期 | 工程治理 | v0.3 | Accepted | — |
 | [`0015`](0015-standards-as-governance-source.md) | 标准作为治理事实源与变更门禁 | 工程治理 | v0.3 | Accepted | — |
+| [`0016`](0016-remove-document-templates.md) | 删除文档模板目录 | 工程治理 | v0.3 | Accepted | — |

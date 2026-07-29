@@ -3,7 +3,7 @@
 状态：Current
 最后更新：2026-07-29
 治理对象：ADR 准入、全局编号、元数据、状态、取代关系与归档路径
-依据 ADR：`docs/adr/0015-standards-as-governance-source.md`
+依据 ADR：`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0016-remove-document-templates.md`
 关联测试：`tests/test_adr_structure.py`
 
 ## 目的与边界
@@ -43,8 +43,8 @@ Superseded。完整取代必须在新旧 ADR 中双向登记；部分补充、�
 
 ## 执行与门禁
 
-1. 使用模板创建 Proposed ADR，分配下一编号并登记 ADR index。
-2. 写清背景、唯一决定、后果和关联证据；依赖外部质量时先完成冻结实验。
+1. 按本标准创建 Proposed ADR，分配下一编号并登记 ADR index。
+2. 依次写入 `背景`、`决定`、`后果`、`关联`；依赖外部质量时先完成冻结实验。
 3. 接受或拒绝后同步状态、索引、关联架构/设计与独立实施计划。
 4. 完整取代时同步双向元数据并把旧 ADR 移入 `history/adr/`。
 5. 运行 ADR 结构、Markdown 链接和代码映射测试；人工确认决定没有复制实现计划或实验原始数据。

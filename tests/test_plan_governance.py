@@ -2,7 +2,7 @@
 模块职责：验证活跃计划的命名、元数据、生命周期状态及 tracker 镜像保持一致。
 设计关联（DesignRef）：docs/standards/task-lifecycle.md
 实现状态：Current
-被测代码：docs/plans、docs/trackers/current.md、docs/templates/plan.md
+被测代码：docs/plans、docs/trackers/current.md
 """
 
 import re

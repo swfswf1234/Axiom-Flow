@@ -36,4 +36,5 @@
 ## 关联
 
 关联 [ADR 0013](0013-selective-history-retention.md)、[任务生命周期](../standards/task-lifecycle.md)、
-[文档规范](../standards/documentation.md)和[计划模板](../templates/plan.md)。
+[文档规范](../standards/documentation.md)。原计划模板已按 [ADR 0016](0016-remove-document-templates.md)
+删除，计划正文直接遵守任务生命周期。

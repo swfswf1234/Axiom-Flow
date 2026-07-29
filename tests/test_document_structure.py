@@ -18,7 +18,6 @@ DOCUMENT_DIRECTORIES = (
     "guides",
     "plans",
     "trackers",
-    "templates",
     "history",
 )
 ACTIVE_GUIDES = {"index.md", "development.md", "operations.md"}
@@ -36,6 +35,7 @@ def test_document_directories_use_explicit_index_entrypoints():
     assert (DOCS / "index.md").is_file()
     for directory in DOCUMENT_DIRECTORIES:
         assert (DOCS / directory / "index.md").is_file(), directory
+    assert not (DOCS / "templates").exists()
     assert not list(DOCS.rglob("README.md"))
 
 
@@ -88,11 +88,6 @@ def test_history_retains_only_auditable_evidence():
     for anchor in ("4961cfa", "be7ec34", "a6ec4e0"):
         assert f"`{anchor}`" in index
 
-    plan_template = (DOCS / "templates" / "plan.md").read_text(encoding="utf-8")
-    assert "归档判定：Retain | Delete" in plan_template
-    assert "ADR 0013" in plan_template
-
-
 def test_root_readme_serves_qed_operators_and_new_developers():
     content = (ROOT / "README.md").read_text(encoding="utf-8")
     for required in (
@@ -120,7 +115,6 @@ def test_docs_index_only_navigates_document_areas():
         "plans/index.md",
         "trackers/index.md",
         "standards/index.md",
-        "templates/index.md",
         "history/index.md",
     ):
         assert required in content

@@ -2,7 +2,7 @@
 模块职责：验证 ADR 编号、元数据、登记表和完整取代关系保持一致。
 设计关联（DesignRef）：docs/standards/adr-governance.md
 实现状态：Current
-被测代码：docs/adr、docs/templates/adr.md
+被测代码：docs/adr、docs/history/adr
 """
 
 import re
@@ -14,12 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 ADR_DIR = ROOT / "docs" / "adr"
 ADR_HISTORY_DIR = ROOT / "docs" / "history" / "adr"
 ADR_INDEX = ADR_DIR / "index.md"
-ADR_TEMPLATE = ROOT / "docs" / "templates" / "adr.md"
 ADR_FILE = re.compile(r"(?P<id>\d{4})-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.md")
 ADR_LINK = re.compile(r"\[ADR (?P<id>\d{4})]\((?P<path>[^)]+)\)")
 INDEX_ENTRY = re.compile(r"^\| \[`(?P<id>\d{4})`]\((?P<path>[^)]+\.md)\) \|", re.MULTILINE)
 VALID_STATUSES = {"Proposed", "Accepted", "Rejected", "Superseded"}
 VALID_DOMAINS = {"解析与评测", "数据与持久化", "API 与任务", "审阅与发布", "工程治理"}
+STRUCTURED_ADR_MIN_ID = 16
+REQUIRED_SECTIONS = ("## 背景", "## 决定", "## 后果", "## 关联")
 
 
 def _field(content: str, name: str) -> str:
@@ -145,9 +146,10 @@ def test_complete_supersession_is_bidirectional():
             assert adr_id in _relation_ids(records[new_id]["supersedes"])
 
 
-def test_adr_template_contains_required_metadata_and_sections():
-    content = ADR_TEMPLATE.read_text(encoding="utf-8")
-    for field in ("状态：Proposed", "日期：", "领域：", "决策阶段：", "取代：", "被取代："):
-        assert field in content
-    for section in ("## 背景", "## 决定", "## 后果", "## 关联"):
-        assert section in content
+def test_new_adrs_have_required_sections_in_order():
+    for adr_id, record in _records().items():
+        if int(adr_id) < STRUCTURED_ADR_MIN_ID:
+            continue
+        content = str(record["content"])
+        positions = [content.index(section) for section in REQUIRED_SECTIONS]
+        assert positions == sorted(positions), adr_id
