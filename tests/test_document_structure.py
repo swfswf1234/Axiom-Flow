@@ -2,9 +2,10 @@
 模块职责：验证活跃文档入口、目录边界、计划归档和 Agent 协议保持单一。
 设计关联（DesignRef）：docs/standards/documentation.md
 实现状态：Current
-被测代码：README.md、AGENTS.md、docs
+被测代码：README.md、AGENTS.md、docs、pyproject.toml、requirements.txt
 """
 
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,3 +91,14 @@ def test_agents_routes_tasks_problems_and_completion():
         "docs/standards/task-lifecycle.md",
     ):
         assert required in content
+
+
+def test_dependency_install_entrypoints_have_one_source():
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    local_guide = (DOCS / "guides" / "local-development.md").read_text(encoding="utf-8")
+
+    assert "dev" in pyproject["project"]["optional-dependencies"]
+    assert (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()[-1] == "-e ."
+    assert not (ROOT / "requirements-dev.txt").exists()
+    assert 'python -m pip install -e ".[dev]"' in local_guide
+    assert "requirements-dev.txt" not in local_guide

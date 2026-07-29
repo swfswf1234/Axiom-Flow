@@ -8,11 +8,16 @@
 使用 Python 3.12、MySQL 8 和 Node.js。复制 `.env.example` 的字段到本地 `.env`，设置
 `AXIOM_API_KEY` 与 `AXIOM_MYSQL_*`；密钥不得写入命令、日志、工作簿或报告。
 
-`pyproject.toml` 是依赖事实源，兼容安装入口为：
+`pyproject.toml` 是依赖事实源。仅运行项目时使用兼容入口：
 
 ```powershell
 python -m pip install -r requirements.txt
-python -m pip install -r requirements-dev.txt
+```
+
+参与开发时直接安装项目及 `dev` 可选依赖，不需要先执行运行安装命令：
+
+```powershell
+python -m pip install -e ".[dev]"
 ```
 
 ## 迁移与启动
