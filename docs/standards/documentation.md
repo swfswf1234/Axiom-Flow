@@ -29,8 +29,8 @@
 - `docs/**/README.md` 不允许存在。仓库根 `README.md` 是面向用户和新开发者的项目入口，属于
   唯一例外。
 - 内部链接显式指向目标文件或 `index.md`，不依赖托管平台将目录自动解析为 README。
-- 架构图使用正文内嵌 Mermaid，图与说明在同一文件维护；不提交由 Mermaid 派生的 PNG、SVG 或
-  其他重复图源。
+- 架构图和设计流程使用正文内嵌 Mermaid，图与说明在同一文件维护；不提交由 Mermaid 派生的
+  PNG、SVG 或其他重复图源。
 - 当前目录只保存仍然有效的事实。Rejected/Superseded ADR、Completed/Superseded 计划和旧版
   指南分别进入 `history/adr/`、`history/plans/<year-month>/` 和 `history/guides/`。
 - 历史正文保留当时事实，可以补充 Historical 声明和修复链接，但不得改写旧结论。

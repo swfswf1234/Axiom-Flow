@@ -1,34 +1,57 @@
-# Web 工作台
+# Web 与 API v1 工作台
 
 设计状态：Accepted
-实现状态：Implemented
-最后更新：2026-07-27
+实现状态：In Progress
+最后更新：2026-07-29
 关联代码：`backend/main.py`、`backend/api/main.py`、`web/index.html`、`web/style.css`、`web/app.js`
-关联测试：`tests/test_v03_api.py`、`tests/test_code_document_mapping.py`
-关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`
+关联测试：`tests/test_design_documents.py`、`tests/test_v03_api.py`、`tests/test_code_document_mapping.py`
+关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0012-backend-package-boundaries.md`
 
-工作台由五个工作视图组成：
+## 工作台结构
 
-| 视图 | 用户动作 |
+```mermaid
+flowchart TD
+    SHELL[工作台 Shell]
+    LIBRARY[文档库侧栏]
+    JOBS[共享任务面板]
+    HISTORY[解析历史抽屉]
+    PAGES[pages 页面审阅]
+    KNOWLEDGE[knowledge 知识候选]
+    WORKBOOK[workbook 工作簿发布]
+    GRAPH[graph 已发布图谱]
+
+    SHELL --> LIBRARY
+    SHELL --> JOBS
+    SHELL --> PAGES
+    SHELL --> KNOWLEDGE
+    SHELL --> WORKBOOK
+    SHELL --> GRAPH
+    PAGES --> HISTORY
+```
+
+文档库侧栏负责导入和选择文档；任务面板跨视图显示当前任务、进度和取消；主工作区只有
+`pages`、`knowledge`、`workbook`、`graph` 四个 tab。历史抽屉属于页面审阅的辅助界面，不是
+独立主视图。
+
+## 视图行为
+
+| 视图 | 当前能力 |
 | --- | --- |
-| 文档库与任务队列 | 导入 PDF、提交后台任务、查看进度和取消。 |
-| 页面质量审阅 | 比对页图、文本、块与风险，给出审阅结论。 |
-| 知识候选 | 审阅候选单元、关系和源证据。 |
-| 工作簿发布 | 导出、导入、校验、查看差异和显式发布。 |
-| 知识图谱 | 浏览已发布节点、关系及原始页证据。 |
+| `pages` | 选择当前 ParseRun，按页对照页图与 OCR，切换阅读/Markdown/Blocks，审阅页面并下载产物。 |
+| `knowledge` | 提交抽取任务，审阅候选节点、关系和页级证据。 |
+| `workbook` | 导出、下载、导入并校验草稿，显式发布最新 revision。 |
+| `graph` | 读取并以原生 DOM 展示最新已发布 snapshot。 |
 
-Web 层只提交命令与展示查询结果。质量判定、发布校验和版本状态转换必须由后端领域服务
-执行。
+页面工作区一次只加载一个页面资源，支持页导航、问题筛选、适合宽度和缩放。解析历史默认折叠，
+`pruned` 运行只显示摘要。当前没有坐标覆盖层、结构化工作簿差异预览或图形布局引擎。
 
-页面质量审阅使用单页工作区：左侧是带审阅和问题状态的页导航，主区并列显示 PDF 原始页图与
-当前 ParseRun 的 OCR；OCR 可切换阅读文本、原始 Markdown 和 Blocks JSON。上一页/下一页、
-页码输入、键盘方向键、适合宽度和缩放均只切换一个页面资源，不批量加载全文。运行摘要显示
-模型契约、页范围、调用量、manifest 和审阅计数；历史抽屉默认折叠，`pruned` 运行只显示摘要。
+## HTTP 与文件边界
 
-新建解析任务必须显式填写包含端点的页范围，并在提交前显示最大模型调用数。解析成功仅加入
-历史候选；`POST /documents/{id}/current-parse-run` 才能改变当前结果。当前页下载按整篇 Markdown、
-manifest、页 JSON 和供应商响应分组。
+HTTP 统一使用 `/api/v1`。文档导入返回 `201`；解析和抽取命令返回 `202` Job 资源；Web 轮询任务
+状态。当前解析结果只能由带原因的显式选择命令改变。页图、工作簿和产物内容使用后端文件响应，
+浏览器不读取数据库、本地绝对路径或百炼凭证。
 
-v0.3 使用独立的原生 `web/` 静态资源，由 API 进程同源托管；它不依赖旧 `app/` 目录。
-HTTP API 以 `/api/v1` 为前缀。解析和知识抽取返回 `202` 任务资源，Web 轮询任务状态；API
-进程不得直接执行供应商调用。页图和工作簿下载继续使用文件响应。
+API 负责请求校验、资源表示和错误翻译，模型任务只由 Worker 执行。Accepted 目标要求业务能力
+通过应用服务访问；当前部分查询、审阅和发布状态仍直接调用 repository，该符合度偏差统一由
+[运行架构中的 ARCH-001](../architecture/runtime-architecture.md) 跟踪，因此本文件保持
+`实现状态：In Progress`。

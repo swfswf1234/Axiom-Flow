@@ -8,11 +8,8 @@
 
 | 设计 | 当前关联代码 | 当前关联测试 |
 | --- | --- | --- |
-| [文档解析流水线](document-pipeline.md) | `backend/infrastructure/pdf_pipeline.py`、`bailian.py`、`artifacts.py` | `tests/test_document_workflow.py`、`tests/test_providers.py` |
-| [规范内容](normalized-content.md) | `backend/domain/models.py`、`backend/api/schemas.py` | `tests/test_document_workflow.py` |
-| [质量审阅](quality-review.md) | 由解析与仓储服务组合实现 | `tests/test_document_workflow.py` |
-| [知识模型](knowledge-model.md) | 由解析、仓储与工作簿服务组合实现 | `tests/test_document_workflow.py` |
-| [Excel 发布工作流](excel-release-workflow.md) | `backend/application/workbooks.py` | `tests/test_document_workflow.py` |
-| [Web 工作台](web-workbench.md) | `backend/api/main.py`、`backend/main.py`、`web/` | `tests/test_v03_api.py` |
-| [评测治理](evaluation-governance.md) | `evaluation/scorecard.py`、`evaluation/preflight.py` | `tests/test_evaluation_scorecard.py`、`tests/test_evaluation_preflight.py` |
-| [后台任务](background-jobs.md) | `backend/application/jobs.py`、`backend/worker/` | `tests/test_v03_jobs.py` |
+| [解析、规范内容与页级审阅](document-pipeline.md) | PDF pipeline、百炼和产物适配器 | 文档工作流、供应商和产物测试 |
+| [知识审阅、工作簿与发布](excel-release-workflow.md) | `backend/application/workbooks.py` | 主链发布测试 |
+| [持久化后台任务](background-jobs.md) | 任务应用服务与 Worker | 任务、租约和恢复测试 |
+| [Web 与 API v1 工作台](web-workbench.md) | API 入口与 `web/` | API 与工作台集成测试 |
+| [解析评测治理](evaluation-governance.md) | `evaluation/` 执行与评分模块 | 评测专项测试 |

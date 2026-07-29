@@ -22,6 +22,10 @@ v0.2 集成测试连接 `axiom_flow_test`，在不存在时创建它、执行 Al
 `python -m pytest tests/test_architecture_documents.py tests/test_architecture_dependencies.py -q`，
 校验 Mermaid 关键节点、领域枚举、已知偏差和包依赖方向。
 
+设计同步触发项必须运行 `python -m pytest tests/test_design_documents.py -q`，校验 Pydantic 字段、
+状态、工作簿工作表、关系类型、Web 主视图和评测常量。设计语义测试从实现读取当前契约，不维护
+第二份硬编码协议。
+
 历史测试命令与 MinerU 基线一同归档，不代表当前可执行命令。实现每个阶段后才将已验证
 的命令写入本文件。
 

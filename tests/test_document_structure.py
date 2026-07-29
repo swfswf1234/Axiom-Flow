@@ -102,6 +102,7 @@ def test_agents_routes_tasks_problems_and_completion():
         "docs/trackers/current.md",
         "docs/standards/task-lifecycle.md",
         "tests/test_architecture_documents.py",
+        "tests/test_design_documents.py",
     ):
         assert required in content
 

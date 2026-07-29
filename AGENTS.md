@@ -32,7 +32,7 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 | API、持久任务、Worker | `backend/api/`、`backend/application/jobs.py`、`backend/worker/` | `background-jobs.md`、`web-workbench.md`、ADR 0006 | `test_v03_api.py`、`test_v03_jobs.py` |
 | MySQL、迁移、当前 ParseRun | `alembic.ini`、`backend/infrastructure/{database,mysql}.py`、`backend/migrations/` | `data-lifecycle.md`、ADR 0005/0007/0011 | `test_mysql_migrations.py`、`test_current_parse_runs.py` |
 | 产物或运行清理 | `backend/tools/prune_parse_runs.py`、`artifacts.py` | ADR 0011、`operations.md` | `test_prune_parse_runs.py`、`test_parse_artifacts.py` |
-| 知识、关系、工作簿、发布 | `backend/application/workbooks.py`、`mysql.py` | `knowledge-model.md`、`excel-release-workflow.md` | `test_document_workflow.py` |
+| 知识、关系、工作簿、发布 | `backend/application/workbooks.py`、`mysql.py` | `excel-release-workflow.md` | `test_document_workflow.py` |
 | Web 对照与交互 | `web/`、`backend/api/main.py`、`schemas.py` | `web-workbench.md` | `test_v03_api.py`、JavaScript 语法检查 |
 | 模型评测与评分 | `evaluation/` | `evaluation-governance.md`、实验 ADR | `test_evaluation_*.py`、`test_scanned_textbook_evaluation.py` |
 | 文档、目录与追溯 | `docs/`、模块文件头、`code-map.md` | `docs/standards/` | `test_document_structure.py`、`test_markdown_links.py`、`test_code_document_mapping.py` |
@@ -71,6 +71,8 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 - 活跃架构与设计声明关联代码、测试和 ADR；Legacy 只能关联 `docs/history/`。
 - 运行组件、包依赖、领域状态、事实来源、能力归属或 DesignRef 变化时，同步更新对应架构正文、
   Mermaid 视图、code-map 和 `tests/test_architecture_documents.py`。
+- 接口字段、审阅/任务状态、工作簿、关系类型、Web 主视图、评测阈值或 DesignRef 变化时，同步
+  更新对应设计契约、Mermaid 流程、code-map 和 `tests/test_design_documents.py`。
 - Accepted 架构与运行代码存在偏差时，在运行架构中写符合度并登记 tracker；禁止把目标状态写成
   已实现事实。
 
@@ -85,7 +87,7 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 1. 实现与当前 Accepted 设计/ADR 一致，未恢复 Superseded 或 Historical 契约。
 2. 受影响模块、DesignRef、code-map、设计和测试已经同步。
-3. 架构触发项已同步正文与 Mermaid，架构语义、映射、链接和适用回归/端到端测试通过。
+3. 架构与设计触发项已同步正文与 Mermaid，语义、映射、链接和适用回归/端到端测试通过。
 4. 可复现失败已进入 regressions；外部依赖失败有证据、恢复条件和责任位置。
 5. D 类操作已经完成备份、回滚和完整差异复核，没有隐式执行。
 6. 计划与 tracker 已关闭，Completed/Superseded 计划按规范归档。

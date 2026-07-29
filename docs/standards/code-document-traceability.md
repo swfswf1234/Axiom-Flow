@@ -3,7 +3,7 @@
 状态：Current  
 维护位置：`docs/standards/code-document-traceability.md`
 关联代码：`evaluation/scorecard.py`、受管模块文件头  
-关联测试：`tests/test_code_document_mapping.py`、`tests/test_architecture_documents.py`
+关联测试：`tests/test_code_document_mapping.py`、`tests/test_architecture_documents.py`、`tests/test_design_documents.py`
 关联 ADR：`docs/adr/0012-backend-package-boundaries.md`
 
 ## 目的
@@ -51,3 +51,14 @@
   实现映射。
 - `tests/test_architecture_documents.py` 守护目录集合、Mermaid 关键节点、领域枚举和已知偏差；
   它与代码映射测试共同作为架构变更的必过门禁。
+
+## 设计契约同步
+
+- Design 按可执行流程划分，描述输入输出、接口与数据、状态、失败语义和当前符合度；概念说明不
+  单独占用没有代码所有权的活跃设计文件。
+- 接口字段、审阅/任务状态、工作簿、关系类型、Web 主视图、评测阈值或 DesignRef 变化属于设计
+  同步触发项，必须同步正文、Mermaid 流程、code-map 和设计语义测试。
+- 已接受但尚未实现的能力使用稳定 `DES-NNN` 编号，在设计符合度与 tracker 中双向登记；对应
+  文档不能标记为完全实现。
+- `tests/test_design_documents.py` 从代码类型、AST、HTML 和评测常量读取当前契约，与代码映射测试
+  共同作为设计变更的必过门禁。
