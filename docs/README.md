@@ -1,42 +1,45 @@
-# Axiom-Flow 文档入口
+# Axiom-Flow 文档中心
 
 状态：Current
 最后更新：2026-07-29
 
-本目录维护 Axiom-Flow 的当前架构、设计决策、实施计划和可重复操作。项目介绍与快速启动见
-[`../README.md`](../README.md)，强制执行规则见 [`../AGENTS.md`](../AGENTS.md)。
+本页只负责帮助开发者定位文档。项目定位、能力边界和快速启动见[根 README](../README.md)；
+强制执行协议见 [AGENTS.md](../AGENTS.md)。
 
-## 事实优先级
+## 按任务阅读
 
-发生冲突时依次采用：运行代码和测试结果、Accepted ADR、架构文档、设计文档、计划、追踪器、
-历史资料。目标设计不得写成已交付能力，历史资料不得覆盖当前事实。
+| 读者或任务 | 阅读顺序 |
+| --- | --- |
+| 本地操作者 | [根 README](../README.md) → [本地开发](guides/local-development.md) → [运行与清理](guides/operations.md) |
+| 新开发者 | [AGENTS.md](../AGENTS.md) → [架构总览](architecture/README.md) → [代码映射](architecture/code-map.md) → [当前工作](trackers/current.md) |
+| 架构评审 | [当前架构](architecture/runtime-architecture.md) → [ADR](adr/README.md) → [设计](design/README.md) |
+| 模型实验 | [评测治理](design/evaluation-governance.md) → [evaluation](../evaluation/README.md) → 采纳或拒绝 ADR |
+| 文档维护 | [文档规范](standards/documentation.md) → [模板](templates/README.md) → [追溯规范](standards/code-document-traceability.md) |
 
-当前工程能力已经在本地通过 54 项测试，但 GitHub Actions 的 Pytest 步骤仍失败；因此工程基线
-处于 In Progress，不能表述为已发布或远端验证完成。
+## 文档地图
 
-## 阅读路径
-
-1. [`architecture/README.md`](architecture/README.md)：系统边界和当前运行架构。
-2. [`architecture/code-map.md`](architecture/code-map.md)：代码、设计和测试的唯一映射事实源。
-3. [`design/README.md`](design/README.md)：各子系统的行为与接口设计。
-4. [`adr/README.md`](adr/README.md)：已接受、被取代和实验决策。
-5. [`standards/README.md`](standards/README.md)：任务、文档和代码追溯规则。
-6. [`guides/README.md`](guides/README.md)：当前可执行的开发、测试和运维步骤。
-7. [`trackers/current.md`](trackers/current.md)：当前实施项及其计划。
-
-## 目录边界
-
-| 目录 | 只负责 | 不负责 |
+| 目录 | 职责 | 入口 |
 | --- | --- | --- |
-| `architecture/` | 已接受的系统结构、边界、数据流和实现映射 | 未来功能设想 |
-| `design/` | 接口、状态机、数据模型和验收约束 | 记录一次性决策过程 |
-| `adr/` | 高成本决策、替代关系和后果 | 操作步骤和任务进度 |
-| `standards/` | 开发流程、文档格式和追溯规则 | 项目运行命令 |
-| `guides/` | 当前可重复执行的操作 | 历史版本说明 |
-| `plans/` | In Progress、Blocked 或待执行的实施计划 | 已关闭计划 |
-| `trackers/` | 当前工作、回归、待办和路线图 | 详细设计 |
-| `templates/` | 新文档的最小合规模板 | 当前事实 |
-| `history/` | 已关闭计划、旧版本指南和原始历史资料 | 当前入口 |
+| `architecture/` | 已接受的系统结构、领域边界、数据生命周期和实现映射 | [架构文档](architecture/README.md) |
+| `design/` | 接口、状态机、数据模型和验收约束 | [设计文档](design/README.md) |
+| `adr/` | 高成本决策、替代关系和后果 | [架构决策](adr/README.md) |
+| `standards/` | 任务生命周期、文档格式和代码追溯规则 | [工程规范](standards/README.md) |
+| `guides/` | 当前可重复执行的开发、测试和运维步骤 | [操作指南](guides/README.md) |
+| `plans/` | 尚未关闭的实施计划 | [活跃计划](plans/README.md) |
+| `trackers/` | 当前工作、回归、待办和路线图 | [工作追踪](trackers/README.md) |
+| `templates/` | ADR、设计、计划和实验的最小合规模板 | [文档模板](templates/README.md) |
+| `history/` | 已关闭计划、旧版本指南和原始历史资料 | [历史资料](history/README.md) |
 
-状态、元数据和归档规则见 [`standards/documentation.md`](standards/documentation.md)。模型实验的
-manifest、评分和报告位于 [`../evaluation/README.md`](../evaluation/README.md)。
+## 去哪里确认事实
+
+| 问题 | 唯一维护位置 |
+| --- | --- |
+| 当前代码实现了什么 | 运行代码、测试和 [code-map](architecture/code-map.md) |
+| 为什么采用当前边界 | [Accepted ADR](adr/README.md) |
+| 接口与行为应当是什么 | [architecture](architecture/README.md) 与 [design](design/README.md) |
+| 现在正在做什么 | [current tracker](trackers/current.md) 与其关联计划 |
+| 哪些失败尚未关闭 | [regressions](trackers/regressions.md) |
+| 历史版本当时如何运行 | [history](history/README.md) |
+
+状态、归档和写作规则不在本页重复维护，统一见[文档规范](standards/documentation.md)；开发任务的
+分类和关闭门禁见[任务生命周期](standards/task-lifecycle.md)。

@@ -47,3 +47,29 @@ def test_active_architecture_and_guides_use_stable_names():
     for directory in (DOCS / "architecture", DOCS / "guides"):
         versioned.extend(path for path in directory.glob("*.md") if path.stem.startswith(("v0", "v1")))
     assert not versioned
+
+
+def test_root_readme_serves_qed_operators_and_new_developers():
+    content = (ROOT / "README.md").read_text(encoding="utf-8")
+    for required in (
+        "QED 的技术 PDF 解析与质量审阅组件",
+        "## 能力边界",
+        "## 快速启动",
+        "## 典型流程",
+        "AGENTS.md",
+        "docs/README.md",
+    ):
+        assert required in content
+    assert "事实优先级" not in content
+    assert "设计状态：" not in content
+
+
+def test_docs_readme_is_navigation_not_runtime_status():
+    content = (DOCS / "README.md").read_text(encoding="utf-8")
+    for directory in DOCUMENT_DIRECTORIES:
+        assert f"{directory}/" in content
+    for required in ("## 按任务阅读", "## 文档地图", "## 去哪里确认事实"):
+        assert required in content
+    assert "```powershell" not in content
+    assert " passed" not in content
+    assert "GitHub Actions" not in content
