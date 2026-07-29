@@ -5,7 +5,7 @@
 领域：数据与持久化
 决策阶段：v0.2
 取代：—
-被取代：[ADR 0005](0005-mysql-runtime-storage.md)
+被取代：[ADR 0005](../../adr/0005-mysql-runtime-storage.md)
 
 ## 决定
 

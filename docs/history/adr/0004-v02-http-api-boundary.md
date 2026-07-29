@@ -5,7 +5,7 @@
 领域：API 与任务
 决策阶段：v0.2
 取代：—
-被取代：[ADR 0006](0006-persistent-jobs-and-api-v1.md)
+被取代：[ADR 0006](../../adr/0006-persistent-jobs-and-api-v1.md)
 
 ## 决定
 

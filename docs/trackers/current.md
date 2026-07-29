@@ -3,8 +3,7 @@
 状态：Current
 最后更新：2026-07-29
 
-当前没有进行中的实施项。ADR 治理与索引体系整理已经完成，关闭记录见
-[`../history/plans/2026-07/2026-07-adr-governance.md`](../history/plans/2026-07/2026-07-adr-governance.md)。
+当前没有正在实施的工作项。已立项但暂停或受阻的工作见[活跃计划索引](../plans/index.md)。
 
 下一项工作是按目录审计 Backend 项目架构；开始前必须建立新的 Accepted 计划，并从
 [`../architecture/runtime-architecture.md`](../architecture/runtime-architecture.md) 和

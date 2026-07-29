@@ -24,8 +24,15 @@
 
 ## 索引与归档
 
-每个一级文档目录使用 `README.md` 作为入口。`plans/` 只保留未关闭计划；Completed 与
-Superseded 计划移入 `history/plans/<year-month>/`。旧版本操作指南进入 `history/guides/`。
-历史正文保留当时事实，可以补充 Historical 声明和修复链接，但不得改写旧结论。
+- `docs/index.md` 是文档总入口；各文档目录只使用小写 `index.md` 导航，不在索引中维护架构、
+  流程、命令、测试结果或其他正文事实。
+- `docs/**/README.md` 不允许存在。仓库根 `README.md` 是面向用户和新开发者的项目入口，属于
+  唯一例外。
+- 内部链接显式指向目标文件或 `index.md`，不依赖托管平台将目录自动解析为 README。
+- 当前目录只保存仍然有效的事实。Rejected/Superseded ADR、Completed/Superseded 计划和旧版
+  指南分别进入 `history/adr/`、`history/plans/<year-month>/` 和 `history/guides/`。
+- 历史正文保留当时事实，可以补充 Historical 声明和修复链接，但不得改写旧结论。
 
-删除或移动文档前必须先搜索所有引用；完成后运行 Markdown 链接和代码映射测试。
+文档移动或删除前必须先搜索全部引用。仍有唯一事实、决策依据或审计价值的文件必须移入对应
+history 目录；只有精确重复、空草稿或不含唯一事实和审计价值的文件才可删除。完成后必须运行
+文档结构、Markdown 链接和代码映射测试。

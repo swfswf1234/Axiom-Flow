@@ -99,7 +99,7 @@ python -m backend.worker
 首次参与开发时依次阅读：
 
 1. [AGENTS.md](AGENTS.md)：强制执行协议。
-2. [文档中心](docs/README.md)：按任务定位架构、设计和计划。
+2. [文档中心](docs/index.md)：按目录定位架构、设计、计划和历史资料。
 3. [当前运行架构](docs/architecture/runtime-architecture.md)：组件和依赖边界。
 4. [测试指南](docs/guides/testing.md)：本地与关闭门禁。
 

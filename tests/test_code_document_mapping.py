@@ -14,8 +14,11 @@ MANAGED_DIRECTORIES = ("app", "backend", "evaluation", "scripts", "tests")
 MANAGED_WEB_FILES = ("web/index.html", "web/style.css", "web/app.js")
 MANAGED_TOOL_FILES = ("alembic.ini", "backend/migrations/script.py.mako")
 EXEMPT_FILENAMES = {"__init__.py"}
-ACTIVE_DOCUMENTS = tuple((ROOT / "docs" / "architecture").glob("*.md")) + tuple(
-    (ROOT / "docs" / "design").glob("*.md")
+ACTIVE_DOCUMENTS = tuple(
+    path
+    for directory in (ROOT / "docs" / "architecture", ROOT / "docs" / "design")
+    for path in directory.glob("*.md")
+    if path.name != "index.md"
 )
 
 

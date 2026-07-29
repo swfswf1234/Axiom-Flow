@@ -4,7 +4,7 @@
 维护位置：`docs/standards/code-document-traceability.md`
 关联代码：`evaluation/scorecard.py`、受管模块文件头  
 关联测试：`tests/test_code_document_mapping.py`  
-关联 ADR：`docs/adr/0001-local-first-and-storage.md`
+关联 ADR：`docs/adr/0012-backend-package-boundaries.md`
 
 ## 目的
 

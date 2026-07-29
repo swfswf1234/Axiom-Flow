@@ -10,9 +10,9 @@ Axiom-Flow 是 QED 的本地优先技术 PDF 解析与质量审阅组件。当�
 接到任务后按顺序执行：
 
 1. 检查工作树和当前分支，保留用户已有变更。
-2. 阅读 `docs/trackers/current.md`、关联计划和 `docs/trackers/regressions.md`。
+2. 从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/current.md`、关联计划和回归记录。
 3. 在 `docs/architecture/code-map.md` 定位受影响模块、DesignRef、实现状态和测试。
-4. 阅读对应 architecture、design 和 Accepted ADR；旧协议再查 `docs/history/`。
+4. 阅读对应 architecture、design 和 Accepted ADR；旧协议再查 `docs/history/index.md`。
 5. 用 `rg` 搜索实际调用、测试和历史定义，不根据文件名猜行为。
 
 常用定位命令：
@@ -56,7 +56,7 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 历史资料。历史资料只解释背景，不覆盖当前设计。
 
 - 修改领域边界、公开 API、持久化语义、事实来源或解析路由前，先新增或更新 ADR。
-- ADR 使用全局顺序编号并原位保留，新增、拒绝或取代按 `docs/standards/adr-governance.md` 执行。
+- ADR 使用全局顺序编号；路径随生命周期状态变化，完整登记以 `docs/adr/index.md` 为准。
 - 每项实现必须关联计划，包含范围、验证、回滚和完成条件。
 - 按 `docs/standards/task-lifecycle.md` 分类 A/B/C/D；不是所有任务都需要实验。
 - 外部模型实验前必须冻结假设、样本、内容哈希、预算和采纳门槛；结果经 ADR 接受后才成为设计。

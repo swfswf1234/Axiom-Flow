@@ -4,7 +4,7 @@
 日期：2026-07-27
 领域：API 与任务
 决策阶段：v0.3
-取代：[ADR 0004](0004-v02-http-api-boundary.md)
+取代：[ADR 0004](../history/adr/0004-v02-http-api-boundary.md)
 被取代：—
 
 ## 决定

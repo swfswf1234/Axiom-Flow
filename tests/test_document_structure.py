@@ -24,9 +24,11 @@ DOCUMENT_DIRECTORIES = (
 CLOSED_STATES = ("实现状态：Completed", "状态：Completed", "状态：Superseded")
 
 
-def test_each_document_directory_has_readme_entrypoint():
+def test_document_directories_use_explicit_index_entrypoints():
+    assert (DOCS / "index.md").is_file()
     for directory in DOCUMENT_DIRECTORIES:
-        assert (DOCS / directory / "README.md").is_file(), directory
+        assert (DOCS / directory / "index.md").is_file(), directory
+    assert not list(DOCS.rglob("README.md"))
 
 
 def test_root_agents_is_the_only_active_agent_protocol():
@@ -37,7 +39,7 @@ def test_root_agents_is_the_only_active_agent_protocol():
 
 def test_active_plans_do_not_contain_closed_work():
     for plan in (DOCS / "plans").glob("*.md"):
-        if plan.name == "README.md":
+        if plan.name == "index.md":
             continue
         content = plan.read_text(encoding="utf-8")
         assert not any(state in content for state in CLOSED_STATES), plan
@@ -60,19 +62,28 @@ def test_root_readme_serves_qed_operators_and_new_developers():
         "## 快速启动",
         "## 典型流程",
         "AGENTS.md",
-        "docs/README.md",
+        "docs/index.md",
     ):
         assert required in content
     assert "事实优先级" not in content
     assert "设计状态：" not in content
 
 
-def test_docs_readme_guides_module_development():
-    content = (DOCS / "README.md").read_text(encoding="utf-8")
-    for required in ("## 项目结构", "## 运行框架", "## 主数据流", "## 模块职责", "## 开发流程"):
+def test_docs_index_only_navigates_document_areas():
+    content = (DOCS / "index.md").read_text(encoding="utf-8")
+    for required in (
+        "architecture/index.md",
+        "design/index.md",
+        "adr/index.md",
+        "guides/index.md",
+        "plans/index.md",
+        "trackers/index.md",
+        "standards/index.md",
+        "templates/index.md",
+        "history/index.md",
+    ):
         assert required in content
-    assert content.count("```mermaid") >= 3
-    assert "## 按任务阅读" not in content
+    assert "```mermaid" not in content
     assert "```powershell" not in content
     assert " passed" not in content
     assert "GitHub Actions" not in content
@@ -87,6 +98,7 @@ def test_agents_routes_tasks_problems_and_completion():
         "## 事实来源与决策",
         "## 完成检查",
         "docs/architecture/code-map.md",
+        "docs/index.md",
         "docs/trackers/current.md",
         "docs/standards/task-lifecycle.md",
     ):

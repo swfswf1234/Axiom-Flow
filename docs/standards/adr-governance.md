@@ -12,9 +12,12 @@ ADR 只记录会改变系统边界、公开 API、持久化语义、事实来源
 ## 编号与路径
 
 - 文件名固定为 `NNNN-lowercase-slug.md`，编号在整个仓库中单调递增且进入主分支后永不复用。
-- ADR 保持在 `docs/adr/` 扁平目录，不按年份或产品版本移动；版本只记录为决策阶段。
-- 新 ADR 使用当前最大编号加一，并在同一变更中登记 README。并行分支冲突在合入前重新编号。
-- Superseded 和 Rejected ADR 原位保留，不能移入 history 或删除。
+- Proposed 和 Accepted ADR 保持在 `docs/adr/`；Rejected 和 Superseded ADR 移入
+  `docs/history/adr/`。两处都使用扁平目录，不按年份或产品版本再分组。
+- 新 ADR 使用当前最大编号加一，并在同一变更中登记 `docs/adr/index.md`。并行分支冲突在合入
+  前重新编号。
+- ADR 编号和文件名进入主分支后永不复用；物理路径随生命周期状态变化，ADR 永不删除。
+- `docs/adr/index.md` 是跨当前与历史 ADR 的唯一全局登记表。
 
 ## 元数据
 
@@ -37,8 +40,9 @@ Accepted 正文不可静默改写。允许修复失效链接、补充反向取�
 
 ## 维护流程
 
-1. 使用模板创建 Proposed ADR，分配下一个编号并登记 README。
+1. 使用模板创建 Proposed ADR，分配下一个编号并登记 `docs/adr/index.md`。
 2. 冻结背景、候选方案、决定、后果和关联证据；需要实验时先完成实验治理。
 3. 接受或拒绝后同步状态、索引、关联架构/设计与实施计划。
-4. 完整取代时同步新旧 ADR 的双向元数据，旧 ADR 标记 Superseded 且保持原路径。
+4. 完整取代时同步新旧 ADR 的双向元数据，将旧 ADR 标记 Superseded 并移入
+   `docs/history/adr/`。
 5. 运行 ADR 结构、Markdown 链接和代码映射测试。

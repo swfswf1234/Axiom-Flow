@@ -12,11 +12,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADR_DIR = ROOT / "docs" / "adr"
-ADR_INDEX = ADR_DIR / "README.md"
+ADR_HISTORY_DIR = ROOT / "docs" / "history" / "adr"
+ADR_INDEX = ADR_DIR / "index.md"
 ADR_TEMPLATE = ROOT / "docs" / "templates" / "adr.md"
 ADR_FILE = re.compile(r"(?P<id>\d{4})-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.md")
 ADR_LINK = re.compile(r"\[ADR (?P<id>\d{4})]\((?P<path>[^)]+)\)")
-INDEX_ENTRY = re.compile(r"^\| \[`(?P<id>\d{4})`]\((?P<path>\d{4}-[^)]+\.md)\) \|", re.MULTILINE)
+INDEX_ENTRY = re.compile(r"^\| \[`(?P<id>\d{4})`]\((?P<path>[^)]+\.md)\) \|", re.MULTILINE)
 VALID_STATUSES = {"Proposed", "Accepted", "Rejected", "Superseded"}
 VALID_DOMAINS = {"解析与评测", "数据与持久化", "API 与任务", "审阅与发布", "工程治理"}
 
@@ -29,7 +30,9 @@ def _field(content: str, name: str) -> str:
 
 def _records() -> dict[str, dict[str, object]]:
     records = {}
-    for path in sorted(ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md")):
+    paths = list(ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md"))
+    paths.extend(ADR_HISTORY_DIR.glob("[0-9][0-9][0-9][0-9]-*.md"))
+    for path in sorted(paths, key=lambda candidate: candidate.name):
         match = ADR_FILE.fullmatch(path.name)
         assert match, path.name
         adr_id = match.group("id")
@@ -63,6 +66,7 @@ def test_adr_files_use_stable_global_ids_and_complete_metadata():
     assert records
 
     for adr_id, record in records.items():
+        record_path = Path(record["path"])
         content = str(record["content"])
         assert content.startswith(f"# ADR {adr_id}：")
         assert record["status"] in VALID_STATUSES
@@ -76,7 +80,13 @@ def test_adr_files_use_stable_global_ids_and_complete_metadata():
             for match in ADR_LINK.finditer(str(relation)):
                 target = records.get(match.group("id"))
                 assert target is not None
-                assert Path(str(match.group("path"))).name == Path(target["path"]).name
+                relation_path = (record_path.parent / match.group("path")).resolve()
+                assert relation_path == Path(target["path"]).resolve()
+
+        expected_parent = (
+            ADR_DIR if record["status"] in {"Proposed", "Accepted"} else ADR_HISTORY_DIR
+        )
+        assert record_path.parent == expected_parent
 
 
 def test_adr_index_registers_every_file_once_and_declares_next_id():
@@ -87,7 +97,8 @@ def test_adr_index_registers_every_file_once_and_declares_next_id():
     assert Counter(adr_id for adr_id, _ in entries) == Counter(records.keys())
     assert [adr_id for adr_id, _ in entries] == sorted(records)
     for adr_id, relative_path in entries:
-        assert Path(relative_path).name == Path(records[adr_id]["path"]).name
+        index_path = (ADR_INDEX.parent / relative_path).resolve()
+        assert index_path == Path(records[adr_id]["path"]).resolve()
 
     for line in content.splitlines():
         match = INDEX_ENTRY.match(line)

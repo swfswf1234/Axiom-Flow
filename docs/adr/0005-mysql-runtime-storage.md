@@ -4,7 +4,7 @@
 日期：2026-07-27
 领域：数据与持久化
 决策阶段：v0.2
-取代：[ADR 0001](0001-local-first-and-storage.md)
+取代：[ADR 0001](../history/adr/0001-local-first-and-storage.md)
 被取代：—
 
 ## 决定

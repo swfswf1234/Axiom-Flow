@@ -5,7 +5,7 @@
 领域：解析与评测
 决策阶段：v0.2
 取代：—
-被取代：[ADR 0010](0010-qwen-ocr-only-rudin-trial.md)
+被取代：[ADR 0010](../../adr/0010-qwen-ocr-only-rudin-trial.md)
 
 ## 决定
 
