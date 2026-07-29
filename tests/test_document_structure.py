@@ -21,6 +21,7 @@ DOCUMENT_DIRECTORIES = (
     "templates",
     "history",
 )
+ACTIVE_GUIDES = {"index.md", "development.md", "operations.md"}
 CLOSED_STATES = ("实现状态：Completed", "状态：Completed", "状态：Superseded")
 
 
@@ -50,6 +51,22 @@ def test_active_architecture_and_guides_use_stable_names():
     for directory in (DOCS / "architecture", DOCS / "guides"):
         versioned.extend(path for path in directory.glob("*.md") if path.stem.startswith(("v0", "v1")))
     assert not versioned
+
+
+def test_guides_are_two_human_handbooks_and_an_index():
+    guide_names = {path.name for path in (DOCS / "guides").glob("*.md")}
+    assert guide_names == ACTIVE_GUIDES
+
+    index = (DOCS / "guides" / "index.md").read_text(encoding="utf-8")
+    assert "development.md" in index
+    assert "operations.md" in index
+    assert "testing.md" not in index
+
+    operations = (DOCS / "guides" / "operations.md").read_text(encoding="utf-8")
+    backlog = (DOCS / "trackers" / "backlog.md").read_text(encoding="utf-8")
+    assert "OPS-001：生产运维基线未实现" in operations
+    assert "OPS-001：生产运维基线未实现" in backlog
+    assert "不得直接暴露到公网" in operations
 
 
 def test_root_readme_serves_qed_operators_and_new_developers():
@@ -103,16 +120,18 @@ def test_agents_routes_tasks_problems_and_completion():
         "docs/standards/task-lifecycle.md",
         "tests/test_architecture_documents.py",
         "tests/test_design_documents.py",
+        "docs/guides/development.md",
+        "docs/guides/operations.md",
     ):
         assert required in content
 
 
 def test_dependency_install_entrypoints_have_one_source():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    local_guide = (DOCS / "guides" / "local-development.md").read_text(encoding="utf-8")
+    development_guide = (DOCS / "guides" / "development.md").read_text(encoding="utf-8")
 
     assert "dev" in pyproject["project"]["optional-dependencies"]
     assert (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()[-1] == "-e ."
     assert not (ROOT / "requirements-dev.txt").exists()
-    assert 'python -m pip install -e ".[dev]"' in local_guide
-    assert "requirements-dev.txt" not in local_guide
+    assert 'python -m pip install -e ".[dev]"' in development_guide
+    assert "requirements-dev.txt" not in development_guide

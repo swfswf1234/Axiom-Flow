@@ -10,7 +10,8 @@ Axiom-Flow 是 QED 的本地优先技术 PDF 解析与质量审阅组件。当�
 接到任务后按顺序执行：
 
 1. 检查工作树和当前分支，保留用户已有变更。
-2. 从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/current.md`、关联计划和回归记录。
+2. 从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/current.md`、关联计划和回归记录；开发
+   命令查 `docs/guides/development.md`，运行与数据操作查 `docs/guides/operations.md`。
 3. 在 `docs/architecture/code-map.md` 定位受影响模块、DesignRef、实现状态和测试。
 4. 阅读对应 architecture、design 和 Accepted ADR；架构图以活跃文档内嵌 Mermaid 为准，旧协议
    再查 `docs/history/index.md`。

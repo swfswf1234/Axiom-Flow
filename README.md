@@ -70,8 +70,8 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 python -m backend.worker
 ```
 
-打开 `http://127.0.0.1:8000`。环境变量、测试库隔离和受保护清理规则见
-[本地开发指南](docs/guides/local-development.md)。
+打开 `http://127.0.0.1:8000`。开发环境和测试库隔离见[开发指南](docs/guides/development.md)，
+启动检查与受保护清理见[操作与运维指南](docs/guides/operations.md)。
 
 ## 典型流程
 
@@ -101,7 +101,7 @@ python -m backend.worker
 1. [AGENTS.md](AGENTS.md)：强制执行协议。
 2. [文档中心](docs/index.md)：按目录定位架构、设计、计划和历史资料。
 3. [当前运行架构](docs/architecture/runtime-architecture.md)：组件和依赖边界。
-4. [测试指南](docs/guides/testing.md)：本地与关闭门禁。
+4. [开发指南](docs/guides/development.md)：环境、迁移、测试与关闭门禁。
 
 ## License
 

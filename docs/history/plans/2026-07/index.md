@@ -9,6 +9,7 @@
 | Alembic 配置与迁移开发流程优化 | [2026-07-alembic-development-workflow.md](2026-07-alembic-development-workflow.md) |
 | Architecture 文档对齐与语义同步门禁 | [2026-07-architecture-document-alignment.md](2026-07-architecture-document-alignment.md) |
 | Design 文档收敛与契约同步门禁 | [2026-07-design-contract-alignment.md](2026-07-design-contract-alignment.md) |
+| Guides 人类手册收敛 | [2026-07-guides-handbook-alignment.md](2026-07-guides-handbook-alignment.md) |
 | 文档与代码双向追溯机制 | [2026-07-code-document-traceability.md](2026-07-code-document-traceability.md) |
 | Docs 索引与历史归档规范重构 | [2026-07-doc-index-and-history-policy.md](2026-07-doc-index-and-history-policy.md) |
 | 依赖安装入口简化 | [2026-07-dependency-install-entrypoints.md](2026-07-dependency-install-entrypoints.md) |

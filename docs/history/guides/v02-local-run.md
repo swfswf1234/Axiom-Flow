@@ -5,7 +5,8 @@
 
 本页只保留 v0.2 阶段背景，不再是可执行指南。`backend.app.main` 已按 ADR 0012 删除，当前启动、
 迁移和清理命令统一见当前
-[`../../guides/local-development.md`](../../guides/local-development.md)。
+[`../../guides/development.md`](../../guides/development.md)和
+[`../../guides/operations.md`](../../guides/operations.md)。
 
 v0.2 是单用户、本地优先的 PDF 审阅闭环。运行前确认 Python 环境已安装
 `requirements.txt` 中的依赖，并在 `.env` 中设置 `AXIOM_API_KEY`（兼容 `API_KEY`）和
