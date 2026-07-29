@@ -8,6 +8,7 @@
 
 | 日期 | ID | 任务 | 终态 | 关闭结果 | 证据 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-29 | REG-001 | GitHub Actions Pytest 失败 | Completed | Achieved | 提交 `907e196` 增加跨平台路径脱敏回归；Actions run `30438394283` success，98 tests。 |
 | 2026-07-29 | ENG-001 | 主流程应用边界与包根迁移 | Completed | Achieved | [ADR 0018](../adr/0018-src-package-and-application-owned-workflows.md)；wheel 构建成功，API + Worker 完整发布闭环与全量 97 tests 通过。 |
 | 2026-07-29 | ARCH-001 | API 绕过应用服务 | Completed | Achieved | [ADR 0018](../adr/0018-src-package-and-application-owned-workflows.md)；API/Worker 只调用应用服务，完整主链与架构门禁通过。 |
 | 2026-07-29 | DOC-002 | Trackers 任务台账收口 | Completed | Achieved | [ADR 0017](../adr/0017-consolidated-task-ledgers-and-roadmap.md)；专项与全量门禁通过，旧 tracker 由 Git `205b9c9` 恢复。 |

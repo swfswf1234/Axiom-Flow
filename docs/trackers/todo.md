@@ -8,8 +8,7 @@
 
 | ID | 类型 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
-| REL-001 | Plan | P0 | Blocked | [v0.3 工程基线发布](../plans/2026-07-v03-engineering-baseline.md) | REG-001 关闭且预定发布提交的远端门禁通过。 |
-| REG-001 | Plan | P0 | In Progress | [CI 跨平台路径脱敏修复](../plans/2026-07-ci-path-redaction.md) | run `30437375294` 复现 POSIX 绝对路径未脱敏；补跨平台回归并使同一工作流通过。 |
+| REL-001 | Plan | P0 | In Progress | [v0.3 工程基线发布](../plans/2026-07-v03-engineering-baseline.md) | REG-001 已关闭；冻结最终发布提交并完成 D 类差异、回滚和标签复核。 |
 | EXP-002 | Candidate | P0 | Candidate | Rudin 扫描教材新解析候选 | 当前单模型工程链路人工抽检 3/5；新候选必须使用冻结样本重新评测。 |
 | EXP-003 | Candidate | P0 | Candidate | 通用新增类别解析评测 | 新类别样本到达后新建 manifest，不回写 Rudin 单类别实验。 |
 | DES-001 | Gap | P1 | Open | 自动质量信号不足 | [解析设计](../design/document-pipeline.md)尚缺乱码、覆盖、页数、公式和表格风险的稳定规则或评测门槛。 |
