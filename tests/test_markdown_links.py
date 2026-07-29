@@ -1,6 +1,6 @@
 """
 模块职责：验证仓库 Markdown 文档中的本地相对链接不会失效。
-设计关联（DesignRef）：docs/guides/code-document-traceability.md
+设计关联（DesignRef）：docs/standards/code-document-traceability.md
 实现状态：Current
 被测代码：README.md、docs、evaluation
 """

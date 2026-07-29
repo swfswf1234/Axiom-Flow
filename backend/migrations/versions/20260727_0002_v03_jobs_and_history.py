@@ -1,6 +1,6 @@
 """
 模块职责：为 v0.3 增加持久任务、版本化抽取、审阅历史和规范化页面明细。
-设计关联（DesignRef）：docs/architecture/v03-target.md
+设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
 关联测试：tests/test_v03_jobs.py、tests/test_mysql_migrations.py
 """

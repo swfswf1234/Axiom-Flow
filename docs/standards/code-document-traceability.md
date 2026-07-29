@@ -1,7 +1,7 @@
 # 文档与代码双向追溯规范
 
 状态：Current  
-维护位置：`docs/guides/code-document-traceability.md`  
+维护位置：`docs/standards/code-document-traceability.md`
 关联代码：`evaluation/scorecard.py`、受管模块文件头  
 关联测试：`tests/test_code_document_mapping.py`  
 关联 ADR：`docs/adr/0001-local-first-and-storage.md`

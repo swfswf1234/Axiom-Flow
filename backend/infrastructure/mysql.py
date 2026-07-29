@@ -1,6 +1,6 @@
 """
 模块职责：实现 v0.3 MySQL 任务租约、版本化抽取和审阅事件仓储。
-设计关联（DesignRef）：docs/architecture/v03-target.md
+设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
 关联测试：tests/test_v03_jobs.py、tests/test_v03_api.py
 """

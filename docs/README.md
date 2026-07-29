@@ -1,59 +1,42 @@
-# Axiom-Flow Documentation
+# Axiom-Flow 文档入口
 
-状态：Current  
-最后更新：2026-07-27
+状态：Current
+最后更新：2026-07-29
 
-本目录描述当前 Axiom-Flow。它是一个单用户、本地优先的文档质量与知识审阅工作台：PDF
-先被解析为可定位的内容，再转为经人工发布的知识。
+本目录维护 Axiom-Flow 的当前架构、设计决策、实施计划和可重复操作。项目介绍与快速启动见
+[`../README.md`](../README.md)，强制执行规则见 [`../AGENTS.md`](../AGENTS.md)。
 
-## 阅读顺序
+## 事实优先级
 
-1. `../AGENTS.md`：任何 Agent 或开发者的执行规则。
-2. `architecture/overview.md`：系统边界和主数据流。
-3. `architecture/code-map.md`：代码、设计与测试的双向映射。
-4. `design/index.md`：各子系统的当前目标设计。
-5. `adr/`：为什么采用这些不可逆或高成本决策。
-6. `trackers/current.md`：当前正在推进的工作。
-7. `plans/`：每项工作的实施与验收定义。
+发生冲突时依次采用：运行代码和测试结果、Accepted ADR、架构文档、设计文档、计划、追踪器、
+历史资料。目标设计不得写成已交付能力，历史资料不得覆盖当前事实。
 
-本地启动入口见 `guides/v03-local-run.md`；`guides/v02-local-run.md` 只保留 v0.2 阶段记录。
+当前工程能力已经在本地通过 54 项测试，但 GitHub Actions 的 Pytest 步骤仍失败；因此工程基线
+处于 In Progress，不能表述为已发布或远端验证完成。
 
-## 双状态元数据
+## 阅读路径
 
-活跃架构、设计和计划使用两项状态，禁止再用 `Current（目标设计）` 混写：
+1. [`architecture/README.md`](architecture/README.md)：系统边界和当前运行架构。
+2. [`architecture/code-map.md`](architecture/code-map.md)：代码、设计和测试的唯一映射事实源。
+3. [`design/README.md`](design/README.md)：各子系统的行为与接口设计。
+4. [`adr/README.md`](adr/README.md)：已接受、被取代和实验决策。
+5. [`standards/README.md`](standards/README.md)：任务、文档和代码追溯规则。
+6. [`guides/README.md`](guides/README.md)：当前可执行的开发、测试和运维步骤。
+7. [`trackers/current.md`](trackers/current.md)：当前实施项及其计划。
 
-- `设计状态`：`Draft`、`Proposed`、`Accepted`、`Superseded`、`Historical`。
-- `实现状态`：`Not Started`、`In Progress`、`Implemented`、`Verified`、`Blocked`、`Completed`。
+## 目录边界
 
-旧文档只有 `状态` 时按其原意解释；修改旧文档时应迁移到双状态。
+| 目录 | 只负责 | 不负责 |
+| --- | --- | --- |
+| `architecture/` | 已接受的系统结构、边界、数据流和实现映射 | 未来功能设想 |
+| `design/` | 接口、状态机、数据模型和验收约束 | 记录一次性决策过程 |
+| `adr/` | 高成本决策、替代关系和后果 | 操作步骤和任务进度 |
+| `standards/` | 开发流程、文档格式和追溯规则 | 项目运行命令 |
+| `guides/` | 当前可重复执行的操作 | 历史版本说明 |
+| `plans/` | In Progress、Blocked 或待执行的实施计划 | 已关闭计划 |
+| `trackers/` | 当前工作、回归、待办和路线图 | 详细设计 |
+| `templates/` | 新文档的最小合规模板 | 当前事实 |
+| `history/` | 已关闭计划、旧版本指南和原始历史资料 | 当前入口 |
 
-## 兼容状态
-
-| 状态 | 含义 |
-| --- | --- |
-| `Current` | 当前系统事实或已接受目标，按文档声明区分。 |
-| `Proposed` | 已形成方案，尚未接受或实施。 |
-| `Implemented` | 已实现且已验证的能力。 |
-| `Completed` | 已完成且已形成阶段关闭记录；不表示后续增强已完成。 |
-| `Blocked` | 因明确的外部前置条件暂停；恢复条件必须写入计划或追踪器。 |
-| `Deprecated` | 不再作为活跃入口，保留迁移说明。 |
-| `Historical` | 仅用于追溯，不能覆盖当前设计。 |
-
-## 目录职责
-
-| 目录 | 作用 |
-| --- | --- |
-| `architecture/` | 已接受的系统边界、领域关系与数据生命周期。 |
-| `design/` | 目标接口、数据模型、状态机和验收约束。 |
-| `adr/` | 关键决策及其后果。 |
-| `plans/` | 可执行实施计划及完成条件。 |
-| `trackers/` | 当前工作、路线图和待办状态。 |
-| `guides/` | 可重复执行的开发、测试与运行操作。 |
-| `guides/code-document-traceability.md` | 中文注释、文件头和双向映射维护规范。 |
-| `../evaluation/` | 可复现实验、样本清单、评分工具与报告。 |
-| `history/` | 历史方案和记录。 |
-
-当前运行事实是已验证的 v0.3；架构、任务和 Web 的实现映射见 `architecture/v03-target.md`。
-路线图中的检索、学习交互和正式解析质量结论仍不得描述为已交付能力。
-
-实际运行行为以代码与测试为准；设计文档不能把未实现的能力写成已支持。
+状态、元数据和归档规则见 [`standards/documentation.md`](standards/documentation.md)。模型实验的
+manifest、评分和报告位于 [`../evaluation/README.md`](../evaluation/README.md)。

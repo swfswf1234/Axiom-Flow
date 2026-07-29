@@ -1,10 +1,11 @@
 # 设计文档索引
 
-状态：Current  
-维护位置：`docs/design/index.md`  
+设计状态：Accepted
+实现状态：Implemented
+维护位置：`docs/design/README.md`
 关联代码：各设计的受管实现见 `docs/architecture/code-map.md`  
 关联测试：`tests/test_code_document_mapping.py`、`tests/test_evaluation_scorecard.py`  
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0002-parser-routing-and-provider-boundary.md`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`
 
 本索引只负责从设计定位当前代码和测试，不承载设计细节。反向定位请使用
 `docs/architecture/code-map.md`。

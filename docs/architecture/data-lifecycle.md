@@ -1,8 +1,8 @@
 # 数据生命周期与事实来源
 
 设计状态：Accepted
-实现状态：Verified
-最后更新：2026-07-27
+实现状态：Implemented
+最后更新：2026-07-29
 关联代码：`backend/infrastructure/database.py`、`backend/migrations/env.py`、`backend/migrations/versions/20260727_0001_mysql_v02.py`
 关联测试：`tests/test_document_workflow.py`、`tests/test_mysql_migrations.py`、`tests/test_current_parse_runs.py`、`tests/test_prune_parse_runs.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0003-excel-publish-source-of-truth.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`

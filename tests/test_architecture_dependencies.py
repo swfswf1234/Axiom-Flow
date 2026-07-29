@@ -1,6 +1,6 @@
 """
 模块职责：守护 Backend 领域、应用、API、Worker 与基础设施的单向依赖。
-设计关联（DesignRef）：docs/architecture/v03-target.md
+设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
 被测代码：backend/domain、backend/application、backend/api、backend/worker
 """

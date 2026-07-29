@@ -1,8 +1,8 @@
-# v0.3 目标架构
+# 当前运行架构
 
 设计状态：Accepted
-实现状态：Verified
-最后更新：2026-07-27
+实现状态：Implemented
+最后更新：2026-07-29
 关联代码：`backend/domain/models.py`、`backend/application/ports.py`、`backend/bootstrap.py`、`backend/infrastructure/mysql.py`、`backend/api/schemas.py`、`backend/migrations/versions/20260727_0002_v03_jobs_and_history.py`
 关联测试：`tests/test_architecture_dependencies.py`、`tests/test_v03_jobs.py`、`tests/test_v03_api.py`、`tests/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0007-versioned-domain-records.md`、`docs/adr/0012-backend-package-boundaries.md`

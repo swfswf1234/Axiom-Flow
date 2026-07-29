@@ -1,6 +1,6 @@
 """
 模块职责：定义 v0.3 HTTP API 的请求、响应和统一错误结构。
-设计关联（DesignRef）：docs/architecture/v03-target.md
+设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
 关联测试：tests/test_v03_api.py
 """

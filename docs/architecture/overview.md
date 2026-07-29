@@ -1,16 +1,16 @@
 # 系统总览
 
 设计状态：Accepted
-实现状态：Verified
-最后更新：2026-07-27
-关联代码：v0.2 受管实现及 Legacy 边界见 `docs/architecture/code-map.md`  
-关联测试：`tests/test_code_document_mapping.py`  
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0002-parser-routing-and-provider-boundary.md`
+实现状态：Implemented
+最后更新：2026-07-29
+关联代码：当前受管实现见 `docs/architecture/code-map.md`
+关联测试：`tests/test_code_document_mapping.py`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`
 
 Axiom-Flow 是本地单用户的技术文档质量与知识审阅工作台。首期交付从 PDF 导入、
 解析、页级质量审阅、教学语义单元审阅、Excel 发布到知识图谱浏览的闭环。
 
-本页描述已实现的 v0.3 当前事实。详细分层见 `v03-target.md`。
+本页描述当前实现事实。详细分层见 [`runtime-architecture.md`](runtime-architecture.md)。
 
 ```mermaid
 flowchart LR

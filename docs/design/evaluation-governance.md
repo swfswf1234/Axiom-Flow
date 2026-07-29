@@ -1,7 +1,7 @@
 # 解析评测治理
 
 设计状态：Accepted
-实现状态：Verified
+实现状态：Implemented
 最后更新：2026-07-27
 关联代码：`evaluation/scorecard.py`、`evaluation/preflight.py`、`evaluation/scanned_textbook.py`
 关联测试：`tests/test_evaluation_scorecard.py`、`tests/test_evaluation_preflight.py`、`tests/test_scanned_textbook_evaluation.py`、`tests/test_code_document_mapping.py`

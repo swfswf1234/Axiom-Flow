@@ -1,7 +1,7 @@
 # 文档解析流水线
 
 设计状态：Accepted
-实现状态：Verified
+实现状态：Implemented
 最后更新：2026-07-27
 关联代码：`backend/infrastructure/config.py`、`backend/infrastructure/bailian.py`、`backend/infrastructure/artifacts.py`、`backend/infrastructure/pdf_pipeline.py`
 关联测试：`tests/test_document_workflow.py`、`tests/test_v03_jobs.py`、`tests/test_providers.py`、`tests/test_parse_artifacts.py`、`tests/test_code_document_mapping.py`

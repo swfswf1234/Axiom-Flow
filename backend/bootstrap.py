@@ -1,6 +1,6 @@
 """
 模块职责：集中装配配置、应用用例与基础设施适配器。
-设计关联（DesignRef）：docs/architecture/v03-target.md
+设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
 关联测试：tests/test_architecture_dependencies.py、tests/test_v03_api.py
 """

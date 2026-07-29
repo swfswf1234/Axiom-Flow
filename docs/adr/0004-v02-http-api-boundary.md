@@ -1,9 +1,12 @@
 # ADR 0004：v0.2 HTTP API 与静态工作台边界
 
-状态：Accepted  
+状态：Superseded
 日期：2026-07-27
 
 ## 决定
+
+本 ADR 记录 v0.2 的 HTTP 边界，已由 ADR 0006 的 API v1、持久任务和独立 Worker 取代。
+下列内容只解释历史行为，不是当前兼容契约。
 
 v0.2 以 `backend/app/main.py` 提供同源 HTTP API，所有业务接口使用 `/api` 前缀。
 独立的 `web/` 原生静态前端只读取查询结果和提交导入、解析、审阅、工作簿、发布命令；

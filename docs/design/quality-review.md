@@ -1,11 +1,11 @@
 # 页级质量与人工审阅
 
 设计状态：Accepted
-实现状态：Verified
+实现状态：Implemented
 最后更新：2026-07-27
 关联代码：由 `docs/architecture/code-map.md` 中的解析与仓储服务组合实现  
 关联测试：`tests/test_document_workflow.py`、`tests/test_code_document_mapping.py`
-关联 ADR：`docs/adr/0002-parser-routing-and-provider-boundary.md`
+关联 ADR：`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`
 
 自动初筛检测空页、低文字覆盖、乱码、页数不一致、公式或表格缺失、解析器冲突和模型
 低置信度。规则只产生风险信号，不修改正文和知识语义。

@@ -1,7 +1,7 @@
 # 规范化内容与证据
 
 设计状态：Accepted
-实现状态：Verified
+实现状态：Implemented
 最后更新：2026-07-27
 关联代码：规范类型由 `docs/architecture/code-map.md` 中的领域与 API 模型共同实现
 关联测试：`tests/test_document_workflow.py`、`tests/test_code_document_mapping.py`

@@ -1,6 +1,6 @@
 """
 模块职责：守护代码、设计文档和测试之间的双向映射关系。
-设计关联（DesignRef）：docs/guides/code-document-traceability.md
+设计关联（DesignRef）：docs/standards/code-document-traceability.md
 实现状态：Current
 被测代码：docs/architecture/code-map.md
 """
