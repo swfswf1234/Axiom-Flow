@@ -2,7 +2,7 @@
 模块职责：编排工作簿草稿、校验快照和显式知识发布。
 设计关联（DesignRef）：docs/design/excel-release-workflow.md
 实现状态：Current
-关联测试：tests/test_document_workflow.py
+关联测试：tests/system/test_document_release_flow.py
 """
 
 from pathlib import Path

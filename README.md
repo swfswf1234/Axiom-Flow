@@ -90,8 +90,8 @@ python -m axiom_flow.worker
 | --- | --- |
 | `src/axiom_flow/` | 领域、应用、基础设施、API、Worker 和数据库迁移 |
 | `web/` | 本地单页审阅工作台 |
-| `evaluation/` | 公开 fixture 回归、私有模型 benchmark、评分工具和脱敏报告 |
-| `tests/` | 架构、单元、集成和工作流门禁 |
+| `evaluation/` | 文档中心冻结快照、真实模型评测、评分工具和脱敏报告 |
+| `tests/` | 单元、契约、集成、系统和进程冒烟门禁 |
 | `docs/` | 当前架构、设计、决策、规范、计划和历史资料 |
 | `data/` | 按需创建的本地运行数据、私有评测和备份，不纳入版本控制 |
 

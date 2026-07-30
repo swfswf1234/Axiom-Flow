@@ -2,18 +2,20 @@
 模块职责：集中装配配置、应用用例与基础设施适配器。
 设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
-关联测试：tests/test_architecture_dependencies.py、tests/test_v03_api.py
+关联测试：tests/contract/test_architecture_dependencies.py、tests/integration/test_api.py、tests/integration/test_evaluation_api.py
 """
 
 from dataclasses import dataclass
 
 from axiom_flow.application.documents import DocumentApplicationService
+from axiom_flow.application.evaluations import EvaluationApplicationService
 from axiom_flow.application.jobs import JobApplicationService, JobPolicy
 from axiom_flow.application.ports import ProviderFactory
 from axiom_flow.application.reviews import ReviewApplicationService
 from axiom_flow.application.workbooks import WorkbookService
 from axiom_flow.infrastructure.bailian import BailianProvider
 from axiom_flow.infrastructure.config import Settings
+from axiom_flow.infrastructure.evaluation_workspace import EvaluationWorkspace
 from axiom_flow.infrastructure.files import LocalFileLocator
 from axiom_flow.infrastructure.mysql import MySQLRepository
 from axiom_flow.infrastructure.pdf_pipeline import PDFPipeline
@@ -26,6 +28,7 @@ class ApplicationContainer:
 
     settings: Settings
     documents: DocumentApplicationService
+    evaluations: EvaluationApplicationService
     jobs: JobApplicationService
     reviews: ReviewApplicationService
     workbooks: WorkbookService
@@ -74,9 +77,15 @@ def build_container(
     )
     jobs = JobApplicationService(repository, policy, pipeline_factory)
     files = LocalFileLocator(resolved.data_dir)
+    evaluations = EvaluationApplicationService(
+        repository,
+        EvaluationWorkspace(resolved.evaluation_data_dir, resolved.evaluation_definitions_dir),
+        resolved.data_dir,
+    )
     return ApplicationContainer(
         settings=resolved,
         documents=DocumentApplicationService(repository, pipeline_factory(), files, resolved.data_dir),
+        evaluations=evaluations,
         jobs=jobs,
         reviews=ReviewApplicationService(repository),
         workbooks=WorkbookService(

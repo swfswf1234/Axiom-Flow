@@ -2,7 +2,7 @@
 模块职责：领取 MySQL 租约并可靠执行 v0.3 后台任务。
 设计关联（DesignRef）：docs/design/background-jobs.md
 实现状态：Current
-关联测试：tests/test_v03_jobs.py
+关联测试：tests/integration/test_jobs.py
 """
 
 import asyncio

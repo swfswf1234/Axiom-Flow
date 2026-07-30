@@ -2,7 +2,7 @@
 模块职责：使用 OpenPyXL 读写并校验知识审阅工作簿文件。
 设计关联（DesignRef）：docs/design/excel-release-workflow.md
 实现状态：Current
-关联测试：tests/test_document_workflow.py
+关联测试：tests/system/test_document_release_flow.py
 """
 
 import json

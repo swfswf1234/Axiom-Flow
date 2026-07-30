@@ -13,8 +13,8 @@
 教材，也不启动最多 634 次的整书调用。MinerU 3.4.4 隔离安装未成功，因此本轮没有可采纳的本地
 候选。
 
-本决定依据 `evaluation/benchmarks/private/rudin/manifests/rudin-scan-v1.json`、
-`evaluation/benchmarks/private/rudin/reports/rudin-scan-v1-scorecard.json` 和评测报告。百炼候选平均分为 0.604，9 页只
+本决定依据 `evaluation/documents/数学分析原理-第3版--341544f3fa9c/manifests/rudin-scan-v1.json`、
+`evaluation/documents/数学分析原理-第3版--341544f3fa9c/reports/rudin-scan-v1-scorecard.json` 和评测报告。百炼候选平均分为 0.604，9 页只
 返回单个局部块，2 页返回截断且无 bbox 的 Markdown，存在公式、来源证据和完整性关键失败。
 
 ## 后果

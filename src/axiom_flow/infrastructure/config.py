@@ -2,7 +2,7 @@
 模块职责：读取 v0.3 本地存储、任务和百炼模型配置。
 设计关联（DesignRef）：docs/design/document-pipeline.md
 实现状态：Current
-关联测试：tests/test_document_workflow.py、tests/test_mysql_migrations.py
+关联测试：tests/system/test_document_release_flow.py、tests/integration/test_mysql_migrations.py
 """
 
 from pathlib import Path
@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     """v0.2 配置描述 MySQL 运行库、本地文件产物和百炼模型。"""
 
     data_dir: Path = Path("data")
+    evaluation_data_dir: Path = Path("data/evaluation")
     web_dir: Path = Path("web")
+    evaluation_definitions_dir: Path = Path("evaluation/documents")
     api_key: SecretStr = Field(default=SecretStr(""), validation_alias=AliasChoices("AXIOM_API_KEY", "API_KEY"))
     vision_model: str = "qwen-vl-ocr"
     vision_contract_version: str = "qwen-ocr-markdown-v2"

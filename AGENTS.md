@@ -26,18 +26,27 @@ rg -n "设计关联（DesignRef）|被测代码" src evaluation tests
 rg -n "<接口或状态名>" docs/adr docs/design docs/history
 ```
 
+## 分支协作
+
+- `main` 保存已经确认的稳定基线，`release` 承接后续开发；开始实现前先确认当前位于 `release`。
+- 普通开发提交和推送进入 `release`。只有用户明确要求并完成适用门禁后，才把 `release` 合并回
+  `main`；不得隐式创建标签或 GitHub Release。
+- 当前 GitHub Actions 只在直接推送 `main` 或创建 Pull Request 时运行。直接推送 `release` 前必须
+  完成本地关闭门禁，不能把分支已推送等同于远端 CI 已验证。
+
 ## 任务路由
 
 | 任务 | 首查实现 | 设计/协议 | 定向测试 |
 | --- | --- | --- | --- |
-| OCR、PDF、页面事实、manifest | `src/axiom_flow/infrastructure/{bailian,pdf_pipeline,artifacts}.py` | `docs/design/document-pipeline.md`、ADR 0008/0010 | `test_providers.py`、`test_parse_artifacts.py`、`test_v03_jobs.py` |
-| API、持久任务、Worker | `src/axiom_flow/api/`、`src/axiom_flow/application/jobs.py`、`src/axiom_flow/worker/` | `background-jobs.md`、`web-workbench.md`、ADR 0006 | `test_v03_api.py`、`test_v03_jobs.py` |
-| MySQL、迁移、当前 ParseRun | `alembic.ini`、`src/axiom_flow/infrastructure/{database,mysql}.py`、`src/axiom_flow/migrations/` | `data-lifecycle.md`、ADR 0005/0007/0011 | `test_mysql_migrations.py`、`test_current_parse_runs.py` |
-| 产物或运行清理 | `src/axiom_flow/tools/prune_parse_runs.py`、`artifacts.py` | ADR 0011、`operations.md` | `test_prune_parse_runs.py`、`test_parse_artifacts.py` |
-| 知识、关系、工作簿、发布 | `src/axiom_flow/application/workbooks.py`、`mysql.py` | `excel-release-workflow.md` | `test_document_workflow.py` |
-| Web 对照与交互 | `web/`、`src/axiom_flow/api/main.py`、`schemas.py` | `web-workbench.md` | `test_v03_api.py`、JavaScript 语法检查 |
-| 模型评测与评分 | `evaluation/{regression,replay,benchmark,scorecard,preflight}.py` | `evaluation-governance.md`、实验 ADR | `test_evaluation_*.py` |
-| 计划、ADR 与文档目录 | `docs/`、`AGENTS.md` | `task-lifecycle.md`、`documentation.md`、`adr-governance.md` | `test_plan_governance.py`、`test_standard_governance.py`、`test_adr_structure.py` |
+| OCR、PDF、页面事实、manifest | `src/axiom_flow/infrastructure/{bailian,pdf_pipeline,artifacts}.py` | `docs/design/document-pipeline.md`、ADR 0008/0010 | `tests/unit/test_providers.py`、`tests/integration/test_parse_artifacts.py`、`tests/integration/test_jobs.py` |
+| API、持久任务、Worker | `src/axiom_flow/api/`、`src/axiom_flow/application/jobs.py`、`src/axiom_flow/worker/` | `background-jobs.md`、`web-workbench.md`、ADR 0006 | `tests/integration/test_api.py`、`tests/integration/test_jobs.py` |
+| MySQL、迁移、当前 ParseRun | `alembic.ini`、`src/axiom_flow/infrastructure/{database,mysql}.py`、`src/axiom_flow/migrations/` | `data-lifecycle.md`、ADR 0005/0007/0011 | `tests/integration/test_mysql_migrations.py`、`tests/integration/test_current_parse_runs.py` |
+| 产物或运行清理 | `src/axiom_flow/tools/prune_parse_runs.py`、`artifacts.py` | ADR 0011、`operations.md` | `tests/integration/test_prune_parse_runs.py`、`tests/integration/test_parse_artifacts.py` |
+| 知识、关系、工作簿、发布 | `src/axiom_flow/application/workbooks.py`、`mysql.py` | `excel-release-workflow.md` | `tests/system/test_document_release_flow.py` |
+| Web 对照与交互 | `web/`、`src/axiom_flow/api/main.py`、`schemas.py` | `web-workbench.md` | `tests/integration/test_api.py`、JavaScript 语法检查 |
+| 解析评测与评分 | `src/axiom_flow/application/evaluations.py`、`infrastructure/evaluation_workspace.py`、`evaluation/` | `evaluation-governance.md`、ADR 0019/0020、实验 ADR | `tests/unit/test_evaluation_*.py`、`tests/integration/test_evaluation_*.py`、系统 fixture 回归 |
+| 测试分层、隔离和冒烟 | `tests/`、`.github/workflows/ci.yml`、`pyproject.toml` | `testing.md`、ADR 0021 | `tests/contract/test_test_suite_governance.py`、`tests/smoke/test_process_startup.py` |
+| 计划、ADR 与文档目录 | `docs/`、`AGENTS.md` | `task-lifecycle.md`、`documentation.md`、`adr-governance.md` | `tests/contract/test_plan_governance.py`、`tests/contract/test_standard_governance.py`、`tests/contract/test_adr_governance.py` |
 | DesignRef 与语义同步 | 模块文件头、`code-map.md`、架构/设计 | `code-document-traceability.md` | 映射、架构和设计语义测试 |
 
 表格只提供入口；准确文件映射始终以 `code-map.md` 为准。
@@ -46,11 +55,11 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 | 现象 | 首查位置 | 首个验证 |
 | --- | --- | --- |
-| API 404、422 或错误格式异常 | `src/axiom_flow/api/main.py`、`schemas.py` | `pytest tests/test_v03_api.py -q` |
-| 任务排队、租约、取消或重试异常 | `application/jobs.py`、`worker/runner.py`、`mysql.py` | `pytest tests/test_v03_jobs.py -q` |
-| OCR 空内容、截断或供应商响应非法 | `infrastructure/bailian.py`、`pdf_pipeline.py` | `pytest tests/test_providers.py -q` |
-| manifest、哈希或文件下载失败 | `infrastructure/artifacts.py`、`api/main.py` | `pytest tests/test_parse_artifacts.py -q` |
-| 迁移、测试库或表边界异常 | `infrastructure/database.py`、`migrations/`、`tests/conftest.py` | `pytest tests/test_mysql_migrations.py -q` |
+| API 404、422 或错误格式异常 | `src/axiom_flow/api/main.py`、`schemas.py` | `pytest tests/integration/test_api.py -q` |
+| 任务排队、租约、取消或重试异常 | `application/jobs.py`、`worker/runner.py`、`mysql.py` | `pytest tests/integration/test_jobs.py -q` |
+| OCR 空内容、截断或供应商响应非法 | `infrastructure/bailian.py`、`pdf_pipeline.py` | `pytest tests/unit/test_providers.py -q` |
+| manifest、哈希或文件下载失败 | `infrastructure/artifacts.py`、`api/main.py` | `pytest tests/integration/test_parse_artifacts.py -q` |
+| 迁移、测试库或表边界异常 | `infrastructure/database.py`、`migrations/`、`tests/support/mysql.py` | `pytest tests/integration/test_mysql_migrations.py -q` |
 | Web 页面或交互异常 | `web/` 与对应 API 路由 | API 测试、`node --check web/app.js` |
 | 文档链接、DesignRef 或映射失败 | `docs/architecture/code-map.md`、模块文件头 | 三项文档专项测试 |
 
@@ -61,8 +70,8 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 - `docs/standards/` 是工程治理规则的唯一事实源，具体采用
   [任务生命周期](docs/standards/task-lifecycle.md)、[文档规范](docs/standards/documentation.md)、
-  [ADR 治理](docs/standards/adr-governance.md)和
-  [代码与文档追溯](docs/standards/code-document-traceability.md)。
+  [ADR 治理](docs/standards/adr-governance.md)、[代码与文档追溯](docs/standards/code-document-traceability.md)
+  和[测试架构与门禁](docs/standards/testing.md)。
 - 任务先按任务生命周期分类并建立适用计划；需要长期决策时按 ADR 治理新增决定；关闭时按文档
   规范选择归档或删除。普通源码推送属于原任务交付，正式发布、受保护环境和数据操作使用 D 类计划。
 - 外部模型实验前必须冻结假设、样本、内容哈希、预算和采纳门槛；结果经 ADR 接受后才成为设计。
@@ -71,8 +80,8 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 具体格式、豁免和同步触发项以[代码与文档追溯规范](docs/standards/code-document-traceability.md)
 为准。执行时先查 `docs/architecture/code-map.md`；职责或契约变化必须同步文件头、关联架构/设计和
-测试。架构变更运行 `tests/test_architecture_documents.py`，设计变更运行
-`tests/test_design_documents.py`，全部受管模块运行 `tests/test_code_document_mapping.py`。
+测试。架构变更运行 `tests/contract/test_architecture_documents.py`，设计变更运行
+`tests/contract/test_design_documents.py`，全部受管模块运行 `tests/contract/test_code_document_mapping.py`。
 
 ## 中文与注释
 

@@ -2,7 +2,7 @@
 模块职责：为 v0.2 MySQL 运行库执行 Alembic 版本化迁移。
 设计关联（DesignRef）：docs/architecture/data-lifecycle.md
 实现状态：Current
-关联测试：tests/test_mysql_migrations.py
+关联测试：tests/integration/test_mysql_migrations.py
 """
 
 from logging.config import fileConfig

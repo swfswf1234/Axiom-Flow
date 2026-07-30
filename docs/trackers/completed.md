@@ -1,13 +1,20 @@
 # 已关闭任务
 
 状态：Current
-最后更新：2026-07-29
+最后更新：2026-07-30
 
 本表只保存关闭导航。详细决定、执行记录和历史事实以链接的 ADR、报告、History 或 Git 为准；
 任务 ID 进入本表后不得复用。
 
 | 日期 | ID | 任务 | 终态 | 关闭结果 | 证据 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-30 | EXP-002 | Rudin 20 页评估与 Web 工程链路验收 | Completed | Rejected | [执行记录](../history/plans/2026-07/2026-07-rudin-engineering-chain-trial.md)与[脱敏报告](../../evaluation/documents/数学分析原理-第3版--341544f3fa9c/reports/rudin-qwen-ocr-20-v2.md)；链路完整，20 次调用，Web 抽检 2/5。 |
+| 2026-07-30 | DATA-003 | 隔离真实评估运行环境 | Completed | Achieved | [执行记录](../history/plans/2026-07/2026-07-isolated-evaluation-runtime.md)；独立 revision 0004、API/Worker 和目录验证通过，xqfm11 计数未变化。 |
+| 2026-07-30 | EVAL-003 | 评测 CLI 二进制差异指纹修复 | Completed | Achieved | 修订指纹禁用 Git textconv；17 项定向测试通过，真实 smoke ParseRun capture 成功并保存 64 位 diff hash。 |
+| 2026-07-30 | EVAL-002 | 中性快照与单运行评估工作区 | Completed | Achieved | [执行记录](../history/plans/2026-07/2026-07-evaluation-assessment-workspace.md)与 [ADR 0022](../adr/0022-neutral-evaluation-snapshots-and-assessments.md)；全量 119 tests、双模式桌面/390px 视觉验收和静态门禁通过。 |
+| 2026-07-30 | TEST-002 | 架构一致性与测试加固 | Completed | Achieved | REL-001 阻塞契约与 tracker 已同步；评测 CLI 新增 9 tests，五层全量 128 tests、Ruff、Web 语法和差异检查通过。 |
+| 2026-07-30 | TEST-001 | 分层确定性测试架构 | Completed | Achieved | [ADR 0021](../adr/0021-layered-deterministic-test-architecture.md)与[测试标准](../standards/testing.md)；五层 119 tests、真实 API/Worker smoke 和 78% 覆盖率基线通过。 |
+| 2026-07-30 | EVAL-001 | 文档中心解析评测基线 | Completed | Achieved | [ADR 0020](../adr/0020-document-centric-evaluation-workspace.md)与[执行记录](../history/plans/2026-07/2026-07-document-centric-evaluation.md)；评测专项 29 tests、隔离数据库全量 119 tests 和桌面/窄屏视觉验收通过。 |
 | 2026-07-29 | DATA-001 | 本地运行数据与构建产物重置 | Completed | Achieved | [执行记录](../history/plans/2026-07/2026-07-local-data-reset.md)；精确清理 27,210,526 字节，全量 104 tests 通过，运行库后续问题登记 DATA-002。 |
 | 2026-07-29 | QA-001 | 公开解析回归基线 | Completed | Achieved | [ADR 0019](../adr/0019-public-fixture-and-private-benchmark-boundary.md)；CC0 四页 fixture、完整事实比较器与全量 104 tests 通过。 |
 | 2026-07-29 | REG-001 | GitHub Actions Pytest 失败 | Completed | Achieved | 提交 `907e196` 增加跨平台路径脱敏回归；Actions run `30438394283` success，98 tests。 |

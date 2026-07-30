@@ -2,7 +2,7 @@
 模块职责：定义 v0.3 HTTP API 的请求、响应和统一错误结构。
 设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
-关联测试：tests/test_v03_api.py
+关联测试：tests/integration/test_api.py、tests/integration/test_evaluation_api.py
 """
 
 from datetime import datetime
@@ -47,6 +47,49 @@ class CurrentParseRunRequest(BaseModel):
 
     run_id: str = Field(min_length=1, max_length=36)
     reason: str = Field(min_length=1, max_length=4000)
+
+
+class EvaluationRevisionRequest(BaseModel):
+    """捕获评测快照时由 CLI 或开发者显式提供的 Git 事实。"""
+
+    commit: str = Field(pattern=r"^[0-9a-fA-F]{7,64}$")
+    branch: str = Field(min_length=1, max_length=255)
+    dirty: bool = False
+    diff_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class EvaluationCaptureRequest(BaseModel):
+    parse_run_id: str = Field(min_length=1, max_length=36)
+    label: str = Field(min_length=1, max_length=64)
+    revision: EvaluationRevisionRequest
+
+
+class EvaluationAssessmentRequest(BaseModel):
+    snapshot_id: str = Field(min_length=1, max_length=160)
+    manifest: dict[str, Any]
+
+
+class EvaluationComparisonRequest(BaseModel):
+    baseline_snapshot_id: str = Field(min_length=1, max_length=160)
+    candidate_snapshot_id: str = Field(min_length=1, max_length=160)
+
+
+class EvaluationAssessmentReviewRequest(BaseModel):
+    page_no: int = Field(ge=1)
+    verdict: Literal["pass", "failed", "needs_review"]
+    reason: str = Field(min_length=1, max_length=4000)
+    reviewer: str = Field(default="local-reviewer", min_length=1, max_length=255)
+    scores: dict[str, int] | None = None
+    critical_errors: list[str] = Field(default_factory=list)
+
+
+class EvaluationComparisonReviewRequest(BaseModel):
+    page_no: int = Field(ge=1)
+    verdict: Literal[
+        "candidate_better", "baseline_better", "equivalent", "both_failed", "needs_review",
+    ]
+    reason: str = Field(min_length=1, max_length=4000)
+    reviewer: str = Field(default="local-reviewer", min_length=1, max_length=255)
 
 
 class JobResponse(BaseModel):

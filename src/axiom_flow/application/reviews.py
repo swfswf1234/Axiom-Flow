@@ -2,7 +2,7 @@
 模块职责：提供页面、知识节点和知识关系的人工审阅用例。
 设计关联（DesignRef）：docs/design/web-workbench.md
 实现状态：Current
-关联测试：tests/test_document_workflow.py、tests/test_v03_api.py
+关联测试：tests/system/test_document_release_flow.py、tests/integration/test_api.py
 """
 
 from typing import Any, Protocol

@@ -2,7 +2,7 @@
 模块职责：为 v0.3 增加持久任务、版本化抽取、审阅历史和规范化页面明细。
 设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
-关联测试：tests/test_v03_jobs.py、tests/test_mysql_migrations.py
+关联测试：tests/integration/test_jobs.py、tests/integration/test_mysql_migrations.py
 """
 
 import sqlalchemy as sa

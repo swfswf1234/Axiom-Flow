@@ -4,7 +4,7 @@
 实现状态：In Progress
 最后更新：2026-07-29
 关联代码：`src/axiom_flow/application/documents.py`、`src/axiom_flow/infrastructure/config.py`、`src/axiom_flow/infrastructure/bailian.py`、`src/axiom_flow/infrastructure/artifacts.py`、`src/axiom_flow/infrastructure/pdf_pipeline.py`
-关联测试：`tests/test_design_documents.py`、`tests/test_document_workflow.py`、`tests/test_v03_jobs.py`、`tests/test_providers.py`、`tests/test_parse_artifacts.py`、`tests/test_code_document_mapping.py`
+关联测试：`tests/contract/test_design_documents.py`、`tests/system/test_document_release_flow.py`、`tests/integration/test_jobs.py`、`tests/unit/test_providers.py`、`tests/integration/test_parse_artifacts.py`、`tests/contract/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`
 
 ## 范围与处理顺序

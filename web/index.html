@@ -3,7 +3,7 @@
 模块职责：提供 v0.3 任务化知识审阅工作台的页面结构。
 设计关联（DesignRef）：docs/design/web-workbench.md
 实现状态：Current
-关联测试：tests/test_v03_api.py
+关联测试：tests/integration/test_api.py、tests/integration/test_evaluation_api.py
 -->
 <html lang="zh-CN">
 <head>
@@ -34,6 +34,7 @@
         <button class="tab" data-view="knowledge">知识候选</button>
         <button class="tab" data-view="workbook">工作簿发布</button>
         <button class="tab" data-view="graph">知识图谱</button>
+        <button class="tab" data-view="evaluation">解析评测</button>
       </nav>
       <div id="notice" class="notice" role="status"></div>
       <section id="job-panel" class="job-panel" aria-live="polite" hidden>
@@ -107,6 +108,133 @@
       <section id="graph-view" class="view">
         <div class="view-bar"><h1>已发布知识图谱</h1><button id="graph-button">刷新</button></div>
         <div id="graph" class="graph"></div>
+      </section>
+      <section id="evaluation-view" class="view">
+        <div class="view-bar evaluation-heading">
+          <h1>解析质量评估</h1>
+          <select id="evaluation-document" aria-label="评估文档"></select>
+        </div>
+        <div class="evaluation-toolbar">
+          <div class="evaluation-modes" role="group" aria-label="评估模式">
+            <button class="evaluation-mode active" data-evaluation-mode="assessment" type="button">单次质量</button>
+            <button class="evaluation-mode" data-evaluation-mode="comparison" type="button">版本对比</button>
+          </div>
+          <div id="evaluation-assessment-selectors" class="actions evaluation-selectors">
+            <select id="evaluation-assessment" aria-label="单运行评估"></select>
+            <button id="evaluation-open-assessment" class="command" type="button">打开评估</button>
+          </div>
+          <div id="evaluation-comparison-selectors" class="actions evaluation-selectors" hidden>
+            <select id="evaluation-baseline" aria-label="冻结基线"></select>
+            <select id="evaluation-candidate" aria-label="候选运行"></select>
+            <button id="evaluation-compare" class="command" type="button">开始对照</button>
+          </div>
+        </div>
+        <div id="evaluation-empty" class="empty-state">当前文档尚无单运行评估</div>
+
+        <section id="evaluation-assessment-workspace" class="evaluation-workspace" hidden>
+          <aside class="evaluation-navigator" aria-label="单运行评估页面导航">
+            <nav id="evaluation-assessment-page-index"></nav>
+          </aside>
+          <div class="evaluation-inspector">
+            <div id="evaluation-assessment-summary" class="evaluation-summary"></div>
+            <div class="page-controls">
+              <button id="evaluation-assessment-previous" type="button" title="上一页" aria-label="上一页">&#8592;</button>
+              <label>第 <input id="evaluation-assessment-page-number" type="number" min="1" aria-label="单运行评估页码"> 页</label>
+              <button id="evaluation-assessment-next" type="button" title="下一页" aria-label="下一页">&#8594;</button>
+              <span class="control-spacer"></span>
+              <button id="evaluation-assessment-fit" type="button" title="适合宽度" aria-label="适合宽度">&#8644;</button>
+              <button id="evaluation-assessment-zoom-out" type="button" title="缩小" aria-label="缩小">&#8722;</button>
+              <output id="evaluation-assessment-zoom-level">适宽</output>
+              <button id="evaluation-assessment-zoom-in" type="button" title="放大" aria-label="放大">&#43;</button>
+            </div>
+            <nav class="evaluation-segments" aria-label="窄屏单运行面板">
+              <button class="evaluation-assessment-segment active" data-assessment-pane="source" type="button">来源</button>
+              <button class="evaluation-assessment-segment" data-assessment-pane="parsed" type="button">解析结果</button>
+            </nav>
+            <div class="evaluation-assessment-panes">
+              <section class="evaluation-pane source active" data-assessment-pane="source">
+                <header><h2>来源页图</h2></header>
+                <div class="evaluation-media"><img id="evaluation-assessment-source-image" alt=""></div>
+              </section>
+              <section class="evaluation-pane parsed" data-assessment-pane="parsed">
+                <header><h2>规范化解析结果</h2></header>
+                <pre id="evaluation-assessment-content" class="evaluation-content evaluation-content-tall"></pre>
+              </section>
+            </div>
+            <section class="evaluation-diff">
+              <header><h2>自动完整性检查</h2><span id="evaluation-assessment-page-status" class="meta"></span></header>
+              <pre id="evaluation-assessment-checks"></pre>
+              <form id="evaluation-assessment-review-form" class="evaluation-review">
+                <select id="evaluation-assessment-verdict" aria-label="绝对质量结论" required>
+                  <option value="needs_review">需要复核</option>
+                  <option value="pass">通过</option>
+                  <option value="failed">不通过</option>
+                </select>
+                <div id="evaluation-assessment-scores" class="assessment-scores" hidden></div>
+                <input id="evaluation-assessment-critical-errors" maxlength="4000" placeholder="关键错误，多个条目用分号分隔" hidden>
+                <input id="evaluation-assessment-reason" maxlength="4000" placeholder="评审理由" required>
+                <button type="submit">保存结论</button>
+                <button id="evaluation-assessment-report" type="button">生成报告</button>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section id="evaluation-comparison-workspace" class="evaluation-workspace" hidden>
+          <aside class="evaluation-navigator" aria-label="评测页面导航">
+            <nav id="evaluation-comparison-page-index"></nav>
+          </aside>
+          <div class="evaluation-inspector">
+            <div id="evaluation-comparison-summary" class="evaluation-summary"></div>
+            <div class="page-controls">
+              <button id="evaluation-comparison-previous" type="button" title="上一页" aria-label="上一页">&#8592;</button>
+              <label>第 <input id="evaluation-comparison-page-number" type="number" min="1" aria-label="版本对比页码"> 页</label>
+              <button id="evaluation-comparison-next" type="button" title="下一页" aria-label="下一页">&#8594;</button>
+              <span class="control-spacer"></span>
+              <button id="evaluation-comparison-fit" type="button" title="适合宽度" aria-label="适合宽度">&#8644;</button>
+              <button id="evaluation-comparison-zoom-out" type="button" title="缩小" aria-label="缩小">&#8722;</button>
+              <output id="evaluation-comparison-zoom-level">适宽</output>
+              <button id="evaluation-comparison-zoom-in" type="button" title="放大" aria-label="放大">&#43;</button>
+            </div>
+            <nav class="evaluation-segments" aria-label="窄屏评测面板">
+              <button class="evaluation-comparison-segment active" data-comparison-pane="source" type="button">来源</button>
+              <button class="evaluation-comparison-segment" data-comparison-pane="baseline" type="button">基线</button>
+              <button class="evaluation-comparison-segment" data-comparison-pane="candidate" type="button">候选</button>
+            </nav>
+            <div class="evaluation-comparison">
+              <section class="evaluation-pane source active" data-comparison-pane="source">
+                <header><h2>来源页图</h2></header>
+                <div class="evaluation-media"><img id="evaluation-comparison-source-image" alt=""></div>
+              </section>
+              <section class="evaluation-pane baseline" data-comparison-pane="baseline">
+                <header><h2>冻结基线</h2></header>
+                <div class="evaluation-media"><img id="evaluation-comparison-baseline-image" alt=""></div>
+                <pre id="evaluation-comparison-baseline-content" class="evaluation-content"></pre>
+              </section>
+              <section class="evaluation-pane candidate" data-comparison-pane="candidate">
+                <header><h2>候选运行</h2></header>
+                <div class="evaluation-media"><img id="evaluation-comparison-candidate-image" alt=""></div>
+                <pre id="evaluation-comparison-candidate-content" class="evaluation-content"></pre>
+              </section>
+            </div>
+            <section class="evaluation-diff">
+              <header><h2>结构化差异</h2><span id="evaluation-comparison-page-status" class="meta"></span></header>
+              <pre id="evaluation-comparison-diff-content"></pre>
+              <form id="evaluation-comparison-review-form" class="evaluation-review">
+                <select id="evaluation-comparison-verdict" aria-label="相对质量结论" required>
+                  <option value="needs_review">需要复核</option>
+                  <option value="candidate_better">候选更好</option>
+                  <option value="baseline_better">基线更好</option>
+                  <option value="equivalent">效果等价</option>
+                  <option value="both_failed">均不合格</option>
+                </select>
+                <input id="evaluation-comparison-reason" maxlength="4000" placeholder="评审理由" required>
+                <button type="submit">保存结论</button>
+                <button id="evaluation-comparison-report" type="button">生成报告</button>
+              </form>
+            </section>
+          </div>
+        </section>
       </section>
     </section>
   </main>

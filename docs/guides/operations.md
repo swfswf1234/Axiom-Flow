@@ -1,7 +1,7 @@
 # 操作与运维指南
 
 状态：Current
-最后更新：2026-07-29
+最后更新：2026-07-30
 
 本手册面向本地操作者和后续维护者。当前系统是绑定回环地址的预发布工作台，不具备直接公网部署
 所需的认证、TLS、服务托管、自动备份或监控能力。开发环境与代码验证见[开发指南](development.md)，
@@ -20,7 +20,7 @@
 | 原 PDF 与解析产物 | 本地 `data/documents/` | 原件不可清理；运行产物由 manifest 校验。 |
 | 暂存清理数据 | 本地 `data/trash/` | purge 前可回滚，purge 后只能依赖外部完整备份恢复。 |
 | 工作簿与发布快照 | 本地文件与 MySQL revision/release | 草稿不能覆盖已发布快照。 |
-| 私有评测运行 | 本地 `data/evaluation/runs/` | 可重跑，不得把教材正文、页图或完整响应提交 Git。 |
+| 评测文档、快照与评审 | 本地 `AXIOM_EVALUATION_DATA_DIR/documents/<case-id>/` | 与生产 ParseRun 分离；不得把私有教材正文、页图或完整响应提交 Git。 |
 
 ## 启动与停止
 
@@ -55,9 +55,12 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 4. 新成功运行只产生候选；必须经过显式选择才成为当前解析事实。
 5. 不使用历史 MinerU 输出目录或旧版命令解释当前运行结果。
 
-公开 fixture 回归使用 `python -m evaluation.replay` 和 `python -m evaluation.regression`，不需要
-模型密钥。真实教材先运行 `python -m evaluation.preflight`，再使用 `python -m evaluation.benchmark`；
-完整输出必须指定到 `data/evaluation/runs/`。
+公开 fixture 回归使用 `python -m evaluation.tools.replay` 和
+`python -m evaluation.tools.regression`，不需要模型密钥。真实教材的单页连通性和多页运行都使用冻结
+manifest 与 `python -m evaluation run --document <case-id> --label <label> --source <pdf> --manifest <manifest>`；
+CLI 只提交并轮询生产 Job，必须另行启动独立 Worker。完成后使用 `evaluation assess` 创建单运行评估，
+再由 Web 保存人工结论并生成报告。生产 ParseRun 写入 `AXIOM_DATA_DIR`，快照与评审写入
+`AXIOM_EVALUATION_DATA_DIR`，两者不得指向同一生命周期目录。
 
 ## 开发库重建
 

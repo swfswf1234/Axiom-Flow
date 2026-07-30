@@ -2,7 +2,7 @@
 模块职责：以清单和完整确认词保护开发数据库的显式重建操作。
 设计关联（DesignRef）：docs/adr/0007-versioned-domain-records.md
 实现状态：Current
-关联测试：tests/test_reset_safety.py
+关联测试：tests/unit/test_reset_safety.py
 """
 
 import argparse

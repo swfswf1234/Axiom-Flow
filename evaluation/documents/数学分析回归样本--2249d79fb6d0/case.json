@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "case_id": "数学分析回归样本--2249d79fb6d0",
+  "title": "数学分析回归样本",
+  "source_hash": "2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b",
+  "page_count": 4,
+  "default_page_range": [1, 4],
+  "visibility": "public",
+  "source": {
+    "path": "source.pdf",
+    "sha256": "2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b"
+  },
+  "fixture": "fixture.json",
+  "license": "CC0-1.0"
+}

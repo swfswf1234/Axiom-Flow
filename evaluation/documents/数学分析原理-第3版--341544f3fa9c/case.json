@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "case_id": "数学分析原理-第3版--341544f3fa9c",
+  "title": "数学分析原理-第3版",
+  "source_hash": "341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968",
+  "page_count": 317,
+  "default_page_range": [20, 39],
+  "visibility": "private-metadata-only",
+  "source": {
+    "private": true
+  }
+}

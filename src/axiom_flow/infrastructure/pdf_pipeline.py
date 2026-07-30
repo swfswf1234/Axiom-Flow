@@ -2,7 +2,7 @@
 模块职责：执行 PDF 导入、页级视觉解析、质量审阅前数据生成和知识候选抽取。
 设计关联（DesignRef）：docs/design/document-pipeline.md
 实现状态：Current
-关联测试：tests/test_document_workflow.py、tests/test_v03_jobs.py
+关联测试：tests/system/test_document_release_flow.py、tests/integration/test_jobs.py
 """
 
 import hashlib

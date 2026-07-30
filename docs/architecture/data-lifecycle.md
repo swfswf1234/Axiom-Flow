@@ -2,10 +2,10 @@
 
 设计状态：Accepted
 实现状态：Implemented
-最后更新：2026-07-29
+最后更新：2026-07-30
 关联代码：`alembic.ini`、`src/axiom_flow/infrastructure/database.py`、`src/axiom_flow/infrastructure/files.py`、`src/axiom_flow/migrations/env.py`、`src/axiom_flow/migrations/script.py.mako`、`src/axiom_flow/migrations/versions/20260727_0001_mysql_v02.py`
-关联测试：`tests/test_architecture_documents.py`、`tests/test_document_workflow.py`、`tests/test_mysql_migrations.py`、`tests/test_current_parse_runs.py`、`tests/test_prune_parse_runs.py`、`tests/test_code_document_mapping.py`
-关联 ADR：`docs/adr/0003-excel-publish-source-of-truth.md`、`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0019-public-fixture-and-private-benchmark-boundary.md`
+关联测试：`tests/contract/test_architecture_documents.py`、`tests/system/test_document_release_flow.py`、`tests/integration/test_mysql_migrations.py`、`tests/integration/test_current_parse_runs.py`、`tests/integration/test_prune_parse_runs.py`、`tests/integration/test_evaluation_workspace.py`、`tests/contract/test_code_document_mapping.py`
+关联 ADR：`docs/adr/0003-excel-publish-source-of-truth.md`、`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0019-public-fixture-and-private-benchmark-boundary.md`、`docs/adr/0020-document-centric-evaluation-workspace.md`
 
 ## 事实来源
 
@@ -17,7 +17,7 @@
 | 当前解析结果 | `current_parse_run_id` 与选择历史 | 新成功运行只是候选，只有显式选择才改变当前事实来源。 |
 | Excel 工作簿 | 本地草稿文件及 MySQL revision | 人工编辑入口，不是运行查询事实源；导入先校验并创建新草稿。 |
 | 已发布知识 | MySQL KnowledgeRelease 快照 | 只由显式发布创建，不就地修改旧版本。 |
-| 私有评测运行 | 本地 `data/evaluation/runs/` | 完整响应与页图不提交；公开 fixture 和脱敏报告位于 `evaluation/`。 |
+| 评测 case 与冻结运行 | 本地 `data/evaluation/documents/<case-id>/` | 可读文件是唯一事实源；快照独立于生产 ParseRun，公开定义和脱敏报告位于 `evaluation/documents/`。 |
 
 ```mermaid
 flowchart LR

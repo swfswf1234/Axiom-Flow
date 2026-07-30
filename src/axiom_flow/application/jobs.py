@@ -2,7 +2,7 @@
 模块职责：编排任务提交和 Worker 执行，隔离 HTTP、供应商与领域规则。
 设计关联（DesignRef）：docs/design/background-jobs.md
 实现状态：Current
-关联测试：tests/test_v03_jobs.py、tests/test_v03_api.py
+关联测试：tests/integration/test_jobs.py、tests/integration/test_api.py
 """
 
 from dataclasses import dataclass

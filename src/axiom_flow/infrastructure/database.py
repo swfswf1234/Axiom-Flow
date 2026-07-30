@@ -2,7 +2,7 @@
 模块职责：提供 MySQL 连接生命周期、Alembic 命令和通用查询解码基础设施。
 设计关联（DesignRef）：docs/architecture/data-lifecycle.md
 实现状态：Current
-关联测试：tests/test_mysql_migrations.py、tests/test_reset_safety.py
+关联测试：tests/integration/test_mysql_migrations.py、tests/unit/test_reset_safety.py
 """
 
 import json

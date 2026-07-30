@@ -2,7 +2,7 @@
 模块职责：封装百炼视觉与文本模型，并隔离供应商响应格式。
 设计关联（DesignRef）：docs/design/document-pipeline.md
 实现状态：Current
-关联测试：tests/test_document_workflow.py、tests/test_providers.py
+关联测试：tests/system/test_document_release_flow.py、tests/unit/test_providers.py
 """
 
 import asyncio

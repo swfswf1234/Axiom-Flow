@@ -2,7 +2,7 @@
 模块职责：定义应用用例依赖的解析供应商与执行流水线端口。
 设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
-关联测试：tests/test_architecture_dependencies.py、tests/test_v03_jobs.py
+关联测试：tests/contract/test_architecture_dependencies.py、tests/integration/test_jobs.py
 """
 
 from __future__ import annotations

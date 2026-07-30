@@ -2,7 +2,7 @@
 模块职责：定义 v0.3 跨层共享的状态、任务资源和领域错误。
 设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
-关联测试：tests/test_v03_jobs.py
+关联测试：tests/integration/test_jobs.py
 """
 
 from dataclasses import dataclass

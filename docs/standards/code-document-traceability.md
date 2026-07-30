@@ -4,7 +4,7 @@
 最后更新：2026-07-29
 治理对象：code-map、模块 DesignRef、架构/设计关联和语义同步门禁
 依据 ADR：`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`
-关联测试：`tests/test_code_document_mapping.py`、`tests/test_architecture_documents.py`、`tests/test_design_documents.py`
+关联测试：`tests/contract/test_code_document_mapping.py`、`tests/contract/test_architecture_documents.py`、`tests/contract/test_design_documents.py`
 
 ## 目的与边界
 
@@ -57,7 +57,7 @@
 
 1. 先在 code-map 定位模块职责、DesignRef、状态和定向测试，再修改代码或文档。
 2. 职责或契约变化时先完成适用 ADR/设计，再同步实现、文件头、code-map 和语义测试。
-3. `tests/test_code_document_mapping.py` 守护受管路径、文件头和双向引用；架构与设计语义测试分别
+3. `tests/contract/test_code_document_mapping.py` 守护受管路径、文件头和双向引用；架构与设计语义测试分别
    从代码类型、AST、HTML 和常量验证当前契约。
 4. 自动测试不能判断设计是否合理；计划必须声明人工审阅边界、当前符合度和未实现偏差。
 

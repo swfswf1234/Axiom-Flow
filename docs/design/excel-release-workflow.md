@@ -4,7 +4,7 @@
 实现状态：In Progress
 最后更新：2026-07-29
 关联代码：`src/axiom_flow/application/workbooks.py`、`src/axiom_flow/infrastructure/workbooks.py`
-关联测试：`tests/test_design_documents.py`、`tests/test_document_workflow.py`、`tests/test_code_document_mapping.py`
+关联测试：`tests/contract/test_design_documents.py`、`tests/system/test_document_release_flow.py`、`tests/contract/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0003-excel-publish-source-of-truth.md`、`docs/adr/0005-mysql-runtime-storage.md`
 
 ## 工作流

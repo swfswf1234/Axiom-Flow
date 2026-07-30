@@ -4,7 +4,7 @@
 最后更新：2026-07-29
 治理对象：ADR 准入、全局编号、元数据、状态、取代关系与归档路径
 依据 ADR：`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0016-remove-document-templates.md`
-关联测试：`tests/test_adr_structure.py`
+关联测试：`tests/contract/test_adr_governance.py`
 
 ## 目的与边界
 

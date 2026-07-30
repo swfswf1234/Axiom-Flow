@@ -4,7 +4,7 @@
 最后更新：2026-07-29
 治理对象：任务分类、计划准入、tracker 状态、实施门禁与关闭交付
 依据 ADR：`docs/adr/0014-risk-based-plan-lifecycle.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0017-consolidated-task-ledgers-and-roadmap.md`
-关联测试：`tests/test_plan_governance.py`、`tests/test_tracker_governance.py`
+关联测试：`tests/contract/test_plan_governance.py`、`tests/contract/test_tracker_governance.py`
 
 ## 目的与边界
 

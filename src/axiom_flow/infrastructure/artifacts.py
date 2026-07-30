@@ -2,7 +2,7 @@
 模块职责：写入、校验并索引内容寻址的解析运行产物包。
 设计关联（DesignRef）：docs/design/document-pipeline.md
 实现状态：Current
-关联测试：tests/test_parse_artifacts.py
+关联测试：tests/integration/test_parse_artifacts.py
 """
 
 from __future__ import annotations

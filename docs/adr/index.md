@@ -1,14 +1,14 @@
 # 架构决策索引
 
 状态：Current
-最后更新：2026-07-29
+最后更新：2026-07-30
 
 ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Superseded 位于
 [`../history/adr/`](../history/adr/index.md)；完整规则见
 [ADR 治理规范](../standards/adr-governance.md)；新文件遵守对应 standard，并参考最近一份仍有效的
 同类文档组织内容。
 
-下一个可用编号：0020
+下一个可用编号：0023
 
 | ADR | 标题 | 领域 | 决策阶段 | 状态 | 取代关系 |
 | --- | --- | --- | --- | --- | --- |
@@ -31,3 +31,6 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 | [`0017`](0017-consolidated-task-ledgers-and-roadmap.md) | 统一任务台账与无状态能力路线图 | 工程治理 | v0.3 | Accepted | — |
 | [`0018`](0018-src-package-and-application-owned-workflows.md) | 标准包根与应用用例主导工作流 | 工程治理 | v0.3 | Accepted | 取代 0012 |
 | [`0019`](0019-public-fixture-and-private-benchmark-boundary.md) | 公开回归样本与私有模型评测分离 | 解析与评测 | v0.3 | Accepted | — |
+| [`0020`](0020-document-centric-evaluation-workspace.md) | 文档中心评测工作区与冻结主链对比 | 解析与评测 | v0.3 | Accepted | — |
+| [`0021`](0021-layered-deterministic-test-architecture.md) | 分层确定性测试架构 | 工程治理 | v0.3 | Accepted | — |
+| [`0022`](0022-neutral-evaluation-snapshots-and-assessments.md) | 中性评测快照与单运行质量评估 | 解析与评测 | v0.3 | Accepted | — |

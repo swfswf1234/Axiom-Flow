@@ -41,6 +41,20 @@ axiom_flow = ["migrations/script.py.mako"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers --import-mode=importlib"
+markers = [
+  "unit: 不使用 MySQL、进程或外部网络的确定性单元测试",
+  "contract: 守护架构、设计、文档和工程治理契约",
+  "integration: 使用隔离 MySQL 或真实文件适配器的集成测试",
+  "system: 使用假供应商经过公开入口验证跨模块工作流",
+  "smoke: 启动真实 API 与 Worker 进程验证装配入口",
+]
+
+[tool.coverage.run]
+source = ["axiom_flow", "evaluation"]
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.ruff]
 target-version = "py312"

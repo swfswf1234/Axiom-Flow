@@ -2,7 +2,7 @@
 模块职责：在受控数据根目录内解析可下载的本地文件。
 设计关联（DesignRef）：docs/architecture/data-lifecycle.md
 实现状态：Current
-关联测试：tests/test_v03_api.py
+关联测试：tests/integration/test_api.py
 """
 
 from pathlib import Path

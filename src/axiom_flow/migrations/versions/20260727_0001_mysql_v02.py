@@ -2,7 +2,7 @@
 模块职责：创建 v0.2 MySQL 的 af_ 运行事实与发布快照表。
 设计关联（DesignRef）：docs/architecture/data-lifecycle.md
 实现状态：Current
-关联测试：tests/test_mysql_migrations.py
+关联测试：tests/integration/test_mysql_migrations.py
 """
 
 import sqlalchemy as sa

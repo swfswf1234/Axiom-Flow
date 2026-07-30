@@ -2,7 +2,7 @@
 模块职责：提供文档、解析运行、页面和产物的应用用例。
 设计关联（DesignRef）：docs/design/document-pipeline.md
 实现状态：Current
-关联测试：tests/test_v03_api.py、tests/test_document_workflow.py
+关联测试：tests/integration/test_api.py、tests/system/test_document_release_flow.py
 """
 
 from pathlib import Path

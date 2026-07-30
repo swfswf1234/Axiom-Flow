@@ -2,7 +2,7 @@
 模块职责：提供 v0.3 `/api/v1` 协议、文件边界和静态 Web 入口。
 设计关联（DesignRef）：docs/design/web-workbench.md
 实现状态：Current
-关联测试：tests/test_v03_api.py
+关联测试：tests/integration/test_api.py、tests/integration/test_evaluation_api.py
 """
 
 import uuid
@@ -21,6 +21,11 @@ from axiom_flow.api.schemas import (
     CommandResponse,
     CurrentParseRunRequest,
     DocumentResponse,
+    EvaluationAssessmentRequest,
+    EvaluationAssessmentReviewRequest,
+    EvaluationCaptureRequest,
+    EvaluationComparisonRequest,
+    EvaluationComparisonReviewRequest,
     JobResponse,
     KnowledgeEdgeResponse,
     KnowledgeNodeResponse,
@@ -44,6 +49,7 @@ def create_app(
     jobs = container.jobs
     reviews = container.reviews
     workbooks = container.workbooks
+    evaluations = container.evaluations
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -243,6 +249,87 @@ def create_app(
     @app.get("/api/v1/documents/{document_id}/graph")
     def graph(document_id: str) -> dict:
         return workbooks.graph(document_id)
+
+    @app.get("/api/v1/evaluations/documents")
+    def list_evaluation_documents() -> list[dict]:
+        return evaluations.list_documents()
+
+    @app.get("/api/v1/evaluations/documents/{case_id}")
+    def get_evaluation_document(case_id: str) -> dict:
+        return evaluations.get_document(case_id)
+
+    @app.post("/api/v1/evaluations/documents/{case_id}/captures", status_code=201)
+    def capture_evaluation_run(case_id: str, request: EvaluationCaptureRequest) -> dict:
+        return evaluations.capture(
+            request.parse_run_id,
+            request.label,
+            request.revision.model_dump(),
+            case_id,
+        )
+
+    @app.post("/api/v1/evaluations/documents/{case_id}/assessments", status_code=201)
+    def create_evaluation_assessment(case_id: str, request: EvaluationAssessmentRequest) -> dict:
+        return evaluations.assess(case_id, request.snapshot_id, request.manifest)
+
+    @app.get("/api/v1/evaluations/assessments/{assessment_id}")
+    def get_evaluation_assessment(assessment_id: str) -> dict:
+        return evaluations.get_assessment(assessment_id)
+
+    @app.get("/api/v1/evaluations/assessments/{assessment_id}/pages/{page_no}")
+    def get_evaluation_assessment_page(assessment_id: str, page_no: int) -> dict:
+        return evaluations.get_assessment_page(assessment_id, page_no)
+
+    @app.get("/api/v1/evaluations/assessments/{assessment_id}/pages/{page_no}/assets/source")
+    def get_evaluation_assessment_asset(assessment_id: str, page_no: int) -> FileResponse:
+        resource = evaluations.assessment_asset(assessment_id, page_no)
+        return FileResponse(resource.path, media_type=resource.media_type, filename=resource.filename)
+
+    @app.post("/api/v1/evaluations/assessments/{assessment_id}/reviews", status_code=201)
+    def review_evaluation_assessment(
+        assessment_id: str, request: EvaluationAssessmentReviewRequest,
+    ) -> dict:
+        return evaluations.review_assessment(
+            assessment_id,
+            request.page_no,
+            request.verdict,
+            request.reason,
+            request.reviewer,
+            request.scores,
+            request.critical_errors,
+        )
+
+    @app.post("/api/v1/evaluations/assessments/{assessment_id}/reports")
+    def generate_evaluation_assessment_report(assessment_id: str) -> dict:
+        return evaluations.report_assessment(assessment_id)
+
+    @app.post("/api/v1/evaluations/documents/{case_id}/comparisons", status_code=201)
+    def create_evaluation_comparison(case_id: str, request: EvaluationComparisonRequest) -> dict:
+        return evaluations.compare(case_id, request.baseline_snapshot_id, request.candidate_snapshot_id)
+
+    @app.get("/api/v1/evaluations/comparisons/{comparison_id}")
+    def get_evaluation_comparison(comparison_id: str) -> dict:
+        return evaluations.get_comparison(comparison_id)
+
+    @app.get("/api/v1/evaluations/comparisons/{comparison_id}/pages/{page_no}")
+    def get_evaluation_page(comparison_id: str, page_no: int) -> dict:
+        return evaluations.get_comparison_page(comparison_id, page_no)
+
+    @app.get("/api/v1/evaluations/comparisons/{comparison_id}/pages/{page_no}/assets/{pane}")
+    def get_evaluation_page_asset(comparison_id: str, page_no: int, pane: str) -> FileResponse:
+        resource = evaluations.comparison_asset(comparison_id, pane, page_no)
+        return FileResponse(resource.path, media_type=resource.media_type, filename=resource.filename)
+
+    @app.post("/api/v1/evaluations/comparisons/{comparison_id}/reviews", status_code=201)
+    def review_evaluation_page(
+        comparison_id: str, request: EvaluationComparisonReviewRequest,
+    ) -> dict:
+        return evaluations.review_comparison(
+            comparison_id, request.page_no, request.verdict, request.reason, request.reviewer,
+        )
+
+    @app.post("/api/v1/evaluations/comparisons/{comparison_id}/reports")
+    def generate_evaluation_report(comparison_id: str) -> dict:
+        return evaluations.report_comparison(comparison_id)
 
     web_dir = resolved.web_dir.resolve()
     if web_dir.is_dir():

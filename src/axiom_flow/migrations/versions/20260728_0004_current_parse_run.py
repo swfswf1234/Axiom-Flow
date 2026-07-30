@@ -2,7 +2,7 @@
 模块职责：增加显式当前解析运行、选择历史与解析产物清理状态。
 设计关联（DesignRef）：docs/adr/0011-current-parse-run-and-prunable-artifacts.md
 实现状态：Current
-关联测试：tests/test_mysql_migrations.py、tests/test_current_parse_runs.py
+关联测试：tests/integration/test_mysql_migrations.py、tests/integration/test_current_parse_runs.py
 """
 
 import sqlalchemy as sa

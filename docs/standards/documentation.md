@@ -4,7 +4,7 @@
 最后更新：2026-07-29
 治理对象：文档分类、写作、元数据、索引、命名、归档与删除
 依据 ADR：`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0016-remove-document-templates.md`、`docs/adr/0017-consolidated-task-ledgers-and-roadmap.md`
-关联测试：`tests/test_document_structure.py`、`tests/test_markdown_links.py`、`tests/test_standard_governance.py`
+关联测试：`tests/contract/test_document_structure.py`、`tests/contract/test_markdown_links.py`、`tests/contract/test_standard_governance.py`
 
 ## 目的与边界
 

@@ -4,7 +4,7 @@
 实现状态：Implemented
 最后更新：2026-07-29
 关联代码：`src/axiom_flow/application/jobs.py`、`src/axiom_flow/worker/runner.py`、`src/axiom_flow/worker/__main__.py`
-关联测试：`tests/test_design_documents.py`、`tests/test_v03_jobs.py`、`tests/test_code_document_mapping.py`
+关联测试：`tests/contract/test_design_documents.py`、`tests/integration/test_jobs.py`、`tests/contract/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0006-persistent-jobs-and-api-v1.md`
 
 ## 提交与执行

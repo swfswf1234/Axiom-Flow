@@ -4,7 +4,7 @@
 实现状态：Implemented
 最后更新：2026-07-29
 关联代码：当前受管实现见 `docs/architecture/code-map.md`
-关联测试：`tests/test_architecture_documents.py`、`tests/test_code_document_mapping.py`
+关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_code_document_mapping.py`
 关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`
 
 ## 定位与用户

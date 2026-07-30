@@ -2,7 +2,7 @@
 模块职责：以 dry-run、可恢复暂存和显式清空三阶段清理旧解析运行产物。
 设计关联（DesignRef）：docs/adr/0011-current-parse-run-and-prunable-artifacts.md
 实现状态：Current
-关联测试：tests/test_prune_parse_runs.py
+关联测试：tests/integration/test_prune_parse_runs.py
 """
 
 from __future__ import annotations

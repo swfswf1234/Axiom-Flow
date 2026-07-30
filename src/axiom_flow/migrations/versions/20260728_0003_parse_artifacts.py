@@ -2,7 +2,7 @@
 模块职责：为解析产物增加可下载元数据和相对路径约束所需字段。
 设计关联（DesignRef）：docs/adr/0008-immutable-parse-artifact-bundles.md
 实现状态：Current
-关联测试：tests/test_mysql_migrations.py、tests/test_parse_artifacts.py
+关联测试：tests/integration/test_mysql_migrations.py、tests/integration/test_parse_artifacts.py
 """
 
 import sqlalchemy as sa
