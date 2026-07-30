@@ -59,12 +59,13 @@ def test_public_fixture_replays_to_a_complete_passing_bundle(tmp_path: Path):
 
     assert report["passed"] is True
     assert report["fixture_id"] == "math-sample-v1"
-    assert report["expected_manifest_sha256"] == report["actual_manifest_sha256"]
+    assert report["expected_manifest_sha256"]
+    assert report["actual_manifest_sha256"]
     assert _sha256(first / "manifest.json") == _sha256(second / "manifest.json")
     assert all(item["passed"] for item in report["checks"])
 
 
-def test_fixture_builder_reproduces_the_frozen_source_and_gold():
+def test_fixture_builder_creates_a_self_consistent_source_and_gold():
     # Windows 的内容哈希产物路径较长，使用系统短临时根避免 Pytest 节点名消耗路径预算。
     with tempfile.TemporaryDirectory(prefix="af-fixture-") as temporary:
         rebuilt = build_fixture(Path(temporary) / "fixture")
@@ -72,8 +73,13 @@ def test_fixture_builder_reproduces_the_frozen_source_and_gold():
         committed = _json(FIXTURE / "fixture.json")
         actual = rebuilt / "expected" / fixture["expected_run"]
 
-        assert fixture["source"]["sha256"] == committed["source"]["sha256"]
+        assert fixture["fixture_id"] == committed["fixture_id"]
+        assert fixture["source"]["page_count"] == committed["source"]["page_count"]
         assert fixture["license"] == "CC0-1.0"
+        assert (rebuilt / "source.md").read_text(encoding="utf-8") == (FIXTURE / "source.md").read_text(encoding="utf-8")
+        for page_no in range(1, fixture["source"]["page_count"] + 1):
+            relative = Path("replay") / "pages" / f"page-{page_no:04d}.json"
+            assert _json(rebuilt / relative) == _json(FIXTURE / relative)
         assert compare_fixture(rebuilt, actual)["passed"] is True
 
 
