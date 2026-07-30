@@ -36,7 +36,7 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 | 产物或运行清理 | `src/axiom_flow/tools/prune_parse_runs.py`、`artifacts.py` | ADR 0011、`operations.md` | `test_prune_parse_runs.py`、`test_parse_artifacts.py` |
 | 知识、关系、工作簿、发布 | `src/axiom_flow/application/workbooks.py`、`mysql.py` | `excel-release-workflow.md` | `test_document_workflow.py` |
 | Web 对照与交互 | `web/`、`src/axiom_flow/api/main.py`、`schemas.py` | `web-workbench.md` | `test_v03_api.py`、JavaScript 语法检查 |
-| 模型评测与评分 | `evaluation/` | `evaluation-governance.md`、实验 ADR | `test_evaluation_*.py`、`test_scanned_textbook_evaluation.py` |
+| 模型评测与评分 | `evaluation/{regression,replay,benchmark,scorecard,preflight}.py` | `evaluation-governance.md`、实验 ADR | `test_evaluation_*.py` |
 | 计划、ADR 与文档目录 | `docs/`、`AGENTS.md` | `task-lifecycle.md`、`documentation.md`、`adr-governance.md` | `test_plan_governance.py`、`test_standard_governance.py`、`test_adr_structure.py` |
 | DesignRef 与语义同步 | 模块文件头、`code-map.md`、架构/设计 | `code-document-traceability.md` | 映射、架构和设计语义测试 |
 

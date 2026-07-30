@@ -3,7 +3,7 @@
 状态：In Progress
 任务类型：D
 最后更新：2026-07-29
-关联 ADR：`docs/adr/0013-selective-history-retention.md`、`docs/adr/0014-risk-based-plan-lifecycle.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`
+关联 ADR：`docs/adr/0013-selective-history-retention.md`、`docs/adr/0014-risk-based-plan-lifecycle.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`、`docs/adr/0019-public-fixture-and-private-benchmark-boundary.md`
 关联设计：`docs/architecture/runtime-architecture.md`
 关联 Tracker：`docs/trackers/todo.md`（REL-001）
 归档判定：Retain；发布后保留远端 CI、标签和发布锚点作为里程碑证据。
@@ -23,6 +23,8 @@
 
 - v0.3 架构、工作台与存储变更已经合入 `main`，本地关闭门禁已经通过。
 - REG-001 已由独立修复任务关闭；提交 `907e196` 的 Actions run `30438394283` 已通过。
+- QA-001 与 DATA-001 必须先关闭，发布提交不得混用旧评测目录或旧本地运行数据。
+- DATA-002 必须先关闭，运行库不得保留指向已清理本地文件的记录。
 - 预定发布提交及其回滚锚点尚待在本计划内冻结。
 - 发布人可核对 `origin/main`、GitHub Actions 和远端标签目标。
 

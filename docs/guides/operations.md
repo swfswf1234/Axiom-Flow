@@ -20,6 +20,7 @@
 | 原 PDF 与解析产物 | 本地 `data/documents/` | 原件不可清理；运行产物由 manifest 校验。 |
 | 暂存清理数据 | 本地 `data/trash/` | purge 前可回滚，purge 后只能依赖外部完整备份恢复。 |
 | 工作簿与发布快照 | 本地文件与 MySQL revision/release | 草稿不能覆盖已发布快照。 |
+| 私有评测运行 | 本地 `data/evaluation/runs/` | 可重跑，不得把教材正文、页图或完整响应提交 Git。 |
 
 ## 启动与停止
 
@@ -53,6 +54,10 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 3. 完成运行后验证当前 ParseRun、页面数量、产物摘要和最终 `manifest.json`。
 4. 新成功运行只产生候选；必须经过显式选择才成为当前解析事实。
 5. 不使用历史 MinerU 输出目录或旧版命令解释当前运行结果。
+
+公开 fixture 回归使用 `python -m evaluation.replay` 和 `python -m evaluation.regression`，不需要
+模型密钥。真实教材先运行 `python -m evaluation.preflight`，再使用 `python -m evaluation.benchmark`；
+完整输出必须指定到 `data/evaluation/runs/`。
 
 ## 开发库重建
 

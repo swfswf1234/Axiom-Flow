@@ -26,6 +26,7 @@ flowchart LR
 - 使用 OCR 和 PDF 本地信息生成规范 Markdown、内容块、来源证据和质量报告。
 - 以版本化 `ParseRun`、逐页检查点和 SHA-256 manifest 保存可恢复、可校验的解析产物。
 - 在 Web 工作台中并排审阅原始页图、OCR 文本、Markdown 和结构化结果。
+- 使用可公开复现的数学 fixture 自动检查文本、结构、公式、表格、图片、来源位置和 manifest。
 - 管理知识候选、关系和审阅事件，通过 Excel 工作簿形成显式 `KnowledgeRelease`。
 
 ## 技术栈
@@ -89,10 +90,10 @@ python -m axiom_flow.worker
 | --- | --- |
 | `src/axiom_flow/` | 领域、应用、基础设施、API、Worker 和数据库迁移 |
 | `web/` | 本地单页审阅工作台 |
-| `evaluation/` | 模型实验 manifest、评分工具和报告 |
+| `evaluation/` | 公开 fixture 回归、私有模型 benchmark、评分工具和脱敏报告 |
 | `tests/` | 架构、单元、集成和工作流门禁 |
 | `docs/` | 当前架构、设计、决策、规范、计划和历史资料 |
-| `data/` | 本地运行数据与备份，不纳入版本控制 |
+| `data/` | 按需创建的本地运行数据、私有评测和备份，不纳入版本控制 |
 
 ## 开发入口
 

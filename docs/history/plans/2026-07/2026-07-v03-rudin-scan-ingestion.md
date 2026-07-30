@@ -39,7 +39,7 @@ ADR 0010 已冻结 PDF 第 20–39 页、`qwen-vl-ocr`、每页最多 3 次和�
 最终运行使用 22 次调用完成 20 页，81 个派生文件复算哈希一致，manifest SHA-256 为
 `b0f44ed0d9c6a5295773c5b429259e330ea6a3622596b5380361308305d1de35`。人工抽检结果为 3/5：
 第 20、24 页存在主要公式变量误识别，第 29、34、39 页通过。完整证据见
-[20 页链路试跑报告](../../../../evaluation/reports/rudin-qwen-ocr-20-v1.md)。
+[20 页链路试跑报告](../../../../evaluation/benchmarks/private/rudin/reports/rudin-qwen-ocr-20-v1.md)。
 
 ## 回滚
 

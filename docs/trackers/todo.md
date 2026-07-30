@@ -9,6 +9,7 @@
 | ID | 类型 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
 | REL-001 | Plan | P0 | In Progress | [v0.3 工程基线发布](../plans/2026-07-v03-engineering-baseline.md) | REG-001 已关闭；冻结最终发布提交并完成 D 类差异、回滚和标签复核。 |
+| DATA-002 | Gap | P0 | Open | 运行库存在失效本地文件引用 | `xqfm11` 仍有 1 个文档、5 个 ParseRun、20 页和 103 个产物记录；建立独立 D 类备份与重建计划后清理。 |
 | EXP-002 | Candidate | P0 | Candidate | Rudin 扫描教材新解析候选 | 当前单模型工程链路人工抽检 3/5；新候选必须使用冻结样本重新评测。 |
 | EXP-003 | Candidate | P0 | Candidate | 通用新增类别解析评测 | 新类别样本到达后新建 manifest，不回写 Rudin 单类别实验。 |
 | DES-001 | Gap | P1 | Open | 自动质量信号不足 | [解析设计](../design/document-pipeline.md)尚缺乱码、覆盖、页数、公式和表格风险的稳定规则或评测门槛。 |
@@ -16,5 +17,4 @@
 | OPS-001 | Gap | P1 | Open | 生产运维基线未实现 | [运维指南](../guides/operations.md)只支持本地手工运行；先以 ADR 选择部署边界，再完成备份恢复和发布演练。 |
 | PRD-001 | Candidate | P1 | Candidate | 学习交互闭环 | 已发布知识可稳定检索后，设计对话、图片问答、练习和学习进度。 |
 | JOB-001 | Candidate | P1 | Candidate | 批量导入与任务恢复策略 | 单篇实际样本验证后，明确队列、恢复策略和资源上限。 |
-| QA-001 | Candidate | P2 | Candidate | 扫描件质量规则与人工标注回归集 | 已有 Rudin 12 页评分；待达标候选后转为自动回归。 |
 | RET-001 | Candidate | P2 | Candidate | 向量检索与图数据库投影 | 学习交互的检索需求、索引版本和同步语义经设计验证后立项。 |

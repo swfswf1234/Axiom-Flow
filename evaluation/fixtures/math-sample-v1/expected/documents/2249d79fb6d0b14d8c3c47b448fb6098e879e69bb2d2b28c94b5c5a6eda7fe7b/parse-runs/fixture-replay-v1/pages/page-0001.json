@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "page_no": 1,
+  "page_kind": "content",
+  "markdown": "# Mathematical Analysis Fixture\n\n数学分析回归样本：本页验证中英文正文、标题层级与行内公式。\n\nFor a sequence $(a_n)$, convergence to $L$ means every epsilon admits a tail bound.\n\n$$\\lim_{n \\to \\infty} a_n = L$$",
+  "blocks": [
+    {
+      "kind": "heading",
+      "content": "Mathematical Analysis Fixture",
+      "latex": null,
+      "quote": "Mathematical Analysis Fixture",
+      "order_no": 0,
+      "bbox": [
+        50,
+        48,
+        545,
+        86
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "数学分析回归样本：本页验证中英文正文、标题层级与行内公式。",
+      "latex": null,
+      "quote": "数学分析回归样本：本页验证中英文正文、标题层级与行内公式。",
+      "order_no": 1,
+      "bbox": [
+        50,
+        112,
+        545,
+        150
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "For a sequence $(a_n)$, convergence to $L$ means every epsilon admits a tail bound.",
+      "latex": null,
+      "quote": "For a sequence $(a_n)$, convergence to $L$ means every epsilon admits a tail bound.",
+      "order_no": 2,
+      "bbox": [
+        50,
+        184,
+        545,
+        235
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "formula",
+      "content": "$$\\lim_{n \\to \\infty} a_n = L$$",
+      "latex": "\\lim_{n \\to \\infty} a_n = L",
+      "quote": "$$\\lim_{n \\to \\infty} a_n = L$$",
+      "order_no": 3,
+      "bbox": [
+        130,
+        280,
+        465,
+        330
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    }
+  ],
+  "evidence": [
+    {
+      "kind": "text_quote",
+      "page_no": 1,
+      "quote": "Mathematical Analysis Fixture",
+      "bbox": [
+        50,
+        48,
+        545,
+        86
+      ]
+    }
+  ],
+  "quality": {
+    "status": "accepted_fixture",
+    "issues": [],
+    "page_kind": "content",
+    "native_text_chars": 180,
+    "ink_ratio": 0.1,
+    "provider": {
+      "contract_version": "fixture-page-v1",
+      "replayed": true
+    }
+  },
+  "page_image": "documents/2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b/page-assets/render-200dpi-v1/page-0001.png",
+  "content_images": []
+}

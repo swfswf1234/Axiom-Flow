@@ -5,7 +5,7 @@
 维护位置：`docs/architecture/code-map.md`  
 关联代码：受管模块清单  
 关联测试：`tests/test_code_document_mapping.py`  
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0008-immutable-parse-artifact-bundles.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`、`docs/adr/0011-current-parse-run-and-prunable-artifacts.md`、`docs/adr/0013-selective-history-retention.md`、`docs/adr/0015-standards-as-governance-source.md`、`docs/adr/0018-src-package-and-application-owned-workflows.md`、`docs/adr/0019-public-fixture-and-private-benchmark-boundary.md`
 
 本表是代码与文档关系的唯一事实源。v0.1 运行代码已删除，其范围和 Git 恢复锚点见
 `docs/history/baselines/v01-mineru.md`。`__init__.py` 及无业务语义的极短文件豁免。
@@ -46,7 +46,10 @@
 | `web/app.js` | v0.3 工作台交互 | Current | `docs/design/web-workbench.md` | `tests/test_v03_api.py` | 只调用 API v1。 |
 | `evaluation/scorecard.py` | 解析实验评分与门禁 | Current | `docs/design/evaluation-governance.md` | `tests/test_evaluation_scorecard.py` | 不访问模型或生产数据。 |
 | `evaluation/preflight.py` | 百炼单页连通性预检 | Current | `docs/design/evaluation-governance.md` | `tests/test_evaluation_preflight.py` | 只调用 OCR 模型并沿用页级重试。 |
-| `evaluation/scanned_textbook.py` | 扫描教材候选评测执行 | Current | `docs/design/evaluation-governance.md` | `tests/test_scanned_textbook_evaluation.py` | 生成响应和人工评分模板。 |
+| `evaluation/fixture_builder.py` | 公开数学 fixture 重建 | Current | `docs/design/evaluation-governance.md` | `tests/test_evaluation_regression.py` | 生成自有 PDF、replay 和金标包。 |
+| `evaluation/replay.py` | 确定性解析产物回放 | Current | `docs/design/evaluation-governance.md` | `tests/test_evaluation_regression.py` | 复用生产 ParseArtifactWriter 且不调用模型。 |
+| `evaluation/regression.py` | 完整页面事实自动比较 | Current | `docs/design/evaluation-governance.md` | `tests/test_evaluation_regression.py` | 校验文本、结构、公式、表格、图片、bbox 和 manifest。 |
+| `evaluation/benchmark.py` | 私有教材候选评测执行 | Current | `docs/design/evaluation-governance.md` | `tests/test_evaluation_benchmark.py` | 生成本地响应和待人工填写评分模板。 |
 | `tests/conftest.py` | MySQL 测试库准备与清理 | Current | `docs/architecture/data-lifecycle.md` | — | 仅自动创建隔离测试库。 |
 | `tests/test_architecture_dependencies.py` | Python 包依赖方向测试 | Current | `docs/architecture/runtime-architecture.md` | — | 禁止领域和应用层反向依赖。 |
 | `tests/test_architecture_documents.py` | 架构文档语义同步测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护 Mermaid 视图、领域状态和已知架构偏差。 |
@@ -64,7 +67,8 @@
 | `tests/test_parse_artifacts.py` | 解析产物包测试 | Current | `docs/design/document-pipeline.md` | — | 覆盖固定路径、清单和哈希。 |
 | `tests/test_current_parse_runs.py` | 当前解析运行测试 | Current | `docs/adr/0011-current-parse-run-and-prunable-artifacts.md` | — | 覆盖显式选择、历史和非法候选。 |
 | `tests/test_prune_parse_runs.py` | 解析运行清理测试 | Current | `docs/adr/0011-current-parse-run-and-prunable-artifacts.md` | — | 覆盖预演、保护、回滚和 purge。 |
-| `tests/test_scanned_textbook_evaluation.py` | 扫描教材评测测试 | Current | `docs/design/evaluation-governance.md` | — | 禁止自动填造人工分数。 |
+| `tests/test_evaluation_regression.py` | 公开 fixture 完整事实回归 | Current | `docs/design/evaluation-governance.md` | — | 覆盖 replay、文本、公式、表格、图片、bbox 和哈希篡改。 |
+| `tests/test_evaluation_benchmark.py` | 私有教材评测测试 | Current | `docs/design/evaluation-governance.md` | — | 禁止自动填造人工分数。 |
 | `tests/test_document_workflow.py` | 主链闭环测试 | Current | `docs/architecture/data-lifecycle.md` | — | 使用确定性假模型。 |
 | `tests/test_mysql_migrations.py` | MySQL 迁移与隔离测试 | Current | `docs/architecture/data-lifecycle.md` | — | 验证迁移幂等和表边界。 |
 | `tests/test_v03_jobs.py` | 任务与历史测试 | Current | `docs/design/background-jobs.md` | — | 覆盖幂等、租约、取消、续跑和版本。 |

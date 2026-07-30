@@ -1,7 +1,7 @@
 # Rudin qwen-vl-ocr 20 页链路试跑报告
 
 日期：2026-07-28
-实验清单：`evaluation/manifests/rudin-qwen-ocr-20-v1.json`
+实验清单：`evaluation/benchmarks/private/rudin/manifests/rudin-qwen-ocr-20-v1.json`
 源文件：`sha256:341544f3fa9ce6ac8bf3860b4d9f9e4e86b1d2778e2a8644c1cafb31267ed968`
 
 ## 运行结果

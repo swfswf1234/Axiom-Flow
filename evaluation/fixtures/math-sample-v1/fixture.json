@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "fixture_id": "math-sample-v1",
+  "license": "CC0-1.0",
+  "normalization_contract": "nfc-newline-latex-v1",
+  "bbox_iou_threshold": 0.75,
+  "source": {
+    "path": "source.pdf",
+    "sha256": "2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b",
+    "page_count": 4
+  },
+  "replay": {
+    "run_id": "fixture-replay-v1",
+    "provider": {
+      "adapter": "FixtureReplayProvider",
+      "vision_model": "fixture-replay",
+      "contract_version": "fixture-page-v1",
+      "model_call_budget": 0,
+      "max_tokens": 0,
+      "max_attempts_per_page": 1,
+      "page_range": {
+        "start": 1,
+        "end": 4,
+        "inclusive": true
+      }
+    }
+  },
+  "expected_run": "documents/2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b/parse-runs/fixture-replay-v1"
+}

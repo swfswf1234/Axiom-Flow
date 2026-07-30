@@ -8,6 +8,8 @@
 
 | 日期 | ID | 任务 | 终态 | 关闭结果 | 证据 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-29 | DATA-001 | 本地运行数据与构建产物重置 | Completed | Achieved | [执行记录](../history/plans/2026-07/2026-07-local-data-reset.md)；精确清理 27,210,526 字节，全量 104 tests 通过，运行库后续问题登记 DATA-002。 |
+| 2026-07-29 | QA-001 | 公开解析回归基线 | Completed | Achieved | [ADR 0019](../adr/0019-public-fixture-and-private-benchmark-boundary.md)；CC0 四页 fixture、完整事实比较器与全量 104 tests 通过。 |
 | 2026-07-29 | REG-001 | GitHub Actions Pytest 失败 | Completed | Achieved | 提交 `907e196` 增加跨平台路径脱敏回归；Actions run `30438394283` success，98 tests。 |
 | 2026-07-29 | ENG-001 | 主流程应用边界与包根迁移 | Completed | Achieved | [ADR 0018](../adr/0018-src-package-and-application-owned-workflows.md)；wheel 构建成功，API + Worker 完整发布闭环与全量 97 tests 通过。 |
 | 2026-07-29 | ARCH-001 | API 绕过应用服务 | Completed | Achieved | [ADR 0018](../adr/0018-src-package-and-application-owned-workflows.md)；API/Worker 只调用应用服务，完整主链与架构门禁通过。 |

@@ -27,6 +27,8 @@ RETAINED_2026_07_PLANS = {
     "2026-07-v03-architecture-rebuild.md",
     "2026-07-v03-result-workbench-storage.md",
     "2026-07-v03-rudin-scan-ingestion.md",
+    "2026-07-evaluation-regression-baseline.md",
+    "2026-07-local-data-reset.md",
     "index.md",
 }
 

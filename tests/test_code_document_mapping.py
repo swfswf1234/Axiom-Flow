@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CODE_MAP = ROOT / "docs" / "architecture" / "code-map.md"
-MANAGED_DIRECTORIES = ("src/axiom_flow", "evaluation", "scripts", "tests")
+MANAGED_DIRECTORIES = ("src/axiom_flow", "evaluation", "tests")
 MANAGED_WEB_FILES = ("web/index.html", "web/style.css", "web/app.js")
 MANAGED_TOOL_FILES = ("alembic.ini", "src/axiom_flow/migrations/script.py.mako")
 EXEMPT_FILENAMES = {"__init__.py"}
@@ -108,7 +108,7 @@ def test_active_architecture_and_design_documents_declare_metadata():
         for code_path in _metadata_references(
             content,
             "关联代码：",
-            ("alembic.ini", "app/", "src/axiom_flow/", "evaluation/", "scripts/", "web/"),
+            ("alembic.ini", "app/", "src/axiom_flow/", "evaluation/", "web/"),
         ):
             assert (ROOT / code_path).is_file(), document
             assert code_path in entries_by_path, document

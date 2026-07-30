@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "page_no": 2,
+  "page_kind": "content",
+  "markdown": "# Theorem and Proof\n\n## Theorem\n\nIf $f$ is differentiable at $x_0$, then $f$ is continuous at $x_0$.\n\n## Proof\n\nWrite $f(x)-f(x_0)$ as a difference quotient times $x-x_0$ and take the limit.\n\n1. Isolate the difference quotient.\n2. Apply the product limit law.\n\n$$f(x)-f(x_0)=\\frac{f(x)-f(x_0)}{x-x_0}(x-x_0)$$",
+  "blocks": [
+    {
+      "kind": "heading",
+      "content": "Theorem and Proof",
+      "latex": null,
+      "quote": "Theorem and Proof",
+      "order_no": 0,
+      "bbox": [
+        50,
+        48,
+        545,
+        86
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "heading",
+      "content": "Theorem",
+      "latex": null,
+      "quote": "Theorem",
+      "order_no": 1,
+      "bbox": [
+        50,
+        110,
+        545,
+        145
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "If $f$ is differentiable at $x_0$, then $f$ is continuous at $x_0$.",
+      "latex": null,
+      "quote": "If $f$ is differentiable at $x_0$, then $f$ is continuous at $x_0$.",
+      "order_no": 2,
+      "bbox": [
+        50,
+        155,
+        545,
+        200
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "heading",
+      "content": "Proof",
+      "latex": null,
+      "quote": "Proof",
+      "order_no": 3,
+      "bbox": [
+        50,
+        225,
+        545,
+        260
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "Write $f(x)-f(x_0)$ as a difference quotient times $x-x_0$ and take the limit.",
+      "latex": null,
+      "quote": "Write $f(x)-f(x_0)$ as a difference quotient times $x-x_0$ and take the limit.",
+      "order_no": 4,
+      "bbox": [
+        50,
+        270,
+        545,
+        320
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "list",
+      "content": "1. Isolate the difference quotient.\n2. Apply the product limit law.",
+      "latex": null,
+      "quote": "1. Isolate the difference quotient.\n2. Apply the product limit law.",
+      "order_no": 5,
+      "bbox": [
+        70,
+        345,
+        520,
+        405
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "formula",
+      "content": "$$f(x)-f(x_0)=\\frac{f(x)-f(x_0)}{x-x_0}(x-x_0)$$",
+      "latex": "f(x)-f(x_0)=\\frac{f(x)-f(x_0)}{x-x_0}(x-x_0)",
+      "quote": "$$f(x)-f(x_0)=\\frac{f(x)-f(x_0)}{x-x_0}(x-x_0)$$",
+      "order_no": 6,
+      "bbox": [
+        70,
+        445,
+        525,
+        500
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    }
+  ],
+  "evidence": [
+    {
+      "kind": "text_quote",
+      "page_no": 2,
+      "quote": "Theorem and Proof",
+      "bbox": [
+        50,
+        48,
+        545,
+        86
+      ]
+    }
+  ],
+  "quality": {
+    "status": "accepted_fixture",
+    "issues": [],
+    "page_kind": "content",
+    "native_text_chars": 309,
+    "ink_ratio": 0.1,
+    "provider": {
+      "contract_version": "fixture-page-v1",
+      "replayed": true
+    }
+  },
+  "page_image": "documents/2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b/page-assets/render-200dpi-v1/page-0002.png",
+  "content_images": []
+}

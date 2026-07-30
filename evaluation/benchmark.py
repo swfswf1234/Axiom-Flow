@@ -1,8 +1,8 @@
 """
-模块职责：按冻结 manifest 运行扫描教材候选解析器并生成可人工评分的本地产物。
+模块职责：按冻结 manifest 运行私有教材候选解析器并生成可人工评分的本地产物。
 设计关联（DesignRef）：docs/design/evaluation-governance.md
 实现状态：Current
-关联测试：tests/test_scanned_textbook_evaluation.py
+关联测试：tests/test_evaluation_benchmark.py
 """
 
 from __future__ import annotations
@@ -133,13 +133,18 @@ def main() -> None:
     parser.add_argument("--calls-already-used", type=int, default=0)
     parser.add_argument("--timeout-seconds", type=float)
     args = parser.parse_args()
+    settings = Settings()
+    data_root = settings.data_dir.resolve()
+    output_dir = args.output_dir.resolve()
+    if not output_dir.is_relative_to(data_root):
+        parser.error("完整 benchmark 输出必须位于配置的 data_dir 内")
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     result = asyncio.run(run_candidate(
-        args.source, manifest, args.output_dir, Settings(),
+        args.source, manifest, output_dir, settings,
         calls_already_used=args.calls_already_used, timeout_seconds=args.timeout_seconds,
     ))
     template = review_template(manifest, result)
-    destination = args.output_dir / Settings().vision_model / "review-template.json"
+    destination = output_dir / settings.vision_model / "review-template.json"
     destination.write_text(json.dumps(template, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 

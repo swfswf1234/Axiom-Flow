@@ -1,0 +1,91 @@
+{
+  "page_no": 3,
+  "page_kind": "content",
+  "markdown": "# Table and Figure\n\nThe table records a convergent sequence.\n\n| n | 1 | 2 | 4 | 8 |\n| --- | --- | --- | --- | --- |\n| 1/n | 1 | 0.5 | 0.25 | 0.125 |\n\nFigure 1. Secant slopes approaching the tangent line.",
+  "blocks": [
+    {
+      "kind": "heading",
+      "content": "Table and Figure",
+      "latex": null,
+      "quote": "Table and Figure",
+      "order_no": 0,
+      "bbox": [
+        50,
+        48,
+        545,
+        86
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "The table records a convergent sequence.",
+      "latex": null,
+      "quote": "The table records a convergent sequence.",
+      "order_no": 1,
+      "bbox": [
+        50,
+        105,
+        545,
+        140
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "table",
+      "content": "| n | 1 | 2 | 4 | 8 |\n| --- | --- | --- | --- | --- |\n| 1/n | 1 | 0.5 | 0.25 | 0.125 |",
+      "latex": null,
+      "quote": "| n | 1 | 2 | 4 | 8 |\n| --- | --- | --- | --- | --- |\n| 1/n | 1 | 0.5 | 0.25 | 0.125 |",
+      "order_no": 2,
+      "bbox": [
+        60,
+        160,
+        535,
+        285
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "figure",
+      "content": "Figure 1. Secant slopes approaching the tangent line.",
+      "latex": null,
+      "quote": "Figure 1. Secant slopes approaching the tangent line.",
+      "order_no": 3,
+      "bbox": [
+        90,
+        350,
+        505,
+        610
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    }
+  ],
+  "evidence": [
+    {
+      "kind": "text_quote",
+      "page_no": 3,
+      "quote": "Table and Figure",
+      "bbox": [
+        50,
+        48,
+        545,
+        86
+      ]
+    }
+  ],
+  "quality": {
+    "status": "accepted_fixture",
+    "issues": [],
+    "page_kind": "content",
+    "native_text_chars": 203,
+    "ink_ratio": 0.1,
+    "provider": {
+      "contract_version": "fixture-page-v1",
+      "replayed": true
+    }
+  }
+}

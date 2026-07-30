@@ -8,7 +8,7 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 [ADR 治理规范](../standards/adr-governance.md)；新文件遵守对应 standard，并参考最近一份仍有效的
 同类文档组织内容。
 
-下一个可用编号：0019
+下一个可用编号：0020
 
 | ADR | 标题 | 领域 | 决策阶段 | 状态 | 取代关系 |
 | --- | --- | --- | --- | --- | --- |
@@ -30,3 +30,4 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 | [`0016`](0016-remove-document-templates.md) | 删除文档模板目录 | 工程治理 | v0.3 | Accepted | — |
 | [`0017`](0017-consolidated-task-ledgers-and-roadmap.md) | 统一任务台账与无状态能力路线图 | 工程治理 | v0.3 | Accepted | — |
 | [`0018`](0018-src-package-and-application-owned-workflows.md) | 标准包根与应用用例主导工作流 | 工程治理 | v0.3 | Accepted | 取代 0012 |
+| [`0019`](0019-public-fixture-and-private-benchmark-boundary.md) | 公开回归样本与私有模型评测分离 | 解析与评测 | v0.3 | Accepted | — |

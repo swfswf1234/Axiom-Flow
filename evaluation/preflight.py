@@ -108,8 +108,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdf", type=Path, required=True)
     parser.add_argument("--page-no", type=int, default=1)
-    parser.add_argument("--data-dir", type=Path, default=Path("data/evaluation/preflight"))
-    parser.add_argument("--report", type=Path, default=Path("evaluation/reports/parser-v1-preflight.json"))
+    parser.add_argument("--data-dir", type=Path, default=Path("data/evaluation/runs/preflight/responses"))
+    parser.add_argument("--report", type=Path, default=Path("data/evaluation/runs/preflight/report.json"))
     args = parser.parse_args()
 
     settings = Settings().model_copy(update={"model_call_budget": 3})

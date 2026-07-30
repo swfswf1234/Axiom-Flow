@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "page_no": 4,
+  "page_kind": "content",
+  "markdown": "# Two-column Reading Order\n\n## Left column\n\nDefinition. A set is open when every point has a contained neighborhood.\n\nExample. Every open interval $(a,b)$ is open in the real line.\n\n## Right column\n\nDefinition. A set is closed when it contains all of its limit points.\n\nObservation. Complements exchange open and closed sets.",
+  "blocks": [
+    {
+      "kind": "heading",
+      "content": "Two-column Reading Order",
+      "latex": null,
+      "quote": "Two-column Reading Order",
+      "order_no": 0,
+      "bbox": [
+        50,
+        48,
+        545,
+        86
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "heading",
+      "content": "Left column",
+      "latex": null,
+      "quote": "Left column",
+      "order_no": 1,
+      "bbox": [
+        45,
+        115,
+        275,
+        150
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "Definition. A set is open when every point has a contained neighborhood.",
+      "latex": null,
+      "quote": "Definition. A set is open when every point has a contained neighborhood.",
+      "order_no": 2,
+      "bbox": [
+        45,
+        160,
+        275,
+        245
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "Example. Every open interval $(a,b)$ is open in the real line.",
+      "latex": null,
+      "quote": "Example. Every open interval $(a,b)$ is open in the real line.",
+      "order_no": 3,
+      "bbox": [
+        45,
+        275,
+        275,
+        355
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "heading",
+      "content": "Right column",
+      "latex": null,
+      "quote": "Right column",
+      "order_no": 4,
+      "bbox": [
+        320,
+        115,
+        550,
+        150
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "Definition. A set is closed when it contains all of its limit points.",
+      "latex": null,
+      "quote": "Definition. A set is closed when it contains all of its limit points.",
+      "order_no": 5,
+      "bbox": [
+        320,
+        160,
+        550,
+        245
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    },
+    {
+      "kind": "paragraph",
+      "content": "Observation. Complements exchange open and closed sets.",
+      "latex": null,
+      "quote": "Observation. Complements exchange open and closed sets.",
+      "order_no": 6,
+      "bbox": [
+        320,
+        275,
+        550,
+        355
+      ],
+      "confidence": 1.0,
+      "source": "fixture-gold"
+    }
+  ],
+  "evidence": [
+    {
+      "kind": "text_quote",
+      "page_no": 4,
+      "quote": "Two-column Reading Order",
+      "bbox": [
+        50,
+        48,
+        545,
+        86
+      ]
+    }
+  ],
+  "quality": {
+    "status": "accepted_fixture",
+    "issues": [],
+    "page_kind": "content",
+    "native_text_chars": 325,
+    "ink_ratio": 0.1,
+    "provider": {
+      "contract_version": "fixture-page-v1",
+      "replayed": true
+    }
+  },
+  "page_image": "documents/2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b/page-assets/render-200dpi-v1/page-0004.png",
+  "content_images": []
+}

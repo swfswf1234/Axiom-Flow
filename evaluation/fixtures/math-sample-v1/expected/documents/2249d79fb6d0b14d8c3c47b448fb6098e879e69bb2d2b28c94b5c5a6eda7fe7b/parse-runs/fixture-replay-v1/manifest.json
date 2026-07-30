@@ -1,0 +1,163 @@
+{
+  "schema_version": 2,
+  "run_id": "fixture-replay-v1",
+  "document_hash": "2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b",
+  "page_count": 4,
+  "page_numbers": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "provider": {
+    "adapter": "FixtureReplayProvider",
+    "vision_model": "fixture-replay",
+    "contract_version": "fixture-page-v1",
+    "model_call_budget": 0,
+    "max_tokens": 0,
+    "max_attempts_per_page": 1,
+    "page_range": {
+      "start": 1,
+      "end": 4,
+      "inclusive": true
+    }
+  },
+  "files": [
+    {
+      "path": "content-images/page-0003-block-0002.png",
+      "sha256": "96f9cdd04e0a2c70b1f566f57933c2ac9fc097ad3faa241ec2ee175aafd6a22a",
+      "size_bytes": 10761,
+      "mime_type": "image/png"
+    },
+    {
+      "path": "content-images/page-0003-block-0003.png",
+      "sha256": "a4a43a558d2cdc885e78c28d5ecdbfb9b41589fce7b39eb55f96028183cff4f3",
+      "size_bytes": 34075,
+      "mime_type": "image/png"
+    },
+    {
+      "path": "document.md",
+      "sha256": "3cad1f152cfd493f951600b30c1553a4f2c9a6990a3dd6750b172d0e9fa0a705",
+      "size_bytes": 1138,
+      "mime_type": "application/octet-stream"
+    },
+    {
+      "path": "pages/page-0001.json",
+      "sha256": "f8a73496a4adf4d9c8d21383a22e6ea10e076364167beea467c5b102d4e67432",
+      "size_bytes": 2458,
+      "mime_type": "application/json"
+    },
+    {
+      "path": "pages/page-0001.md",
+      "sha256": "26df00bac81acfc022469bbb71956f4eed52ecc8ad4bbce0b7fcc8ef808278a5",
+      "size_bytes": 239,
+      "mime_type": "application/octet-stream"
+    },
+    {
+      "path": "pages/page-0002.json",
+      "sha256": "28727db49d48548ba14acaf2291c9294b8fbdc3e23eb6d1bb03e15950743d002",
+      "size_bytes": 3402,
+      "mime_type": "application/json"
+    },
+    {
+      "path": "pages/page-0002.md",
+      "sha256": "41f72d665e877930f8d63b26c206b8d37581ef52b5473964d0aec56847132f3e",
+      "size_bytes": 310,
+      "mime_type": "application/octet-stream"
+    },
+    {
+      "path": "pages/page-0003.json",
+      "sha256": "b09334fc728f9c008b2adc65759c11a3e401a84b805b5e77589ff12bcc82b7dd",
+      "size_bytes": 2607,
+      "mime_type": "application/json"
+    },
+    {
+      "path": "pages/page-0003.md",
+      "sha256": "cc7c0bf818c04e29f70cd6dac1a1ca4057a246a2851238bacf74e1c9d11978bc",
+      "size_bytes": 204,
+      "mime_type": "application/octet-stream"
+    },
+    {
+      "path": "pages/page-0004.json",
+      "sha256": "274303a0b1d1247062068fc5cd021f8dec145449b3d89344c39806f6f1c9bacf",
+      "size_bytes": 3418,
+      "mime_type": "application/json"
+    },
+    {
+      "path": "pages/page-0004.md",
+      "sha256": "a050b3f2e750a237644ddad34b8919a06dc1946c9b4922b33eda9232d7ef1a51",
+      "size_bytes": 326,
+      "mime_type": "application/octet-stream"
+    },
+    {
+      "path": "provider/page-0001.json",
+      "sha256": "b071b311c400e6a0658847b32066a8c3f95a6034f2b426fd26fe4f34e0e4ecf2",
+      "size_bytes": 1863,
+      "mime_type": "application/json"
+    },
+    {
+      "path": "provider/page-0002.json",
+      "sha256": "3a8a4f5ea91bf353479ba0bd46238f88fe30fd86e69302acd7e54dbaef3fdebf",
+      "size_bytes": 2819,
+      "mime_type": "application/json"
+    },
+    {
+      "path": "provider/page-0003.json",
+      "sha256": "b2a7de7e1ef71cea53d33cc82e87888b17671ea410784ae1dc4c7a8d0287b740",
+      "size_bytes": 1721,
+      "mime_type": "application/json"
+    },
+    {
+      "path": "provider/page-0004.json",
+      "sha256": "fb062d68a32624a4dd4327fad2aa25f44e4596d385624400aa9ff958dcabc8d1",
+      "size_bytes": 2828,
+      "mime_type": "application/json"
+    }
+  ],
+  "shared_assets": [
+    {
+      "kind": "page_image",
+      "path": "documents/2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b/page-assets/render-200dpi-v1/page-0001.png",
+      "sha256": "ffd09dab80863a9b18784437ccfbe2fc849471391e1b741e0d9356d7b265b6ee",
+      "size_bytes": 54153,
+      "mime_type": "image/png",
+      "metadata": {
+        "page_no": 1,
+        "render_contract": "render-200dpi-v1"
+      }
+    },
+    {
+      "kind": "page_image",
+      "path": "documents/2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b/page-assets/render-200dpi-v1/page-0002.png",
+      "sha256": "b3985a81bc5925ed86a7a1656c12b8e10e73ead053fde09ee77a8d6e12150033",
+      "size_bytes": 59170,
+      "mime_type": "image/png",
+      "metadata": {
+        "page_no": 2,
+        "render_contract": "render-200dpi-v1"
+      }
+    },
+    {
+      "kind": "page_image",
+      "path": "documents/2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b/page-assets/render-200dpi-v1/page-0003.png",
+      "sha256": "6a62316f32751a3a9d766ea611e927ddd976d6bf5589e4e5be5bb7de7c3feebe",
+      "size_bytes": 71386,
+      "mime_type": "image/png",
+      "metadata": {
+        "page_no": 3,
+        "render_contract": "render-200dpi-v1"
+      }
+    },
+    {
+      "kind": "page_image",
+      "path": "documents/2249d79fb6d0b14d8c3c47b448fb6098e879e69bb2d2b28c94b5c5a6eda7fe7b/page-assets/render-200dpi-v1/page-0004.png",
+      "sha256": "4028adad3189026623cb2de860758a126bd004a95072c03a93c28ae3b265cbfb",
+      "size_bytes": 62422,
+      "mime_type": "image/png",
+      "metadata": {
+        "page_no": 4,
+        "render_contract": "render-200dpi-v1"
+      }
+    }
+  ]
+}

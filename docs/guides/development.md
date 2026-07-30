@@ -36,7 +36,7 @@ python -m pip install -e ".[dev]"
    可复现失败登记到[待做任务](../trackers/todo.md)。
 
 Rudin 页码、预算和采纳门槛属于专项事实，只查[解析评测设计](../design/evaluation-governance.md)、
-[ADR 0010](../adr/0010-qwen-ocr-only-rudin-trial.md)、[20 页试跑报告](../../evaluation/reports/rudin-qwen-ocr-20-v1.md)
+[ADR 0010](../adr/0010-qwen-ocr-only-rudin-trial.md)、[20 页试跑报告](../../evaluation/benchmarks/private/rudin/reports/rudin-qwen-ocr-20-v1.md)
 和[后续候选任务](../trackers/todo.md)，不作为通用开发命令。
 
 ## 数据库迁移开发
@@ -62,6 +62,7 @@ SQLAlchemy 声明式模型元数据，禁止使用 `--autogenerate`。应用启�
 | 受管代码或 DesignRef | `python -m pytest tests/test_code_document_mapping.py -q` |
 | 架构或依赖方向 | `python -m pytest tests/test_architecture_documents.py tests/test_architecture_dependencies.py -q` |
 | 设计接口、状态或关键常量 | `python -m pytest tests/test_design_documents.py -q` |
+| 公开解析 fixture 或评测门禁 | `python -m pytest tests/test_evaluation_regression.py tests/test_evaluation_scorecard.py -q` |
 | Web 页面或交互 | 适用 API 测试及 `node --check web/app.js` |
 | 共享模型、状态机或跨领域流程 | 定向测试后追加全量 `python -m pytest -q` |
 
