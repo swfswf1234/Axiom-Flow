@@ -41,5 +41,9 @@ flowchart LR
 系统不负责训练或托管模型，不把 Excel 当作运行查询库，也不把未发布候选提供给下游学习功能。
 对话、图片问答、练习、学习进度、向量检索和图数据库投影不属于当前交付能力。
 
+前端归属说明：本仓库工作台 `web/` 属于当前 Axiom-Flow 实现；按 QED-Engine
+`docs/adr/0002-frontend-and-port-centralization.md` 规划，前端将统一到 QED-Engine 根仓库
+（8903），本仓库迁移完成后退役 `web/` 并只保留 API + Worker。此规划不影响当前运行拓扑。
+
 内部进程、依赖方向和能力归属见[运行架构](runtime-architecture.md)，事实来源、状态和清理边界
 见[数据生命周期](data-lifecycle.md)。

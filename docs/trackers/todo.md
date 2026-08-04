@@ -1,7 +1,7 @@
 # 待做任务
 
 状态：Current
-最后更新：2026-07-30
+最后更新：2026-08-04
 
 本表是全部未关闭工作的统一导航。Plan 行镜像计划正文状态，计划正文仍是范围、验证和回滚的事实
 源；其他行在具备范围、前置条件、验证与成功标准后建立独立计划，并保留原 ID。
@@ -18,3 +18,8 @@
 | PRD-001 | Candidate | P1 | Candidate | 学习交互闭环 | 已发布知识可稳定检索后，设计对话、图片问答、练习和学习进度。 |
 | JOB-001 | Candidate | P1 | Candidate | 批量导入与任务恢复策略 | 单篇实际样本验证后，明确队列、恢复策略和资源上限。 |
 | RET-001 | Candidate | P2 | Candidate | 向量检索与图数据库投影 | 学习交互的检索需求、索引版本和同步语义经设计验证后立项。 |
+| ALN-001 | Plan | P1 | In Progress | [计划 2026-08：QED-Engine 对齐请求登记与轻量更新](../plans/2026-08-qed-engine-alignment.md) | 计划状态 In Progress；用户确认 QED-Engine ADR 0002 后拆 B 类计划执行迁移。 |
+| ALN-002 | Request | P1 | Open | 端口 8000→8902 迁移（CORS、README、指南） | QED-Engine 发起，见 ADR 0002；用户确认后拆 B 类计划执行。 |
+| ALN-003 | Request | P1 | Open | 数据目录指向根 dataset/、直读 QED_ 变量、load-env.ps1 退役 | QED-Engine 发起；用户确认后拆 B 类计划执行。 |
+| ALN-004 | Request | P1 | Open | web/ 前端迁入 QED-Engine 统一前端（8903），本仓库退役 web/ | QED-Engine 发起，见 ADR 0002；用户确认后拆 A/B 类计划执行。 |
+| ALN-005 | Request | P1 | Open | OCR 多后端适配：qwen-vl-plus → glm-ocr（文档解析专用接口） | QED-Engine 发起（根仓库 REQ-008）；glm-ocr 走专用文档解析接口，需适配 bailian provider 后冻结样本评测；用户确认后拆 B 类计划执行。 |
