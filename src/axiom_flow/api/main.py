@@ -65,7 +65,12 @@ def create_app(
     app.state.container = container
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
+        allow_origins=[
+            "http://127.0.0.1:8902",
+            "http://localhost:8902",
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+        ],
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],

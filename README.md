@@ -2,10 +2,12 @@
 
 [![CI](https://github.com/swfswf1234/Axiom-Flow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/swfswf1234/Axiom-Flow/actions/workflows/ci.yml)
 
-> QED 的技术 PDF 解析与质量审阅组件。
+> 解析文档，整理知识。
 
-Axiom-Flow 负责把数学教材和技术文档转换为可定位、可审阅、可追溯的结构化内容。解析器和
-大模型输出只作为候选结果；页面事实、知识内容和发布版本必须经过质量检查与人工确认。
+Axiom-Flow 是 QED 的本地优先文档解析组件：解析 PDF（教材、习题集、论文、官方文档等）与 HTML
+文档，把原始文档转换为计算机和人类都易于理解、可定位、可追溯的整理知识——保存文字、图片等
+内容，并梳理页面事实与知识链路。当前重点是解析质量、证据追溯和人工发布，不是已完成的检索或
+学习助手。
 
 ## 在 QED 中的位置
 
@@ -22,7 +24,7 @@ flowchart LR
 
 ## 核心能力
 
-- 导入技术 PDF，并以明确的物理页范围提交持久解析任务。
+- 导入 PDF，并以明确的物理页范围提交持久解析任务。
 - 使用 OCR 和 PDF 本地信息生成规范 Markdown、内容块、来源证据和质量报告。
 - 以版本化 `ParseRun`、逐页检查点和 SHA-256 manifest 保存可恢复、可校验的解析产物。
 - 在 Web 工作台中并排审阅原始页图、OCR 文本、Markdown 和结构化结果。
@@ -35,7 +37,7 @@ flowchart LR
 | --- | --- |
 | Backend 与协议 | Python 3.12、FastAPI、Pydantic |
 | 持久化与迁移 | MySQL 8、SQLAlchemy、Alembic |
-| PDF 与 OCR | PyMuPDF、阿里百炼 `qwen-vl-ocr` |
+| PDF 与 OCR | PyMuPDF、阿里百炼 OCR（`qwen-vl-plus`，经 `AXIOM_VISION_MODEL` 配置可调整） |
 | 后台任务 | MySQL 持久任务、租约与独立 Python Worker |
 | 本地产物 | 内容寻址目录、逐页检查点、SHA-256 manifest |
 | 审阅界面 | 原生 HTML、CSS、JavaScript、openpyxl |
@@ -45,8 +47,8 @@ flowchart LR
 
 | 类别 | 内容 |
 | --- | --- |
-| 输入 | 技术 PDF、明确的页范围、解析模型与调用预算 |
-| 核心职责 | PDF 导入、OCR、内容规范化、证据定位、ParseRun 管理、质量审阅和受控知识发布 |
+| 输入 | 技术 PDF（当前）、HTML（规划中）、明确的页范围、解析模型与调用预算 |
+| 核心职责 | 文档解析、OCR、内容规范化、证据定位、ParseRun 管理、质量审阅和受控知识发布 |
 | 输出 | 原始页图、规范 Markdown、结构化页面事实、可校验解析产物和 `KnowledgeRelease` |
 | 不负责 | 数据集下载、下游检索、学习界面，以及未经人工审阅的整书质量背书 |
 
@@ -60,18 +62,18 @@ flowchart LR
 
 ```powershell
 Copy-Item .env.example .env
-python -m pip install -r requirements.txt
+python -m pip install -e ".[dev]"
 python -m alembic upgrade head
 ```
 
 分别在两个终端启动 API/Web 和 Worker：
 
 ```powershell
-python -m uvicorn axiom_flow.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn axiom_flow.main:app --host 127.0.0.1 --port 8902
 python -m axiom_flow.worker
 ```
 
-打开 `http://127.0.0.1:8000`。开发环境和测试库隔离见[开发指南](docs/guides/development.md)，
+打开 `http://127.0.0.1:8902`。开发环境和测试库隔离见[开发指南](docs/guides/development.md)，
 启动检查与受保护清理见[操作与运维指南](docs/guides/operations.md)。
 
 ## 典型流程
@@ -103,6 +105,12 @@ python -m axiom_flow.worker
 2. [文档中心](docs/index.md)：按目录定位架构、设计、计划和历史资料。
 3. [当前运行架构](docs/architecture/runtime-architecture.md)：组件和依赖边界。
 4. [开发指南](docs/guides/development.md)：环境、迁移、测试与关闭门禁。
+
+## 文档
+
+文档按目录导航见[文档中心](docs/index.md)；工程治理规则以 [docs/standards/](docs/standards/index.md)
+为唯一事实源；未关闭任务见[待做任务](docs/trackers/todo.md)，关闭证据见
+[已关闭任务](docs/trackers/completed.md)；Agent 执行协议见 [AGENTS.md](AGENTS.md)。
 
 ## License
 

@@ -2,7 +2,7 @@
 模块职责：验证活跃文档入口、目录边界、计划归档和 Agent 协议保持单一。
 设计关联（DesignRef）：docs/standards/documentation.md
 实现状态：Current
-被测代码：README.md、AGENTS.md、docs、pyproject.toml、requirements.txt
+被测代码：README.md、AGENTS.md、docs、pyproject.toml
 """
 
 import tomllib
@@ -97,7 +97,8 @@ def test_history_retains_only_auditable_evidence():
 def test_root_readme_serves_qed_operators_and_new_developers():
     content = (ROOT / "README.md").read_text(encoding="utf-8")
     for required in (
-        "QED 的技术 PDF 解析与质量审阅组件",
+        "QED 的本地优先文档解析组件",
+        "解析 PDF（教材、习题集、论文、官方文档等）与 HTML",
         "## 核心能力",
         "## 技术栈",
         "## 能力边界",
@@ -155,7 +156,8 @@ def test_dependency_install_entrypoints_have_one_source():
     development_guide = (DOCS / "guides" / "development.md").read_text(encoding="utf-8")
 
     assert "dev" in pyproject["project"]["optional-dependencies"]
-    assert (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()[-1] == "-e ."
+    assert not (ROOT / "requirements.txt").exists()
     assert not (ROOT / "requirements-dev.txt").exists()
     assert 'python -m pip install -e ".[dev]"' in development_guide
+    assert "requirements.txt" not in (ROOT / "README.md").read_text(encoding="utf-8")
     assert "requirements-dev.txt" not in development_guide

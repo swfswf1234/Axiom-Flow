@@ -18,12 +18,12 @@ Copy-Item .env.example .env
 python -m pip install -e ".[dev]"
 ```
 
-`pyproject.toml` 是依赖事实源，`requirements.txt` 只是安装运行依赖的兼容入口。只运行项目而不
-参与开发时可使用 `python -m pip install -r requirements.txt`。全部配置字段及默认示例以
-`.env.example` 为准；API key 和数据库密码不得进入源码、命令参数、日志、工作簿或评测报告。
+`pyproject.toml` 是依赖的唯一事实源，统一使用 `python -m pip install -e ".[dev]"` 安装。
+全部配置字段及默认示例以 `.env.example` 为准；API key 和数据库密码不得进入源码、命令参数、
+日志、工作簿或评测报告。
 
 首次启动前按[操作与运维指南](operations.md#启动与停止)显式升级 schema，并分别运行 API/Web
-与 Worker。浏览器入口为 `http://127.0.0.1:8000`。
+与 Worker。浏览器入口为 `http://127.0.0.1:8902`。
 
 ## 分支协作
 

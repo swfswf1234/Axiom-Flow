@@ -1,2 +1,0 @@
-# v0.3 核心运行依赖由 pyproject.toml 管理。
--e .

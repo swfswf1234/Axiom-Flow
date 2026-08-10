@@ -33,14 +33,14 @@ python -m alembic upgrade head
 分别在两个终端启动 API/Web 和 Worker：
 
 ```powershell
-python -m uvicorn axiom_flow.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn axiom_flow.main:app --host 127.0.0.1 --port 8902
 python -m axiom_flow.worker
 ```
 
 使用健康接口确认 API 和数据库装配成功：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+Invoke-RestMethod http://127.0.0.1:8902/api/v1/health
 ```
 
 应用启动只校验 schema，不自动迁移。API 和 Worker 是独立进程；停止 Worker 不丢失已入队任务，
