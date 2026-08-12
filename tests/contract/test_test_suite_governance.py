@@ -1,8 +1,11 @@
 """
 模块职责：守护五层测试目录、唯一 marker、公共辅助和根 fixture 边界。
 设计关联（DesignRef）：docs/standards/testing.md
+设计关联（DesignRef）：docs/standards/governance-contract.md
 实现状态：Current
 被测代码：tests、pyproject.toml
+守护面：测试工程与门禁
+失效后果：测试分层、目录边界或 pytest 配置漂移时门禁失真
 """
 
 import ast

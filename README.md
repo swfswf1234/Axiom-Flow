@@ -1,7 +1,5 @@
 # Axiom-Flow
 
-[![CI](https://github.com/swfswf1234/Axiom-Flow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/swfswf1234/Axiom-Flow/actions/workflows/ci.yml)
-
 > 解析文档，整理知识。
 
 Axiom-Flow 是 QED 的本地优先文档解析组件：解析 PDF（教材、习题集、论文、官方文档等）与 HTML
@@ -41,7 +39,7 @@ flowchart LR
 | 后台任务 | MySQL 持久任务、租约与独立 Python Worker |
 | 本地产物 | 内容寻址目录、逐页检查点、SHA-256 manifest |
 | 审阅界面 | 原生 HTML、CSS、JavaScript、openpyxl |
-| 工程门禁 | Pytest、Ruff、GitHub Actions |
+| 工程门禁 | Pytest、Ruff |
 
 ## 能力边界
 

@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/task-lifecycle.md
 实现状态：Current
 被测代码：docs/plans
+守护面：计划与任务治理
+失效后果：计划命名/元数据/生命周期或索引导航发生漂移
 """
 
 import re

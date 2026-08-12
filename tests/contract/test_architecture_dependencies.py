@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/architecture/runtime-architecture.md
 实现状态：Current
 被测代码：src/axiom_flow/domain、src/axiom_flow/application、src/axiom_flow/api、src/axiom_flow/worker
+守护面：架构与设计追溯
+失效后果：分层单向依赖被违反时架构边界失效
 """
 
 import ast

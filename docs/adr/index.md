@@ -1,14 +1,14 @@
 # 架构决策索引
 
 状态：Current
-最后更新：2026-07-30
+最后更新：2026-08-12
 
 ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Superseded 位于
 [`../history/adr/`](../history/adr/index.md)；完整规则见
 [ADR 治理规范](../standards/adr-governance.md)；新文件遵守对应 standard，并参考最近一份仍有效的
 同类文档组织内容。
 
-下一个可用编号：0023
+下一个可用编号：0024
 
 | ADR | 标题 | 领域 | 决策阶段 | 状态 | 取代关系 |
 | --- | --- | --- | --- | --- | --- |
@@ -34,3 +34,4 @@ ADR 使用全局四位编号。Proposed/Accepted 位于本目录，Rejected/Supe
 | [`0020`](0020-document-centric-evaluation-workspace.md) | 文档中心评测工作区与冻结主链对比 | 解析与评测 | v0.3 | Accepted | — |
 | [`0021`](0021-layered-deterministic-test-architecture.md) | 分层确定性测试架构 | 工程治理 | v0.3 | Accepted | — |
 | [`0022`](0022-neutral-evaluation-snapshots-and-assessments.md) | 中性评测快照与单运行质量评估 | 解析与评测 | v0.3 | Accepted | — |
+| [`0023`](0023-remove-github-actions-ci.md) | 移除 GitHub Actions CI，本地门禁为唯一门禁 | 工程治理 | v0.3 | Accepted | — |

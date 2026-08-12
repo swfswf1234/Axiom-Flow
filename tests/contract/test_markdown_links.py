@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/documentation.md
 实现状态：Current
 被测代码：README.md、docs、evaluation
+守护面：文档结构与导航
+失效后果：失效 Markdown 链接破坏文档导航与追溯
 """
 
 import re

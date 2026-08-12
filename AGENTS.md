@@ -11,7 +11,8 @@ Axiom-Flow 是 QED 的本地优先文档解析组件：解析 PDF（教材、习
 接到任务后按顺序执行：
 
 1. 检查工作树和当前分支，保留用户已有变更。
-2. 从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/todo.md`、关联计划和关闭证据。
+2. 先读 `docs/architecture/project-status.md` 状态快照，再从 `docs/index.md` 进入对应文档域，
+   阅读 `docs/trackers/todo.md`、关联计划和关闭证据。
 3. 从 `docs/standards/index.md` 选择本任务适用的强制规则；开发命令查
    `docs/guides/development.md`，运行与数据操作查 `docs/guides/operations.md`。
 4. 在 `docs/architecture/code-map.md` 定位受影响模块、DesignRef、实现状态和测试。
@@ -32,8 +33,9 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 - `main` 保存已经确认的稳定基线，`release` 承接后续开发；开始实现前先确认当前位于 `release`。
 - 普通开发提交和推送进入 `release`。只有用户明确要求并完成适用门禁后，才把 `release` 合并回
   `main`；不得隐式创建标签或 GitHub Release。
-- 当前 GitHub Actions 只在直接推送 `main` 或创建 Pull Request 时运行。直接推送 `release` 前必须
-  完成本地关闭门禁，不能把分支已推送等同于远端 CI 已验证。
+- 本仓库无远端 CI（ADR 0023），本地门禁是唯一门禁；直接推送 `release` 或合并回 `main` 前
+  必须完成本地关闭门禁（`pytest tests -q` + `ruff check src tests`），不能把分支已推送等同于
+  已验证。
 
 ## 任务路由
 
@@ -46,8 +48,9 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 | 知识、关系、工作簿、发布 | `src/axiom_flow/application/workbooks.py`、`mysql.py` | `excel-release-workflow.md` | `tests/system/test_document_release_flow.py` |
 | Web 对照与交互 | `web/`、`src/axiom_flow/api/main.py`、`schemas.py` | `web-workbench.md` | `tests/integration/test_api.py`、JavaScript 语法检查 |
 | 解析评测与评分 | `src/axiom_flow/application/evaluations.py`、`infrastructure/evaluation_workspace.py`、`evaluation/` | `evaluation-governance.md`、ADR 0019/0020、实验 ADR | `tests/unit/test_evaluation_*.py`、`tests/integration/test_evaluation_*.py`、系统 fixture 回归 |
-| 测试分层、隔离和冒烟 | `tests/`、`.github/workflows/ci.yml`、`pyproject.toml` | `testing.md`、ADR 0021 | `tests/contract/test_test_suite_governance.py`、`tests/smoke/test_process_startup.py` |
+| 测试分层、隔离和冒烟 | `tests/`、`pyproject.toml` | `testing.md`、ADR 0021 | `tests/contract/test_test_suite_governance.py`、`tests/smoke/test_process_startup.py` |
 | 计划、ADR 与文档目录 | `docs/`、`AGENTS.md` | `task-lifecycle.md`、`documentation.md`、`adr-governance.md` | `tests/contract/test_plan_governance.py`、`tests/contract/test_standard_governance.py`、`tests/contract/test_adr_governance.py` |
+| 治理契约与跨项目协作 | `docs/standards/`、`docs/trackers/todo.md` | `governance-contract.md`、`cross-project-collaboration.md` | `tests/contract/test_test_suite_governance.py`、`tests/contract/test_cross_project_collaboration.py` |
 | DesignRef 与语义同步 | 模块文件头、`code-map.md`、架构/设计 | `code-document-traceability.md` | 映射、架构和设计语义测试 |
 
 表格只提供入口；准确文件映射始终以 `code-map.md` 为准。
@@ -71,8 +74,9 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 - `docs/standards/` 是工程治理规则的唯一事实源，具体采用
   [任务生命周期](docs/standards/task-lifecycle.md)、[文档规范](docs/standards/documentation.md)、
-  [ADR 治理](docs/standards/adr-governance.md)、[代码与文档追溯](docs/standards/code-document-traceability.md)
-  和[测试架构与门禁](docs/standards/testing.md)。
+  [ADR 治理](docs/standards/adr-governance.md)、[代码与文档追溯](docs/standards/code-document-traceability.md)、
+  [测试架构与门禁](docs/standards/testing.md)、[工程治理契约规范](docs/standards/governance-contract.md)
+  和[跨项目协作流程](docs/standards/cross-project-collaboration.md)。
 - 任务先按任务生命周期分类并建立适用计划；需要长期决策时按 ADR 治理新增决定；关闭时按文档
   规范选择归档或删除。普通源码推送属于原任务交付；日常小规模数据与发布操作不建立独立计划，
   由 git 提交与标签留痕，正式发布、受保护环境和大规模数据操作仍要求 D 类计划。

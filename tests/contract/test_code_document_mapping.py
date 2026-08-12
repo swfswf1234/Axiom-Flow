@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/code-document-traceability.md
 实现状态：Current
 被测代码：docs/architecture/code-map.md
+守护面：架构与设计追溯
+失效后果：代码-文档-测试双向映射断裂时无法追溯
 """
 
 import re

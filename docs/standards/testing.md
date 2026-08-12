@@ -1,9 +1,9 @@
 # 测试架构与门禁
 
 状态：Current
-最后更新：2026-07-30
+最后更新：2026-08-12
 治理对象：测试职责、分层、隔离、替身、门禁与覆盖率证据
-依据 ADR：`docs/adr/0021-layered-deterministic-test-architecture.md`
+依据 ADR：`docs/adr/0021-layered-deterministic-test-architecture.md`、`docs/adr/0023-remove-github-actions-ci.md`
 关联测试：`tests/contract/test_test_suite_governance.py`
 
 ## 目的与边界
@@ -43,8 +43,10 @@ fixture 首次请求时延迟导入，模块加载不得导入生产应用或数
 
 ### 门禁与覆盖率
 
-- pull request 与 `main` 都必须执行静态检查、`unit + contract`、`integration + system` 和
-  `smoke`；后一阶段不得掩盖前一阶段失败。
+- 本仓库无远端 CI（ADR 0023），本地门禁是唯一门禁：提交前本地执行 `pytest tests -q` 与
+  `ruff check src tests`，两者必须全绿；文档治理类变更必须运行 `tests/contract/` 全部契约测试。
+- 全量执行按分层顺序（unit + contract → integration + system → smoke），后一阶段不得掩盖
+  前一阶段失败。
 - 共享状态机、API、持久化或跨领域流程变更追加全量测试。正式发布仍按 D 类计划执行完整差异和
   人工复核。
 - 覆盖率报告分别统计 `src/axiom_flow` 与 `evaluation`，作为盲区证据保存；当前不设置全局
@@ -59,5 +61,5 @@ fixture 首次请求时延迟导入，模块加载不得导入生产应用或数
 
 ## 变更与取代
 
-改变五层职责、自动测试与评测边界、数据库隔离、外部网络禁令或 CI 必需阶段时必须先新增 ADR。
+改变五层职责、自动测试与评测边界、数据库隔离、外部网络禁令或门禁必需阶段时必须先新增 ADR。
 目录内普通测试增删、fixture 抽取和命令勘误属于实现同步，不单独建立治理 ADR。

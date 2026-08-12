@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/documentation.md
 实现状态：Current
 被测代码：README.md、AGENTS.md、docs、pyproject.toml
+守护面：文档结构与导航
+失效后果：文档目录边界、index 入口、README/AGENTS 结构或依赖安装单一来源被破坏
 """
 
 import tomllib

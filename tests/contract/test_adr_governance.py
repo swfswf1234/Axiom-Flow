@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/adr-governance.md
 实现状态：Current
 被测代码：docs/adr、docs/history/adr
+守护面：ADR 治理
+失效后果：ADR 编号/元数据/登记/取代关系破坏决策追溯
 """
 
 import re

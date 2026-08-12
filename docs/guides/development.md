@@ -31,9 +31,8 @@ python -m pip install -e ".[dev]"
 提交到该分支；只有用户明确要求且适用门禁通过后，才把 `release` 合并回 `main`。标签、GitHub
 Release、部署和正式数据操作仍按 D 类流程执行，不能由分支名称隐式触发。
 
-当前 GitHub Actions 的 `push` 触发器只包含 `main`，Pull Request 仍会触发 CI。直接推送 `release`
-不会产生远端 CI 结果，因此推送前必须完成本地关闭门禁；需要进入 `main` 时再由用户核对 GitHub
-验证结果。
+本仓库无远端 CI（ADR 0023），本地门禁是唯一门禁：直接推送 `release` 或合并回 `main` 前必须
+完成本地关闭门禁；进入 `main` 不再依赖 GitHub 验证结果。
 
 ## 变更流程
 
@@ -87,10 +86,10 @@ python -m pytest tests/smoke -q
 
 集成与系统测试连接 `AXIOM_MYSQL_TEST_DATABASE`；smoke 默认使用 `axiom_flow_smoke`，也可通过
 `AXIOM_MYSQL_SMOKE_DATABASE` 指定安全库名。fixture 会自动创建、迁移并清空隔离库；名称冲突会
-立即失败。所有自动测试阻止外部网络，模型路径使用假供应商，GitHub CI 不调用百炼。
+立即失败。所有自动测试阻止外部网络，模型路径使用假供应商，不调用百炼。
 
-CI 为快速层和集成/系统层分别生成 `axiom_flow` 与 `evaluation` 覆盖率报告并保存为 artifact。
-当前报告只用于识别盲区，不设置统一 `fail-under`。
+本地可使用 `pytest --cov` 按层生成 `axiom_flow` 与 `evaluation` 覆盖率报告作为盲区证据；当前
+报告只用于识别盲区，不设置统一 `fail-under`。
 
 提交前执行适用于完整差异的关闭门禁：
 

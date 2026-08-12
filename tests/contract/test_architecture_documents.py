@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/code-document-traceability.md
 实现状态：Current
 被测代码：docs/architecture、src/axiom_flow/domain/models.py、src/axiom_flow/api/main.py
+守护面：架构与设计追溯
+失效后果：架构正文/Mermaid/领域状态与代码漂移时偏差未被发现
 """
 
 import ast
@@ -38,16 +40,23 @@ def _api_gets_repository_from_container() -> bool:
     )
 
 
-def test_architecture_directory_has_one_index_and_four_current_documents():
+def test_architecture_directory_has_one_index_and_five_current_documents():
     assert {path.name for path in ARCHITECTURE.glob("*.md")} == {
         "index.md",
         "overview.md",
         "runtime-architecture.md",
         "data-lifecycle.md",
         "code-map.md",
+        "project-status.md",
     }
     index = (ARCHITECTURE / "index.md").read_text(encoding="utf-8")
-    for document in ("overview.md", "runtime-architecture.md", "data-lifecycle.md", "code-map.md"):
+    for document in (
+        "overview.md",
+        "runtime-architecture.md",
+        "data-lifecycle.md",
+        "code-map.md",
+        "project-status.md",
+    ):
         assert f"]({document})" in index
     assert "domain-boundaries.md" not in index
 

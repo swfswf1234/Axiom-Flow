@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/task-lifecycle.md
 实现状态：Current
 被测代码：docs/trackers、docs/plans
+守护面：计划与任务治理
+失效后果：任务 ID 复用、计划镜像断裂或关闭证据缺失
 """
 
 import re

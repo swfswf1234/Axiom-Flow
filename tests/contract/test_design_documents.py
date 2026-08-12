@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/code-document-traceability.md
 实现状态：Current
 被测代码：docs/design、API schema、任务、工作簿、Web 与评测常量
+守护面：架构与设计追溯
+失效后果：设计正文/Mermaid/契约常量与代码漂移时偏差未被发现
 """
 
 import ast

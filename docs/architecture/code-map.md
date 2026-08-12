@@ -57,6 +57,7 @@
 | `tests/contract/test_architecture_dependencies.py` | Python 包依赖方向测试 | Current | `docs/architecture/runtime-architecture.md` | — | 禁止领域和应用层反向依赖。 |
 | `tests/contract/test_architecture_documents.py` | 架构文档语义同步测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护 Mermaid 视图、领域状态和已知架构偏差。 |
 | `tests/contract/test_code_document_mapping.py` | 映射一致性测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护本表和文件头。 |
+| `tests/contract/test_cross_project_collaboration.py` | 跨项目协作测试 | Current | `docs/standards/cross-project-collaboration.md` | — | 守护 ALN 承接登记与设计文档模板字段。 |
 | `tests/contract/test_design_documents.py` | 设计契约语义同步测试 | Current | `docs/standards/code-document-traceability.md` | — | 守护流程图、接口字段和关键常量。 |
 | `tests/contract/test_document_structure.py` | 文档结构测试 | Current | `docs/standards/documentation.md` | — | 守护入口、目录边界、计划归档和 Agent 协议。 |
 | `tests/contract/test_markdown_links.py` | Markdown 链接测试 | Current | `docs/standards/documentation.md` | — | 守护仓库本地相对链接。 |

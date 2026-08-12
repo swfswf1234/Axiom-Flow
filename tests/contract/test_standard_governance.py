@@ -3,6 +3,8 @@
 设计关联（DesignRef）：docs/standards/documentation.md
 实现状态：Current
 被测代码：docs/standards、AGENTS.md
+守护面：标准治理
+失效后果：标准目录边界、统一元数据/章节、索引镜像或 AGENTS 路由发生漂移
 """
 
 import re
@@ -17,6 +19,8 @@ STANDARD_FILES = {
     "adr-governance.md",
     "code-document-traceability.md",
     "testing.md",
+    "governance-contract.md",
+    "cross-project-collaboration.md",
 }
 REQUIRED_FIELDS = ("状态", "最后更新", "治理对象", "依据 ADR", "关联测试")
 REQUIRED_SECTIONS = ("## 目的与边界", "## 强制规则", "## 执行与门禁", "## 变更与取代")
