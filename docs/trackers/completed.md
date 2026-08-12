@@ -1,7 +1,7 @@
 # 已关闭任务
 
 状态：Current
-最后更新：2026-07-30
+最后更新：2026-08-12
 
 本表只保存关闭导航。详细决定、执行记录和历史事实以链接的 ADR、报告、History 或 Git 为准；
 任务 ID 进入本表后不得复用。
@@ -27,3 +27,5 @@
 | 2026-07-28 | BASE-003 | v0.3 架构重建 | Completed | Achieved | [执行记录](../history/plans/2026-07/2026-07-v03-architecture-rebuild.md)，提交 `be7ec34`。 |
 | 2026-07-27 | BASE-002 | v0.2 首个本地闭环 | Completed | Achieved | [执行记录](../history/plans/2026-07/2026-07-v02-first-loop.md)，提交 `4961cfa`。 |
 | 2026-05-15 | BASE-001 | v0.1 MinerU 基线 | Superseded | Achieved | [历史基线](../history/baselines/v01-mineru.md)，提交 `6cc4129`。 |
+| 2026-08-12 | ALN-002 | 端口 8000→8902 迁移（CORS、README、指南） | Completed | Achieved | 提交 `29b6524`（2026-08-11）：API/Worker 端口 8000→8902，README、开发/运维指南与 CORS 白名单同步（保留 8000 兼容，QED-Engine ADR 0002），契约测试同步；QED-Engine 侧 REQ-001 同步关闭。 |
+| 2026-08-12 | ALN-005 | OCR 多后端适配：qwen-vl-plus → glm-ocr（文档解析专用接口） | Cancelled | Rejected | QED-Engine 根仓库 REQ-008 取消（2026-08-12 用户裁决：glm 实际不通、无可行性）；本任务同步取消，不拆计划执行。 |

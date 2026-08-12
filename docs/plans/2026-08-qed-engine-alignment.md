@@ -29,7 +29,10 @@
 ## 前置条件
 
 - QED-Engine 根仓库已完成 ADR 0002 与对齐请求登记（2026-08-04）。
-- 用户确认 QED-Engine 侧决策（端口 8902、前端统一、数据目录与环境变量方案）后进入迁移执行。
+- ✅ 用户已确认 QED-Engine 侧决策（端口 8902、前端统一、数据目录与环境变量方案、统一 qed 库，
+  2026-08-04）；B 类执行计划
+  [2026-08-port-and-dataset-migration](../plans/2026-08-port-and-dataset-migration.md)
+  （ALN-007）已建立，承接 ALN-002/003。
 
 ## 工作项
 
@@ -37,9 +40,10 @@
 2. ✅ 本计划登记（ALN-001），与 todo Plan 行镜像。
 3. ✅ `overview.md` 系统边界补充前端归属规划说明。
 4. ✅ `runtime-architecture.md` 运行职责补充前端迁移方向说明。
-5. 用户确认后（拆 B 类计划）：CORS/README/指南端口 8902 调整。
-6. 用户确认后（拆 B 类计划）：数据目录与 QED_ 变量直读改造。
-7. 用户确认后（拆 A/B 类计划）：web/ 迁入根仓库并退役本仓库前端。
+5. ✅ 用户确认（2026-08-04）后由 B 类计划 [2026-08-port-and-dataset-migration](../plans/2026-08-port-and-dataset-migration.md) 执行：CORS/README/指南端口 8902 调整（ALN-002）。
+6. ✅ 用户确认后由同一 B 类计划执行：数据目录、`QED_*` 直读与统一 qed 库改造（ALN-003）。
+7. 用户确认后（拆 A/B 类计划）：web/ 迁入根仓库并退役本仓库前端（ALN-004，后置）。
+8. ✅ 新增登记 ALN-006（raw 批量导入解析接口，Phase 2 前置）与 ALN-007（执行计划镜像）。
 
 ## 验证与验收
 
