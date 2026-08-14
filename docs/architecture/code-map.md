@@ -15,7 +15,7 @@
 | `src/axiom_flow/orchestrator/` | 解析任务编排、质量校验、兜底触发 | Pending | `docs/design/pdf-parsing-and-rendering.md` | 集成测试 | 待 V2-004 实现 |
 | `src/axiom_flow/ingest/` | PDF 导入、页图渲染、book.json | Pending | `docs/design/pdf-parsing-and-rendering.md` | 单元测试 | 待 V2-003 实现 |
 | `src/axiom_flow/fallback/` | qwen-vl-plus 兜底客户端 | Pending | `docs/design/pdf-parsing-and-rendering.md` | 单元测试 | 待 V2-006 实现 |
-| `src/axiom_flow/schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job） | Pending | `docs/design/pdf-parsing-and-rendering.md` | 单元测试 | 待 V2-002 实现 |
+| `src/axiom_flow/schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job） | **Current** | `docs/design/pdf-parsing-and-rendering.md` | `tests/unit/test_schemas.py` | V2-002 完成 |
 
 ## 非受管配置
 

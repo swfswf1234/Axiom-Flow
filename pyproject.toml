@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "axiom-flow"
-version = "0.3.0"
-description = "本地优先的技术文档质量与知识审阅工作台"
+version = "0.4.0"
+description = "QED-Engine 后端解析组件（v2 探索纪元）：PDF 完整解析为统一格式，支撑前端对照展示"
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.13.0",
