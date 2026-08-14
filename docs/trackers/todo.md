@@ -12,7 +12,7 @@
 | ID | 类型 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
 | DOCS-001 | Plan | P0 | Accepted | [计划 2026-08：v2 docs 重构轮](../plans/2026-08-v2-docs-rebuild.md) | 计划正文 Accepted；P1-P9 已完成，契约测试 42 全绿 + ruff 通过，用户确认后关闭归档 |
-| V2-001 | Infra | P0 | Open | WSL 容器基建：Docker Compose（vLLM + mineru-api）+ 启停脚本（infra-up/down/status/reset） | `scripts/compose.yaml` 与 4 个 ps1 就位；`infra-status.ps1` 显示容器健康且 GPU 穿透生效 |
+| V2-001 | Infra | P0 | Completed | WSL 容器基建：Docker Compose（mineru-api 单体，内嵌 vLLM）+ 启停脚本（infra-up/down/status/reset） | `scripts/compose.yaml` 与 4 个 ps1 就位；容器 healthy，Windows→8002 连通，sample.pdf 端到端解析成功（hybrid-engine，3.4.4）；router 模式 502 不可用已记录，改单体方案 |
 | V2-002 | Feature | P0 | Open | 新包结构与 schemas：`src/axiom_flow/{api,orchestrator,ingest,fallback}/` + `schemas.py`（blocks/page/book/job Pydantic 模型） | schemas 单元测试通过；code-map 同步 |
 | V2-003 | Feature | P0 | Open | ingest：PDF 导入、页图渲染（150 DPI+）、book.json（SHA-256） | 单元测试通过；产物目录结构符合设计 |
 | V2-004 | Feature | P0 | Open | orchestrator：任务编排 + state.sqlite（jobs/pages）+ 质量信号（空块率/公式置信度/表格成功数） | 单元 + 集成（mock MinerU）测试通过 |

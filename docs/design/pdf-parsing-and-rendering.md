@@ -19,12 +19,12 @@
 | --- | --- |
 | 重构策略 | 推倒重来：旧代码与 115+ 测试不沿用，git 历史与 docs/history 保留作经验参考 |
 | 第一版范围 | 解析 + 渲染数据供给；Milvus/LangChain/知识图谱/数学解析器列为后续探索项 |
-| 解析引擎 | MinerU vlm/hybrid 后端（本地 vLLM + MinerU2.5 VLM，OmniDocBench 95.39） |
+| 解析引擎 | MinerU vlm/hybrid 后端（mineru-api 单体：内嵌 vLLM + MinerU2.5 VLM，OmniDocBench 95.39） |
 | 兜底通道 | MinerU 质量不达标时按页调用百炼 qwen-vl-plus，标记 source 区分 |
 | 展示形态 | 对照模式：原页高清图 + 解析重渲染，由 QED-Engine 前端实现 |
 | 首批书目 | 2 本代表样本（Rudin 英文 + 陈纪修中文）跑通验收后批量处理其余 10 本 |
 | 持久化 | 文件系统 + 轻量 SQLite（`data/books/<book_id>/`），Milvus 后续接入 |
-| 部署 | 分层混合：WSL Docker Compose 容器化（mineru-api + vLLM，后续 Milvus），Windows 本地跑编排层与 API |
+| 部署 | 分层混合：WSL Docker Compose 容器化（mineru-api 单体，后续 Milvus），Windows 本地跑编排层与 API |
 | 前端 | QED-Engine 负责；本仓库只保证 API 契约与产物格式稳定 |
 
 ## 总体架构
@@ -36,19 +36,17 @@ flowchart TB
     end
     subgraph WIN["Windows 本地"]
         API["FastAPI 后端<br/>解析编排 + 对外 API v1"]
-        FALLBACK["百炼 qwen-vl-plus 兑底通道"]
+        FALLBACK["百炼 qwen-vl-plus 兜底通道"]
         DATA["data/books/&lt;书名&gt;/<br/>页图 + markdown + blocks + sqlite"]
     end
     subgraph WSL["WSL Ubuntu 24.04 + Docker Compose"]
-        MA["mineru-api 服务<br/>(MinerU 编排/任务)"]
-        V["vLLM 推理服务<br/>(MinerU2.5 VLM, GPU 穿透)"]
+        MA["mineru-api 服务<br/>(内嵌 vLLM, hybrid-engine)"]
         MV["Milvus（后续接入，占位）"]
     end
 
     UI -->|"REST /api/v1"| API
     API -->|"PDF 上传 / 结果返回"| MA
-    MA -->|"OpenAI 兼容推理"| V
-    API -->|"质量不达标兑底"| FALLBACK
+    API -->|"质量不达标兜底"| FALLBACK
     API -->|"产物落盘"| DATA
 ```
 
@@ -128,13 +126,15 @@ LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入
 
 ### MinerU 接入（WSL / Docker Compose）
 
-- `mineru-api`（官方镜像，`POST /file_parse` 同步 + `POST /tasks` 异步）；vLLM 服务为 OpenAI
-  兼容端点，MinerU 以 `*-http-client` 后端指向它
+- `mineru-api`（官方镜像，内嵌 vLLM 推理引擎；`POST /file_parse` 同步返回解析结果，
+  多文件字段名 `files`；另有 `POST /tasks` 异步）；实测版本 3.4.4，`backend=hybrid-engine`
 - 数据流：Windows 编排层经 HTTP 上传 PDF → WSL 内解析 → 结果经 HTTP 返回 → 编排层落盘
   `data/books/<book_id>/`
-- 模型：MinerU2.5 VLM，配置 `hybrid-auto-engine`
+- 模型：MinerU2.5 VLM，模型固化在镜像内（`MINERU_MODEL_SOURCE=local`，约 4.6GB 缓存）；
+  容器不挂载 Windows 盘，文件交互经 HTTP 上传
 - 第一版固定：单 PDF 顺序页解析（`pipeline` 流式落盘）；GPU 穿透 `--gpus all`
-- 镜像与模型首启下载在 WSL 侧一次性完成，模型缓存固化在 WSL 卷（重启不重复下载）
+- 部署实测：router 模式（`mineru-router`，独立 vLLM worker）在本环境 worker 502 循环重启
+  不可用，采用单体 `mineru-api`；镜像与模型下载在 WSL 侧一次性完成（构建时拉取）
 
 ### 兜底通道（qwen-vl-plus）
 
@@ -148,11 +148,12 @@ LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入
 
 ```
 scripts/
-├── infra-up.ps1      # wsl docker compose up -d（vLLM + mineru-api）
-├── infra-down.ps1    # 优雅停止（down 保留卷，模型缓存不丢）
-├── infra-status.ps1  # 容器健康检查 + GPU 可见性
-├── infra-reset.ps1   # 显式清卷
-└── compose.yaml      # 服务定义（vLLM 端口 8000、mineru-api 端口 8002、GPU 穿透、卷挂载）
+├── infra-up.ps1      # wsl docker compose up -d（mineru-api）+ 等待健康
+├── infra-down.ps1    # 优雅停止（down，容器重建不重新下载模型——模型在镜像内）
+├── infra-status.ps1  # 容器健康检查 + GPU 可见性 + 端点探测
+├── infra-reset.ps1   # 删除容器（模型在镜像内；重建镜像才重新下载）
+├── smoke-api.sh      # 冒烟链路：health + 真实 PDF 端到端解析（docker cp 进容器执行）
+└── compose.yaml      # 服务定义（mineru-api 端口 8002、GPU 穿透、健康检查）
 ```
 
 ### 明确不做（第一版）
@@ -184,7 +185,7 @@ scripts/
    （人工抽查），块类型标注无明显错乱
 3. API 契约：`/api/v1` 全部端点按草案可用，返回结构与 schemas 一致
 4. 兜底通道：构造低质量页（如手写笔记扫描页），验证 qwen-vl-plus 兜底触发与 source 标记
-5. 启停脚本：`infra-up/down/status` 幂等可用，down 后模型缓存保留、up 后快速恢复
+5. 启停脚本：`infra-up/down/status` 幂等可用，down 后容器重建恢复快（模型在镜像内不重下）
 6. 失败恢复：kill 编排进程后重启，未完成页续跑成功
 
 ### 测试策略（探索项目，分层但轻量）

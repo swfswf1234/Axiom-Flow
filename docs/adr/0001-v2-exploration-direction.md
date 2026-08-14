@@ -23,8 +23,8 @@ MinerU vlm/hybrid 后端。
    API 契约与产物格式稳定。
 3. **技术路线**：MinerU（vlm/hybrid 后端，本地 vLLM 推理）为主解析引擎，质量不达标时按页
    调用百炼 qwen-vl-plus 兜底；产物为文件系统 + 轻量 SQLite，Milvus 后续接入。
-4. **部署**：分层混合——WSL Docker Compose 容器化推理服务（mineru-api + vLLM），Windows 本地
-   运行编排层与 API。
+4. **部署**：分层混合——WSL Docker Compose 容器化推理服务（mineru-api 单体，内嵌 vLLM），
+   Windows 本地运行编排层与 API。
 5. **第一版范围**：解析 + 渲染数据供给；Milvus 检索、知识图谱、数学解析器列为后续探索项，
    仅预留字段。
 
