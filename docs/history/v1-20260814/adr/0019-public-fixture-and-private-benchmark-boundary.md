@@ -1,4 +1,4 @@
-# ADR 0019：公开回归样本与私有模型评测分离
+﻿# ADR 0019：公开回归样本与私有模型评测分离
 
 状态：Accepted
 日期：2026-07-29
@@ -38,7 +38,7 @@ CI 可以在无模型密钥和无版权教材的环境中验证完整解析事�
 ## 关联
 
 - 设计：[`evaluation-governance.md`](../design/evaluation-governance.md)
-- 执行记录：[`QA-001`](../history/plans/2026-07/2026-07-evaluation-regression-baseline.md)、
-  [`DATA-001`](../history/plans/2026-07/2026-07-local-data-reset.md)
+- 执行记录：[`QA-001`](../../plans/2026-07/2026-07-evaluation-regression-baseline.md)、
+  [`DATA-001`](../../plans/2026-07/2026-07-local-data-reset.md)
 - 既有实验决定：[ADR 0009](0009-reject-current-rudin-parser-route.md)、
   [ADR 0010](0010-qwen-ocr-only-rudin-trial.md)

@@ -3,7 +3,9 @@
 设计状态：Accepted
 实现状态：Pending
 最后更新：2026-08-10
-关联测试：`tests/contract/` 既有守护测试（对齐后按需扩展）
+关联代码：无（治理文档，不映射具体模块）
+关联测试：`tests/contract/test_standard_governance.py`、`tests/contract/test_test_suite_governance.py`
+关联 ADR：`docs/adr/0015-standards-as-governance-source.md`
 需求方：QED-Engine（根仓库 REQ-022，范本依据根仓库 `docs/standards/governance-contract.md`）
 执行方：Axiom-Flow
 接口面：治理契约测试的结构与门禁（契约头六字段、守护面清单、编写约定），不涉及解析接口与数据布局
@@ -20,6 +22,16 @@
 本仓库 `tests/contract/`（如 test_plan_governance.py、test_standard_governance.py、
 test_adr_governance.py、test_architecture_documents.py、test_design_documents.py、
 test_code_document_mapping.py）已按守护面分布，但契约头六字段与守护面归属未按范本统一声明。
+
+## 对齐流程
+
+```mermaid
+flowchart LR
+    A[根仓库范本 governance-contract.md] --> B[契约头六字段补齐]
+    B --> C[守护面清单按本仓库裁剪]
+    C --> D[全量门禁验证]
+    D --> E[回执根仓库 REQ-022]
+```
 
 ## 变更内容
 

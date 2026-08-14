@@ -1,11 +1,11 @@
-# ADR 0004：v0.2 HTTP API 与静态工作台边界
+﻿# ADR 0004：v0.2 HTTP API 与静态工作台边界
 
 状态：Superseded
 日期：2026-07-27
 领域：API 与任务
 决策阶段：v0.2
 取代：—
-被取代：[ADR 0006](../../adr/0006-persistent-jobs-and-api-v1.md)
+被取代：[ADR 0006](../v1-20260814/adr/0006-persistent-jobs-and-api-v1.md)
 
 ## 决定
 

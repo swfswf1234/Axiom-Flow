@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TRACKERS = ROOT / "docs" / "trackers"
 PLANS = ROOT / "docs" / "plans"
-TASK_ID = re.compile(r"[A-Z][A-Z0-9]*-\d{3}")
+TASK_ID = re.compile(r"[A-Z][A-Z0-9]*-\d{1,3}")
 PLAN_LINK = re.compile(r"^\[(?P<title>[^]]+)]\(\.\./plans/(?P<path>[^)]+\.md)\)$")
 ACTIVE_STATUSES = {"Accepted", "In Progress", "Blocked"}
 TERMINAL_STATUSES = {"Completed", "Cancelled", "Superseded"}

@@ -1,10 +1,12 @@
 # Axiom-Flow 解析评估
 
-评估按文档组织版本化定义、中性 ParseRun 快照、单运行质量和版本回归。当前契约见
-[解析评估设计](../docs/design/evaluation-governance.md)，长期决定见
-[ADR 0019](../docs/adr/0019-public-fixture-and-private-benchmark-boundary.md)、
-[ADR 0020](../docs/adr/0020-document-centric-evaluation-workspace.md)和
-[ADR 0022](../docs/adr/0022-neutral-evaluation-snapshots-and-assessments.md)。
+> 状态：Historical（v1 时代遗留，v2 推倒重来后评估体系待重建，本目录暂保留原始内容）
+
+评估按文档组织版本化定义、中性 ParseRun 快照、单运行质量和版本回归。v1 契约见
+[解析评估设计](../docs/history/v1-20260814/design/evaluation-governance.md)，长期决定见
+[ADR 0019](../docs/history/v1-20260814/adr/0019-public-fixture-and-private-benchmark-boundary.md)、
+[ADR 0020](../docs/history/v1-20260814/adr/0020-document-centric-evaluation-workspace.md)和
+[ADR 0022](../docs/history/v1-20260814/adr/0022-neutral-evaluation-snapshots-and-assessments.md)。
 
 ## 文档案例
 

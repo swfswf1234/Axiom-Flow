@@ -1,15 +1,13 @@
 # 设计索引
 
 状态：Current
-最后更新：2026-07-29
+最后更新：2026-08-14
 
-本索引只负责从设计定位当前实现与测试；反向定位以
-[code-map](../architecture/code-map.md) 为准。
+本目录保存当前流程、接口、数据模型与验收契约（v2 纪元）。v1 设计已归档
+（`docs/history/v1-20260814/design/`）。元数据规则见 [文档规范](../standards/documentation.md)。
 
-| 设计 | 当前关联代码 | 当前关联测试 |
-| --- | --- | --- |
-| [解析、规范内容与页级审阅](document-pipeline.md) | PDF pipeline、百炼和产物适配器 | 文档工作流、供应商和产物测试 |
-| [知识审阅、工作簿与发布](excel-release-workflow.md) | `src/axiom_flow/application/workbooks.py` | 主链发布测试 |
-| [持久化后台任务](background-jobs.md) | 任务应用服务与 Worker | 任务、租约和恢复测试 |
-| [Web 与 API v1 工作台](web-workbench.md) | API 入口与 `web/` | API 与工作台集成测试 |
-| [解析评测治理](evaluation-governance.md) | `evaluation/` 执行与评分模块 | 评测专项测试 |
+## 当前设计
+
+| 文档 | 设计状态 | 实现状态 | 内容 |
+| --- | --- | --- | --- |
+| [PDF 解析与渲染（v2 探索基线）](pdf-parsing-and-rendering.md) | Accepted | Pending | MinerU 解析、统一格式、兜底通道、API 契约、产物模型 |

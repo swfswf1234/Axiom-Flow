@@ -55,7 +55,7 @@
 | W0 | 根层：README 重新定位（解析知识，参照 QED-Engine 风格）、requirements.txt 退役、AGENTS 目标同步、docs/index 导航对齐、本计划与 DOCS-001 登记 | ✅ 已完成（2026-08-10：契约守护先行转绿，contract 50 passed；全量门禁无回归） |
 | W1 | standards/：新增 governance-contract.md（守护面按本仓库契约测试清单裁剪）与 cross-project-collaboration.md（承接侧流程）；task-lifecycle 增任务层级节、D 类规模分级、C 类措辞；adr-governance 增登记时机/章节/审查留痕节（领域保留 5 值）；documentation 增 AGENTS 行与子项目独立体系段；index 扩 7 行表；守护测试先行 | ✅ 已完成（2026-08-10：契约头六字段补齐 12 文件、新增 test_cross_project_collaboration.py、code-map 登记；contract 52 passed，全量 113 passed 无回归，ruff clean） |
 | W2 | architecture/：新增 project-status.md（当前主线、各域状态、维护规则、进场先读）；index 改状态列式；code-map 复核 | ✅ 已完成（2026-08-12：project-status.md 新增并纳入架构守护集合、index 四列表化、AGENTS 进场入口更新、code-map 复核无遗留；contract 52 passed，全量 113 passed 无回归） |
-| W3 | design/：index 改状态列式 + 补登 database-schema-ownership、governance-contract-alignment | 待开始 |
+| W3 | design/：index 改状态列式 + 补登 database-schema-ownership、governance-contract-alignment | ✅ 已完成（2026-08-12：index 四列表化并登记 7 份设计文档；两份新文档补齐元数据（关联代码/关联 ADR/关联测试）与 Mermaid 视图、纳入设计守护集合；两个历史既有红修复，contract 54 passed 全绿，全量 115 passed 无回归） |
 | W4 | guides/：index 表格化（文档/状态/内容）；development.md 元数据核对；operations.md 保持 | 待开始 |
 | W5 | trackers/：todo 加类别列与规则节、存量任务标类别；index 表格化；completed/roadmap 保持现状 | 待开始 |
 | W6 | plans/：index 增活跃计划清单（遵守导航守护，不出现计划文件名） | 待开始 |

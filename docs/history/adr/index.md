@@ -1,14 +1,14 @@
-# 历史架构决策索引
+﻿# 历史架构决策索引
 
 状态：Historical
 最后更新：2026-07-29
 
 本目录保存 Rejected 或 Superseded ADR。编号和正文继续参与全局审计，完整登记、下一个编号和
-当前决定统一见[架构决策索引](../../adr/index.md)。
+当前决定统一见[架构决策索引](../v1-20260814/adr/index.md)。
 
 | ADR | 标题 | 状态 | 当前决定 |
 | --- | --- | --- | --- |
-| [0001](0001-local-first-and-storage.md) | 本地优先与运行数据存储 | Superseded | [0005](../../adr/0005-mysql-runtime-storage.md) |
-| [0002](0002-parser-routing-and-provider-boundary.md) | 分层解析路由与供应商适配边界 | Superseded | [0010](../../adr/0010-qwen-ocr-only-rudin-trial.md) |
-| [0004](0004-v02-http-api-boundary.md) | v0.2 HTTP API 与静态工作台边界 | Superseded | [0006](../../adr/0006-persistent-jobs-and-api-v1.md) |
-| [0012](0012-backend-package-boundaries.md) | Backend 包边界一次性收口 | Superseded | [0018](../../adr/0018-src-package-and-application-owned-workflows.md) |
+| [0001](0001-local-first-and-storage.md) | 本地优先与运行数据存储 | Superseded | [0005](../v1-20260814/adr/0005-mysql-runtime-storage.md) |
+| [0002](0002-parser-routing-and-provider-boundary.md) | 分层解析路由与供应商适配边界 | Superseded | [0010](../v1-20260814/adr/0010-qwen-ocr-only-rudin-trial.md) |
+| [0004](0004-v02-http-api-boundary.md) | v0.2 HTTP API 与静态工作台边界 | Superseded | [0006](../v1-20260814/adr/0006-persistent-jobs-and-api-v1.md) |
+| [0012](0012-backend-package-boundaries.md) | Backend 包边界一次性收口 | Superseded | [0018](../v1-20260814/adr/0018-src-package-and-application-owned-workflows.md) |

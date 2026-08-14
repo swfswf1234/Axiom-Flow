@@ -1,4 +1,4 @@
-# ADR 0013：选择性历史保留与 Git 锚点
+﻿# ADR 0013：选择性历史保留与 Git 锚点
 
 状态：Accepted
 日期：2026-07-29
@@ -37,4 +37,4 @@ History 规模由审计价值而不是任务数量决定，旧命令不再出现
 ## 关联
 
 关联[文档规范](../standards/documentation.md)、[任务生命周期](../standards/task-lifecycle.md)和
-[History 索引](../history/index.md)。
+[History 索引](../../index.md)。

@@ -1,11 +1,11 @@
-# ADR 0001：本地优先与运行数据存储
+﻿# ADR 0001：本地优先与运行数据存储
 
 状态：Superseded  
 日期：2026-07-27
 领域：数据与持久化
 决策阶段：v0.2
 取代：—
-被取代：[ADR 0005](../../adr/0005-mysql-runtime-storage.md)
+被取代：[ADR 0005](../v1-20260814/adr/0005-mysql-runtime-storage.md)
 
 ## 决定
 

@@ -23,7 +23,7 @@ DOCUMENT_DIRECTORIES = (
     "history",
 )
 ACTIVE_GUIDES = {"index.md", "development.md", "operations.md"}
-HISTORY_DIRECTORIES = {"adr", "baselines", "plans"}
+HISTORY_DIRECTORIES = {"adr", "baselines", "plans", "v1-20260814"}
 RETAINED_2026_07_PLANS = {
     "2026-07-v02-first-loop.md",
     "2026-07-v03-architecture-rebuild.md",
@@ -71,9 +71,9 @@ def test_guides_are_two_human_handbooks_and_an_index():
 
     operations = (DOCS / "guides" / "operations.md").read_text(encoding="utf-8")
     todo = (DOCS / "trackers" / "todo.md").read_text(encoding="utf-8")
-    assert "OPS-001：生产运维基线未实现" in operations
-    assert "OPS-001" in todo and "生产运维基线未实现" in todo
-    assert "不得直接暴露到公网" in operations
+    assert "infra-up.ps1" in operations
+    assert "V2-001" in todo and "WSL 容器基建" in todo
+    assert "WSL" in operations
 
 
 def test_history_retains_only_auditable_evidence():
@@ -89,6 +89,9 @@ def test_history_retains_only_auditable_evidence():
     assert "Git 锚点：`6cc4129`" in baseline
     assert "git show 6cc4129:docs/architecture.md" in baseline
 
+    snapshot = {path.name for path in (history / "v1-20260814").iterdir() if path.is_dir()}
+    assert snapshot == {"adr", "design", "architecture", "standards", "plans", "guides", "trackers"}
+
     month = history / "plans" / "2026-07"
     retained = {path.name for path in month.glob("*.md")}
     assert retained == RETAINED_2026_07_PLANS
@@ -99,8 +102,8 @@ def test_history_retains_only_auditable_evidence():
 def test_root_readme_serves_qed_operators_and_new_developers():
     content = (ROOT / "README.md").read_text(encoding="utf-8")
     for required in (
-        "QED 的本地优先文档解析组件",
-        "解析 PDF（教材、习题集、论文、官方文档等）与 HTML",
+        "后端解析组件",
+        "PDF（教材、习题集等数学文档）",
         "## 核心能力",
         "## 技术栈",
         "## 能力边界",
@@ -160,6 +163,6 @@ def test_dependency_install_entrypoints_have_one_source():
     assert "dev" in pyproject["project"]["optional-dependencies"]
     assert not (ROOT / "requirements.txt").exists()
     assert not (ROOT / "requirements-dev.txt").exists()
-    assert 'python -m pip install -e ".[dev]"' in development_guide
+    assert 'pip install -e ".[dev]"' in development_guide
     assert "requirements.txt" not in (ROOT / "README.md").read_text(encoding="utf-8")
     assert "requirements-dev.txt" not in development_guide

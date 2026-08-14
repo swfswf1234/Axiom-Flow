@@ -1,49 +1,50 @@
-# 系统总览
+# 系统概览（v2）
 
 设计状态：Accepted
-实现状态：Implemented
-最后更新：2026-07-29
-关联代码：当前受管实现见 `docs/architecture/code-map.md`
-关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_code_document_mapping.py`
-关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0006-persistent-jobs-and-api-v1.md`、`docs/adr/0010-qwen-ocr-only-rudin-trial.md`
+实现状态：Pending
+最后更新：2026-08-14
+关联代码：无（新包结构实现中，见 code-map）
+关联测试：无（新测试体系建立中）
+关联 ADR：`docs/adr/0001-v2-exploration-direction.md`
 
-## 定位与用户
+## 定位
 
-Axiom-Flow 是 QED 的本地优先技术 PDF 解析与质量审阅组件。当前用户是需要检查数学教材、
-论文和习题集解析质量的本地操作者。系统接收技术 PDF 和人工审阅命令，输出可追溯解析产物、
-Excel 审阅草稿和显式发布的知识版本。
+Axiom-Flow 是 QED-Engine 的**后端解析组件**：把 PDF 教材完整解析为统一格式（Markdown/LaTeX/
+结构化块），支撑 QED-Engine 前端做高还原对照展示。前端由 QED-Engine 负责，本仓库只保证
+API 契约与产物格式稳定。
+
+## 运行拓扑
 
 ```mermaid
-flowchart LR
-    U[用户 / 审阅者]
-    PDF[技术 PDF]
-    B[阿里百炼]
-    XLSX[Excel 审阅草稿]
-    RELEASE[已发布知识]
-    subgraph AF[Axiom-Flow]
-        WORKBENCH[解析与质量审阅工作台]
+flowchart TB
+    subgraph QED["QED-Engine（前端/展示）"]
+        UI["前端对照展示"]
+    end
+    subgraph WIN["Windows 本地"]
+        API["FastAPI 后端<br/>解析编排 + 对外 API v1"]
+        FALLBACK["百炼 qwen-vl-plus 兑底通道"]
+        DATA["data/books/&lt;书名&gt;/<br/>页图 + markdown + blocks + sqlite"]
+    end
+    subgraph WSL["WSL Ubuntu 24.04 + Docker Compose"]
+        MA["mineru-api 服务<br/>(MinerU 编排/任务)"]
+        V["vLLM 推理服务<br/>(MinerU2.5 VLM, GPU 穿透)"]
+        MV["Milvus（后续接入，占位）"]
     end
 
-    U -->|导入、审阅、发布| WORKBENCH
-    PDF -->|原始输入| WORKBENCH
-    WORKBENCH -->|OCR 与知识候选请求| B
-    B -->|模型响应| WORKBENCH
-    WORKBENCH <-->|显式导出与导入| XLSX
-    WORKBENCH -->|版本化发布| RELEASE
-    RELEASE -->|浏览与复核| U
+    UI -->|"REST /api/v1"| API
+    API -->|"PDF 上传 / 结果返回"| MA
+    MA -->|"OpenAI 兼容推理"| V
+    API -->|"质量不达标兑底"| FALLBACK
+    API -->|"产物落盘"| DATA
 ```
 
-## 系统边界
+## 边界原则
 
-系统负责 PDF 导入、页面解析、来源证据、质量审阅、知识候选、工作簿校验和知识发布。模型原始
-响应不是领域事实；只有经过规范化、持久化和审阅的数据才能进入后续流程。
+- Windows 应用层 → WSL 推理服务只经 HTTP 双向调用，WSL 不直接读写 Windows 文件系统。
+- 容器化边界：仅推理服务（GPU 密集型、依赖复杂）进容器；应用层留在 Windows。
+- 产物一律由 Windows 编排层落盘 `data/`，milvus 后续接入不改变产物格式。
 
-系统不负责训练或托管模型，不把 Excel 当作运行查询库，也不把未发布候选提供给下游学习功能。
-对话、图片问答、练习、学习进度、向量检索和图数据库投影不属于当前交付能力。
+## 第一版范围
 
-前端归属说明：本仓库工作台 `web/` 属于当前 Axiom-Flow 实现；按 QED-Engine
-`docs/adr/0002-frontend-and-port-centralization.md` 规划，前端将统一到 QED-Engine 根仓库
-（8903），本仓库迁移完成后退役 `web/` 并只保留 API + Worker。此规划不影响当前运行拓扑。
-
-内部进程、依赖方向和能力归属见[运行架构](runtime-architecture.md)，事实来源、状态和清理边界
-见[数据生命周期](data-lifecycle.md)。
+解析 + 渲染数据供给（导入 → MinerU 解析 → 质量校验 → 兜底 → 产物落盘 → API 暴露）。
+Milvus 检索、知识图谱、数学解析器为后续探索项，仅预留字段。

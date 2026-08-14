@@ -1,10 +1,10 @@
-# ADR 0018：标准包根与应用用例主导工作流
+﻿# ADR 0018：标准包根与应用用例主导工作流
 
 状态：Accepted
 日期：2026-07-29
 领域：工程治理
 决策阶段：v0.3
-取代：[ADR 0012](../history/adr/0012-backend-package-boundaries.md)
+取代：[ADR 0012](../../adr/0012-backend-package-boundaries.md)
 被取代：—
 
 ## 背景

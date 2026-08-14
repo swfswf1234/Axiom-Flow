@@ -1,114 +1,95 @@
 # Axiom-Flow
 
-> 解析文档，整理知识。
+> 解析文档，供给渲染。
 
-Axiom-Flow 是 QED 的本地优先文档解析组件：解析 PDF（教材、习题集、论文、官方文档等）与 HTML
-文档，把原始文档转换为计算机和人类都易于理解、可定位、可追溯的整理知识——保存文字、图片等
-内容，并梳理页面事实与知识链路。当前重点是解析质量、证据追溯和人工发布，不是已完成的检索或
-学习助手。
+Axiom-Flow 是 QED-Engine 的**后端解析组件**：把 PDF（教材、习题集等数学文档）完整解析为统一
+格式（Markdown / LaTeX / 结构化块），支撑 QED-Engine 前端做高还原对照展示。前端由 QED-Engine
+负责，本仓库只保证 API 契约与产物格式稳定。项目为探索型，当前处于推倒重来后的第一轮
+（v2 重建中），详见 [ADR 0001](docs/adr/0001-v2-exploration-direction.md)。
 
 ## 在 QED 中的位置
 
 ```mermaid
 flowchart LR
-    A[QED 文档与数据集] --> B[Axiom-Flow]
-    B --> C[经审阅的页面事实]
-    B --> D[KnowledgeRelease]
-    C -. 后续消费 .-> E[QED 检索与学习服务]
-    D -. 后续消费 .-> E
+    A[PDF 教材] --> B[Axiom-Flow 解析]
+    B --> C[统一格式产物]
+    C --> D[QED-Engine 前端对照展示]
 ```
 
-本仓库只实现图中的 Axiom-Flow。QED 的数据集采集、检索服务和最终学习体验属于外部或后续模块。
+本仓库只实现图中的 Axiom-Flow。数据集采集、前端展示和最终学习体验属于外部或后续模块。
 
 ## 核心能力
 
-- 导入 PDF，并以明确的物理页范围提交持久解析任务。
-- 使用 OCR 和 PDF 本地信息生成规范 Markdown、内容块、来源证据和质量报告。
-- 以版本化 `ParseRun`、逐页检查点和 SHA-256 manifest 保存可恢复、可校验的解析产物。
-- 在 Web 工作台中并排审阅原始页图、OCR 文本、Markdown 和结构化结果。
-- 使用可公开复现的数学 fixture 自动检查文本、结构、公式、表格、图片、来源位置和 manifest。
-- 管理知识候选、关系和审阅事件，通过 Excel 工作簿形成显式 `KnowledgeRelease`。
+- 导入 PDF（页范围可控），以持久任务方式提交解析。
+- 使用 MinerU（vlm/hybrid 后端，本地 vLLM 推理）生成页级 Markdown、LaTeX 公式、表格与结构化块。
+- 页级质量信号校验，效果不达标时按页调用百炼 qwen-vl-plus 兜底。
+- 产物落盘 `data/books/<book_id>/`：页图、markdown、blocks.json、state.sqlite、manifest。
+- 对外 `/api/v1` 契约：书目、任务、单页数据与产物清单，供 QED-Engine 前端调用。
 
 ## 技术栈
 
 | 范围 | 技术 |
 | --- | --- |
 | Backend 与协议 | Python 3.12、FastAPI、Pydantic |
-| 持久化与迁移 | MySQL 8、SQLAlchemy、Alembic |
-| PDF 与 OCR | PyMuPDF、阿里百炼 OCR（`qwen-vl-plus`，经 `AXIOM_VISION_MODEL` 配置可调整） |
-| 后台任务 | MySQL 持久任务、租约与独立 Python Worker |
-| 本地产物 | 内容寻址目录、逐页检查点、SHA-256 manifest |
-| 审阅界面 | 原生 HTML、CSS、JavaScript、openpyxl |
-| 工程门禁 | Pytest、Ruff |
+| PDF 解析 | MinerU（vlm/hybrid 后端）+ vLLM（WSL Docker 容器化，GPU 穿透） |
+| 兜底通道 | 阿里百炼 OCR（`qwen-vl-plus`） |
+| 持久化 | 文件系统产物 + 轻量 SQLite（`state.sqlite`） |
+| 部署 | WSL Ubuntu 24.04 + Docker Compose（启停脚本控制） |
+| 工程门禁 | Pytest、Ruff（本地唯一门禁，无远端 CI） |
 
 ## 能力边界
 
 | 类别 | 内容 |
 | --- | --- |
-| 输入 | 技术 PDF（当前）、HTML（规划中）、明确的页范围、解析模型与调用预算 |
-| 核心职责 | 文档解析、OCR、内容规范化、证据定位、ParseRun 管理、质量审阅和受控知识发布 |
-| 输出 | 原始页图、规范 Markdown、结构化页面事实、可校验解析产物和 `KnowledgeRelease` |
-| 不负责 | 数据集下载、下游检索、学习界面，以及未经人工审阅的整书质量背书 |
+| 输入 | 数学/技术 PDF（当前）、明确的页范围、解析策略（local/hybrid） |
+| 核心职责 | 文档解析、统一格式产出、质量校验、兜底、任务编排 |
+| 输出 | 原页高清图、页级 Markdown、结构化块（blocks.json）、可校验产物清单 |
+| 不负责 | 前端展示（QED-Engine）、检索/向量化（Milvus 后续）、知识图谱（后续） |
 
-项目当前处于预发布工程阶段。解析链路可以运行，但数学公式 OCR 仍需真实样本评测和人工审阅；
-开放工作见[待做任务](docs/trackers/todo.md)，关闭证据见[已关闭任务](docs/trackers/completed.md)，
-长期方向见[能力路线图](docs/trackers/roadmap.md)。
+开放工作见[待做任务](docs/trackers/todo.md)，探索方向见[路线图](docs/trackers/roadmap.md)。
 
 ## 快速启动
 
-前置条件为 Python 3.12、MySQL 8，以及真实 OCR 时使用的百炼 API key。
+前置条件：Python 3.12（QED_env）、WSL Ubuntu 24.04 与 Docker。
 
 ```powershell
-Copy-Item .env.example .env
-python -m pip install -e ".[dev]"
-python -m alembic upgrade head
+powershell -File scripts/infra-up.ps1        # 启动推理容器（vLLM + mineru-api）
+& D:\software\anaconda3\envs\QED_env\python.exe -m pip install -e ".[dev]"
 ```
 
-分别在两个终端启动 API/Web 和 Worker：
-
-```powershell
-python -m uvicorn axiom_flow.main:app --host 127.0.0.1 --port 8902
-python -m axiom_flow.worker
-```
-
-打开 `http://127.0.0.1:8902`。开发环境和测试库隔离见[开发指南](docs/guides/development.md)，
-启动检查与受保护清理见[操作与运维指南](docs/guides/operations.md)。
+解析服务启动与使用方式见[开发指南](docs/guides/development.md)，容器启停与故障排查见
+[操作与运维指南](docs/guides/operations.md)。
 
 ## 典型流程
 
-1. 导入 PDF，并为解析任务选择明确的物理页范围。
-2. Worker 生成逐页产物和不可变 manifest。
-3. 在 Web 工作台中对照原始页图、OCR 文本和结构化结果。
-4. 接受、拒绝或请求重新解析页面。
-5. 可选生成知识候选，经工作簿审阅后显式发布 `KnowledgeRelease`。
-
-真实解析会产生外部模型调用；没有冻结样本、预算和采纳门槛时，不应直接提交整书任务。
+1. `POST /api/v1/parse-jobs` 提交解析任务（book_id、页范围、策略）。
+2. 编排层逐页调用 MinerU，质量信号校验后落盘产物。
+3. 不达标页面自动走 qwen-vl-plus 兜底（hybrid 策略）。
+4. QED-Engine 前端经 `/api/v1` 拉取页图与统一格式做对照展示。
 
 ## 仓库结构
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/axiom_flow/` | 领域、应用、基础设施、API、Worker 和数据库迁移 |
-| `web/` | 本地单页审阅工作台 |
-| `evaluation/` | 文档中心冻结快照、真实模型评测、评分工具和脱敏报告 |
-| `tests/` | 单元、契约、集成、系统和进程冒烟门禁 |
-| `docs/` | 当前架构、设计、决策、规范、计划和历史资料 |
-| `data/` | 按需创建的本地运行数据、私有评测和备份，不纳入版本控制 |
+| `src/axiom_flow/` | API、编排、导入、兜底与统一格式 schemas（v2 重建中） |
+| `scripts/` | WSL 容器启停脚本与 compose 配置 |
+| `tests/` | 单元、契约、集成与冒烟门禁 |
+| `docs/` | 当前架构、设计、决策、规范、指南、计划和追踪器 |
+| `data/` | 按需创建的本地解析产物，不纳入版本控制 |
 
 ## 开发入口
 
 首次参与开发时依次阅读：
 
 1. [AGENTS.md](AGENTS.md)：强制执行协议。
-2. [文档中心](docs/index.md)：按目录定位架构、设计、计划和历史资料。
-3. [当前运行架构](docs/architecture/runtime-architecture.md)：组件和依赖边界。
-4. [开发指南](docs/guides/development.md)：环境、迁移、测试与关闭门禁。
+2. [文档中心](docs/index.md)：按目录定位架构、设计、计划和追踪器。
+3. [系统概览](docs/architecture/overview.md)：组件和边界。
+4. [开发指南](docs/guides/development.md)：环境、测试与关闭门禁。
 
 ## 文档
 
 文档按目录导航见[文档中心](docs/index.md)；工程治理规则以 [docs/standards/](docs/standards/index.md)
-为唯一事实源；未关闭任务见[待做任务](docs/trackers/todo.md)，关闭证据见
-[已关闭任务](docs/trackers/completed.md)；Agent 执行协议见 [AGENTS.md](AGENTS.md)。
+为唯一事实源；未关闭任务见[待做任务](docs/trackers/todo.md)；Agent 执行协议见 [AGENTS.md](AGENTS.md)。
 
 ## License
 

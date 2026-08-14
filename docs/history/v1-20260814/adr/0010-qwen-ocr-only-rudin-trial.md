@@ -1,10 +1,10 @@
-# ADR 0010：Rudin 试跑采用 qwen-vl-ocr 单模型路线
+﻿# ADR 0010：Rudin 试跑采用 qwen-vl-ocr 单模型路线
 
 状态：Accepted
 日期：2026-07-28
 领域：解析与评测
 决策阶段：v0.3
-取代：[ADR 0002](../history/adr/0002-parser-routing-and-provider-boundary.md)
+取代：[ADR 0002](../../adr/0002-parser-routing-and-provider-boundary.md)
 被取代：—
 
 ## 决定

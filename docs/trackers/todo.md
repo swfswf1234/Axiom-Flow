@@ -1,28 +1,28 @@
 # 待做任务
 
 状态：Current
-最后更新：2026-08-12
+最后更新：2026-08-14
 
-本表是全部未关闭工作的统一导航。Plan 行镜像计划正文状态，计划正文仍是范围、验证和回滚的事实
-源；其他行在具备范围、前置条件、验证与成功标准后建立独立计划，并保留原 ID。
+本表是全部未关闭工作的统一导航（v2 纪元）。v1 任务台账已归档
+（`docs/history/v1-20260814/trackers/todo.md`）。Plan 行镜像计划正文状态；其他行在具备
+范围、前置条件、验证与成功标准后建立独立计划，并保留原 ID。
+
+## v2 任务清单
 
 | ID | 类型 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
-| REL-001 | Plan | P0 | Blocked | [v0.3 工程基线发布](../plans/2026-07-v03-engineering-baseline.md) | DATA-002 尚未关闭且发布实现未形成已验证提交；满足计划内恢复条件后再冻结发布目标。 |
-| DATA-002 | Gap | P0 | Open | 运行库存在失效本地文件引用 | `xqfm11` 仍有 1 个文档、5 个 ParseRun、20 页和 103 个产物记录；建立独立 D 类备份与重建计划后清理。 |
-| EXP-003 | Candidate | P0 | Candidate | 通用新增类别解析评测 | 新类别样本到达后新建 manifest，不回写 Rudin 单类别实验。 |
-| DES-001 | Gap | P1 | Open | 自动质量信号不足 | v2 工程评估中第 39 页大段遗漏和第 24 页公式变量错误均通过自动完整性检查；需为遗漏、覆盖、公式和表格风险建立稳定规则或冻结评测门槛。 |
-| WEB-001 | Gap | P1 | Open | 解析结果高保真页面渲染 | 第一阶段正确渲染 Markdown、LaTeX、表格和内容图片；第二阶段基于 block/bbox 评估版面级还原。实施前建立 B 类计划并冻结渲染安全、依赖、视觉样本和验收门槛。 |
-| DES-002 | Gap | P1 | Open | 工作簿占位表无语义 | [发布设计](../design/excel-release-workflow.md)中的 `sections`、`review_notes` 必须决定删除或实现。 |
-| OPS-001 | Gap | P1 | Open | 生产运维基线未实现 | [运维指南](../guides/operations.md)只支持本地手工运行；先以 ADR 选择部署边界，再完成备份恢复和发布演练。 |
-| PRD-001 | Candidate | P1 | Candidate | 学习交互闭环 | 已发布知识可稳定检索后，设计对话、图片问答、练习和学习进度。 |
-| JOB-001 | Candidate | P1 | Candidate | 批量导入与任务恢复策略 | 单篇实际样本验证后，明确队列、恢复策略和资源上限。 |
-| RET-001 | Candidate | P2 | Candidate | 向量检索与图数据库投影 | 学习交互的检索需求、索引版本和同步语义经设计验证后立项。 |
-| ALN-001 | Plan | P1 | In Progress | [计划 2026-08：QED-Engine 对齐请求登记与轻量更新](../plans/2026-08-qed-engine-alignment.md) | 计划状态 In Progress；用户已确认（2026-08-04）且 B 类执行计划 ALN-007 已建立，迁移完成后关闭。 |
-| ALN-007 | Plan | P1 | Accepted | [计划 2026-08：端口与数据目录迁移执行（port-and-dataset-migration）](../plans/2026-08-port-and-dataset-migration.md) | 计划状态 Accepted；用户已确认（2026-08-04），实现轮执行 ALN-002/003；**ALN-002 已完成（29b6524，2026-08-11），剩余 ALN-003**。 |
-| ALN-003 | Request | P1 | Open | 数据目录指向根 dataset/、直读 QED_ 变量、load-env.ps1 退役；含统一 qed 库（QED_DB_*，af_* 表 Alembic 初始化，存量 xqfm11 不迁移） | QED-Engine 发起；用户已确认（2026-08-04），B 类计划 ALN-007 承接，实现轮执行。 |
-| ALN-006 | Request | P2 | Open | 读取 dataset/qed-tracker/raw/ 的批量导入解析接口（Phase 2 前置登记；QED-Engine 发起 REQ-015） | 教材下载轮联调后由用户确认，拆 B/D 类计划执行。 |
-| ALN-004 | Request | P1 | Open | web/ 前端迁入 QED-Engine 统一前端（8903），本仓库退役 web/ | QED-Engine 发起，见 ADR 0002；用户确认后拆 A/B 类计划执行。 |
-| ALN-008 | Request | P1 | Open | 治理契约范本对齐：按根仓库 governance-contract.md 范本对齐守护契约测试（契约头六字段/守护面清单/编写约定） | QED-Engine 发起（根仓库 REQ-022；设计文档 docs/design/governance-contract-alignment.md 已建，2026-08-10）；用户评审确认后拆 B 类计划执行。 |
-| ALN-009 | Request | P1 | Open | 数据库设计确认：af_* 表清单与结构由本仓库设计确认（Alembic 迁移为事实源） | QED-Engine 发起（根仓库 REQ-027；设计文档 docs/design/database-schema-ownership.md 已建，2026-08-10；2026-08-09 用户裁决根仓库仅指引与规划）；确认后回执根仓库 REQ-027。 |
-| DOCS-001 | Plan | P1 | Accepted | [计划 2026-08：文档对齐 QED-Engine 模板轮（docs-alignment-round）](../plans/2026-08-docs-alignment-round.md) | 计划状态 Accepted；W1-W9 逐节对齐 QED-Engine 文档模板，承接 ALN-008；契约测试先行，门禁全绿、用户逐步确认后关闭归档。 |
+| DOCS-001 | Plan | P0 | Accepted | [计划 2026-08：v2 docs 重构轮](../plans/2026-08-v2-docs-rebuild.md) | 计划正文 Accepted；P1-P9 已完成，契约测试 42 全绿 + ruff 通过，用户确认后关闭归档 |
+| V2-001 | Infra | P0 | Open | WSL 容器基建：Docker Compose（vLLM + mineru-api）+ 启停脚本（infra-up/down/status/reset） | `scripts/compose.yaml` 与 4 个 ps1 就位；`infra-status.ps1` 显示容器健康且 GPU 穿透生效 |
+| V2-002 | Feature | P0 | Open | 新包结构与 schemas：`src/axiom_flow/{api,orchestrator,ingest,fallback}/` + `schemas.py`（blocks/page/book/job Pydantic 模型） | schemas 单元测试通过；code-map 同步 |
+| V2-003 | Feature | P0 | Open | ingest：PDF 导入、页图渲染（150 DPI+）、book.json（SHA-256） | 单元测试通过；产物目录结构符合设计 |
+| V2-004 | Feature | P0 | Open | orchestrator：任务编排 + state.sqlite（jobs/pages）+ 质量信号（空块率/公式置信度/表格成功数） | 单元 + 集成（mock MinerU）测试通过 |
+| V2-005 | Feature | P0 | Open | MinerU 接入：HTTP 上传 PDF → 解析 → 结果落盘（md/blocks/页图） | 冒烟测试：单 PDF 5 页含公式跑通 |
+| V2-006 | Feature | P1 | Open | fallback：qwen-vl-plus 兜底通道（strategy=hybrid，source 标记） | 构造低质量页验证兜底触发 |
+| V2-007 | Feature | P1 | Open | API v1 端点：parse-jobs/books/pages/manifest | 契约测试通过；返回结构与 schemas 一致 |
+| V2-008 | Gap | P1 | Open | 2 本代表书验收（Rudin 英文 + 陈纪修中文） | 抽查 20 页/本公式可渲染 ≥90%；验收标准逐项通过 |
+| V2-009 | Gap | P2 | Open | 批量处理其余 10 本 | V2-008 关闭后拆 D 类计划执行 |
+
+## 探索路线图
+
+Milvus 向量检索、知识图谱（定义/定理语义）、数学解析器（LaTeX 校验/重渲染）、学习交互闭环
+——见 [路线图](roadmap.md)，按需立项。

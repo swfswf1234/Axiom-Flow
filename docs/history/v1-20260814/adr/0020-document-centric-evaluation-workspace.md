@@ -1,4 +1,4 @@
-# ADR 0020：文档中心评测工作区与冻结主链对比
+﻿# ADR 0020：文档中心评测工作区与冻结主链对比
 
 状态：Accepted
 日期：2026-07-30
@@ -53,4 +53,4 @@ Provider，也不自动切换当前 ParseRun。ADR 0019 的公开 fixture/私有
 
 - 补充决定：[ADR 0019](0019-public-fixture-and-private-benchmark-boundary.md)
 - 设计：[解析评测治理](../design/evaluation-governance.md)、[Web 工作台](../design/web-workbench.md)
-- 执行记录：[EVAL-001](../history/plans/2026-07/2026-07-document-centric-evaluation.md)
+- 执行记录：[EVAL-001](../../plans/2026-07/2026-07-document-centric-evaluation.md)

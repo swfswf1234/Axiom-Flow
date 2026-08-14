@@ -1,11 +1,11 @@
-# ADR 0002：分层解析路由与供应商适配边界
+﻿# ADR 0002：分层解析路由与供应商适配边界
 
 状态：Superseded
 日期：2026-07-27
 领域：解析与评测
 决策阶段：v0.2
 取代：—
-被取代：[ADR 0010](../../adr/0010-qwen-ocr-only-rudin-trial.md)
+被取代：[ADR 0010](../v1-20260814/adr/0010-qwen-ocr-only-rudin-trial.md)
 
 ## 决定
 

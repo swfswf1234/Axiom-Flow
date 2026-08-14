@@ -19,7 +19,9 @@ def _markdown_files() -> list[Path]:
     files = [ROOT / "README.md"]
     files.extend((ROOT / "docs").rglob("*.md"))
     files.extend((ROOT / "evaluation").rglob("*.md"))
-    return [path for path in files if path.is_file()]
+    # 历史归档快照以 git 为准，内部链接不守护
+    files = [path for path in files if path.is_file() and "history" not in path.parts]
+    return files
 
 
 def test_local_markdown_links_resolve():

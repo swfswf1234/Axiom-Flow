@@ -1,4 +1,4 @@
-# ADR 0022：中性评测快照与单运行质量评估
+﻿# ADR 0022：中性评测快照与单运行质量评估
 
 状态：Accepted
 日期：2026-07-30
@@ -52,5 +52,5 @@ C 类计划约束。
 
 - 前置决定：[ADR 0019](0019-public-fixture-and-private-benchmark-boundary.md)、[ADR 0020](0020-document-centric-evaluation-workspace.md)
 - 设计：[解析评测治理](../design/evaluation-governance.md)、[Web 工作台](../design/web-workbench.md)
-- 实施记录：[EVAL-002](../history/plans/2026-07/2026-07-evaluation-assessment-workspace.md)
-- 运行记录：[DATA-003](../history/plans/2026-07/2026-07-isolated-evaluation-runtime.md)、[EXP-002](../history/plans/2026-07/2026-07-rudin-engineering-chain-trial.md)
+- 实施记录：[EVAL-002](../../plans/2026-07/2026-07-evaluation-assessment-workspace.md)
+- 运行记录：[DATA-003](../../plans/2026-07/2026-07-isolated-evaluation-runtime.md)、[EXP-002](../../plans/2026-07/2026-07-rudin-engineering-chain-trial.md)

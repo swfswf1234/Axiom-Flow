@@ -3,8 +3,9 @@
 设计状态：Accepted
 实现状态：Pending
 最后更新：2026-08-10
-关联代码：`src/axiom_flow/infrastructure/mysql.py`、`alembic` 迁移
+关联代码：无（`af_*` 表结构以 Alembic 迁移为事实源，模块映射见 code-map）
 关联测试：`tests/integration/test_mysql_migrations.py`
+关联 ADR：`docs/adr/0005-mysql-runtime-storage.md`、`docs/adr/0007-versioned-domain-records.md`
 需求方：QED-Engine（根仓库 REQ-027；2026-08-09 用户裁决：数据库设计先在各子项目确认，
 根仓库只做指引和规划）
 执行方：Axiom-Flow
@@ -19,6 +20,16 @@
 根仓库 `docs/design/database-design.md` 原承担表结构细节设计；2026-08-09 用户裁决：`af_*`
 表清单与结构由本仓库设计确认，确认后回执根仓库补登记表清单，根仓库 database-design.md
 按「指引与规划」收尾。
+
+## 所有权流程
+
+```mermaid
+flowchart LR
+    A[本仓库设计确认 af_* 表清单] --> B[用户评审]
+    B --> C[Alembic 迁移为事实源]
+    C --> D[回执根仓库 REQ-027]
+    D --> E[根仓库 database-design.md 收尾为指引与规划]
+```
 
 ## 变更内容
 

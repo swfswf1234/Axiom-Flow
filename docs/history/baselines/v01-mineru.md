@@ -1,4 +1,4 @@
-# v0.1 MinerU 基线
+﻿# v0.1 MinerU 基线
 
 状态：Historical
 最后更新：2026-07-29
@@ -20,10 +20,10 @@ Git 锚点：`6cc4129`
 | 本地文件 | 使用 `data/raw`、`data/parsed` 和 `data/exports` 约定。 |
 | LlamaIndex、Qdrant、Redis、Celery | 文档中的后续规划，未作为该提交的已实现基线。 |
 
-该路线已被当前[运行架构](../../architecture/runtime-architecture.md)、
-[数据生命周期](../../architecture/data-lifecycle.md)、[ADR 0005](../../adr/0005-mysql-runtime-storage.md)、
-[ADR 0006](../../adr/0006-persistent-jobs-and-api-v1.md)和
-[ADR 0010](../../adr/0010-qwen-ocr-only-rudin-trial.md)取代。MinerU 旧命令、PostgreSQL schema 和
+该路线已被当前[运行架构](../v1-20260814/architecture/runtime-architecture.md)、
+[数据生命周期](../v1-20260814/architecture/data-lifecycle.md)、[ADR 0005](../v1-20260814/adr/0005-mysql-runtime-storage.md)、
+[ADR 0006](../v1-20260814/adr/0006-persistent-jobs-and-api-v1.md)和
+[ADR 0010](../v1-20260814/adr/0010-qwen-ocr-only-rudin-trial.md)取代。MinerU 旧命令、PostgreSQL schema 和
 规划中的检索栈均不得用于解释当前实现。
 
 ## 恢复方式
