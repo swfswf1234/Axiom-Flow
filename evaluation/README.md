@@ -1,61 +1,22 @@
-# Axiom-Flow 解析评估
+# Axiom-Flow 评估专区（evaluation/）
 
-> 状态：Historical（v1 时代遗留，v2 推倒重来后评估体系待重建，本目录暂保留原始内容）
+> 状态：Current（v2 占位）——独立评估区域，与主链路（`src/axiom_flow/`）完全隔离，
+> 主链路不依赖本目录任何代码。V2 评估体系（质量验收、公式渲染率抽查、回归基线）
+> 随 V2-008 验收任务重建，当前仅保留样本数据。
 
-评估按文档组织版本化定义、中性 ParseRun 快照、单运行质量和版本回归。v1 契约见
-[解析评估设计](../docs/history/v1-20260814/design/evaluation-governance.md)，长期决定见
-[ADR 0019](../docs/history/v1-20260814/adr/0019-public-fixture-and-private-benchmark-boundary.md)、
-[ADR 0020](../docs/history/v1-20260814/adr/0020-document-centric-evaluation-workspace.md)和
-[ADR 0022](../docs/history/v1-20260814/adr/0022-neutral-evaluation-snapshots-and-assessments.md)。
+## 定位
 
-## 文档案例
+- 本目录只做**评估与回归**：样本、fixture、报告；不参与解析主链路（导入/编排/API）。
+- v1 时代评测 CLI（`cli.py`、`__main__.py`、`tools/`）已随 V2 推倒重来移除
+  （其依赖的 v1 模块已删除，不可运行；git 历史与
+  `docs/history/v1-20260814/design/evaluation-governance.md` 可追溯）。
+- 运行期评估数据（快照、replay 产物）写入被忽略的 `data/`（运行时目录），不入库。
 
-| 文档 | 可提交内容 | 用途 |
+## 样本清单
+
+| 样本 | 内容 | 用途 |
 | --- | --- | --- |
-| [数学分析回归样本](documents/数学分析回归样本--2249d79fb6d0/case.json) | CC0 PDF、replay 和完整期望产物 | 无模型工程回归。 |
-| [数学分析原理（第 3 版）](documents/数学分析原理-第3版--341544f3fa9c/index.md) | 来源哈希、manifest 与脱敏报告 | 私有真实教材质量评估。 |
+| [数学分析回归样本](documents/数学分析回归样本--2249d79fb6d0/case.json) | CC0 PDF（source.pdf）、replay 与完整期望产物 | 冒烟测试用 PDF（`scripts/smoke-api.sh`）；V2 回归基线候选 |
+| [数学分析原理（第 3 版）](documents/数学分析原理-第3版--341544f3fa9c/index.md) | 来源哈希、manifest 与脱敏报告 | v1 私有真实教材质量评估存档（只读参考） |
 
-真实教材 PDF、页图和模型响应不得提交。生产 ParseRun 使用 `AXIOM_DATA_DIR`，冻结评估工作区使用
-`AXIOM_EVALUATION_DATA_DIR`；两者可以指向不同的隔离目录。
-
-## 生产主链
-
-先在独立终端启动 Worker，再由 CLI 提交并等待持久 Job：
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m axiom_flow.worker
-python -m evaluation document list
-python -m evaluation run --document <case-id> --source <pdf> --label trial-v1 --manifest <manifest>
-python -m evaluation assess --document <case-id> --snapshot <snapshot-id> --manifest <manifest>
-python -m evaluation report --assessment <assessment-id>
-```
-
-`run` 不执行 Worker。等待超时会返回仍可恢复的 Job ID；任务完成后可使用：
-
-```powershell
-python -m evaluation capture --document <case-id> --parse-run <run-id> --label resumed-v1
-```
-
-快照不携带 baseline/candidate 角色。只有 `baseline_eligible=true` 的干净 main 快照可以在比较时作为
-baseline：
-
-```powershell
-python -m evaluation compare --document <case-id> --baseline <snapshot-id> --candidate <snapshot-id>
-python -m evaluation report --comparison <comparison-id>
-```
-
-## 公开 fixture
-
-公开 fixture 回放与完整事实比较不需要模型密钥：
-
-```powershell
-$case = "evaluation/documents/数学分析回归样本--2249d79fb6d0"
-python -m evaluation.tools.replay --fixture $case --output-data-dir data/evaluation/replay
-$fixture = Get-Content -Raw "$case/fixture.json" | ConvertFrom-Json
-$actual = Join-Path "data/evaluation/replay" $fixture.expected_run
-python -m evaluation.tools.regression --fixture $case --actual $actual --output data/evaluation/replay/report.json
-```
-
-重建项目自有 fixture 使用 `python -m evaluation.tools.fixture_builder`。所有真实连通性检查也走生产
-Job/Worker，不存在直接 Provider 预检入口。
+真实教材 PDF、页图与模型响应不得提交；样本中仅包含可提交的脱敏/公开内容。
