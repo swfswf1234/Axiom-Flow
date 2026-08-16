@@ -1,10 +1,10 @@
 # PDF 解析与渲染（v2 探索基线）
 
 设计状态：Accepted
-实现状态：Pending
-最后更新：2026-08-14
-关联代码：无（推倒重来后的新包结构，实施计划中确定）
-关联测试：无（推倒重来后的新测试，实施计划中确定）
+实现状态：Partial（ingest/schemas 已实现，orchestrator/fallback/api 待对应 V2 任务）
+最后更新：2026-08-16
+关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`（其余待实现）
+关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`（其余待对应任务）
 关联 ADR：无（本设计为探索基线，待实施验证后按需沉淀 ADR）
 
 ## 背景与决策记录
@@ -117,7 +117,7 @@ LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入
 | --- | --- |
 | `api/` | 对外 `/api/v1` 路由，只做协议适配，不掺业务 |
 | `orchestrator/` | 解析任务编排：接收 job → 逐页调 MinerU → 校验质量 → 需要时走兜底 → 产物落盘 → 更新 state.sqlite |
-| `ingest/` | PDF 导入：复制入 `data/books/<id>/`、渲染页图、生成 book.json（含 SHA-256） |
+| `ingest/` | PDF 导入：渲染页图（150 DPI+）、生成 book.json（含 SHA-256）；源 PDF 留在 `dataset/` 只读不复制（sha256 保证校验） |
 | `fallback/` | qwen-vl-plus 客户端（复用现有百炼凭据配置），输出归一化为同一 blocks 结构 |
 | `schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job）——内外契约单一事实源 |
 
