@@ -1,10 +1,10 @@
 # PDF 解析与渲染（v2 探索基线）
 
 设计状态：Accepted
-实现状态：Partial（ingest/schemas 已实现，orchestrator/fallback/api 待对应 V2 任务）
+实现状态：Partial（ingest/schemas/fallback 已实现，orchestrator/api 待对应 V2 任务；fallback 为 V2-010 实验版本）
 最后更新：2026-08-16
-关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`（其余待实现）
-关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`（其余待对应任务）
+关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/fallback/`、`src/axiom_flow/schemas.py`（其余待实现）
+关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_fallback.py`（其余待对应任务）
 关联 ADR：无（本设计为探索基线，待实施验证后按需沉淀 ADR）
 
 ## 背景与决策记录

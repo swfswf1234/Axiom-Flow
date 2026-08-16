@@ -21,6 +21,7 @@
 | V2-007 | Feature | P1 | Open | API v1 端点：parse-jobs/books/pages/manifest | **根仓库 C 组联调前置请求（2026-08-16）**：8902 契约冻结节点（REQ-034 承接根仓库适配）；契约测试通过；返回结构与 schemas 一致 |
 | V2-008 | Gap | P1 | Open | 2 本代表书验收（Rudin 英文 + 陈纪修中文） | 抽查 20 页/本公式可渲染 ≥90%；验收标准逐项通过 |
 | V2-009 | Gap | P2 | Open | 批量处理其余 10 本 | V2-008 关闭后拆 D 类计划执行 |
+| V2-010 | Plan | P0 | Accepted | [计划 2026-08：qwen-vl-plus 最小闭环实验](../plans/2026-08-qwen-vl-plus-trial.md) | 计划正文 Accepted；**实验已执行（2026-08-16）**：20 页成功 0 失败，公式可解析率 100%（4/4 + 365/365 行内），text_length_ratio 全 ≥0.7，预算 <1 元（35890 tokens）；采纳门槛 ①③ 已达标，② 人工抽查待用户；通过后 ADR 接受先导引擎并调主线顺序 |
 
 ## 探索路线图
 
