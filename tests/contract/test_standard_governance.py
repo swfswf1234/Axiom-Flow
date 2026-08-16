@@ -17,6 +17,7 @@ STANDARD_FILES = {
     "documentation.md",
     "adr-governance.md",
     "testing.md",
+    "cross-project-collaboration.md",
 }
 
 

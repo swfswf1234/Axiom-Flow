@@ -65,8 +65,8 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 历史资料。历史资料只解释背景，不覆盖当前设计。
 
 - `docs/standards/` 是工程治理规则的唯一事实源，具体采用[任务生命周期](docs/standards/task-lifecycle.md)、
-  [文档规范](docs/standards/documentation.md)、[ADR 治理](docs/standards/adr-governance.md)和
-  [测试架构与门禁](docs/standards/testing.md)。
+  [文档规范](docs/standards/documentation.md)、[ADR 治理](docs/standards/adr-governance.md)、
+  [测试架构与门禁](docs/standards/testing.md)和[跨项目协作流程](docs/standards/cross-project-collaboration.md)。
 - 任务先按任务生命周期分类并建立适用计划；需要长期决策时按 ADR 治理新增决定；关闭时按文档
   规范选择归档或删除。日常小规模数据与发布操作不建立独立计划，由 git 提交与标签留痕；正式
   发布、受保护环境和大规模数据操作仍要求 D 类计划。
@@ -86,6 +86,15 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 设计、计划、指南、模块/类/公共函数 docstring 默认使用中文。标识符、类型、API 字段和外部协议
 名称保持英文。函数内部注释只说明业务约束、异常原因、不变条件、性能或安全风险。
 
+## 工作区边界与跨项目协作
+
+本仓库（Axiom-Flow）是独立 git 仓库，也是 agent 的**唯一合法工作区**；QED-Engine 根仓库与
+QED-Tracker 一律**只读**（理解契约与联调上下文），禁止任何文件或 git 写入。用户口头指令
+（如「改造 QED-Engine 某服务」）不豁免此边界；对根仓库的代码改动必须由根仓库自身执行。
+跨项目请求的接收（评审 → 执行 → 回执）与发起流程见
+[跨项目协作流程](docs/standards/cross-project-collaboration.md)。误写入根仓库时立即登记
+todo 并请求用户协助回滚。
+
 ## 完成检查
 
 结束任务前逐项确认：
@@ -96,3 +105,4 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 4. 可复现失败已进入 todo；外部依赖失败有证据、恢复条件和责任位置。
 5. D 类操作已经完成备份、回滚和完整差异复核，没有隐式执行。
 6. 计划正文与 todo 状态一致，关闭任务已原子迁移到 completed，计划已按文档规范选择性保留或删除。
+7. 未越界：对 QED-Engine 根仓库 / QED-Tracker 只读，无任何写入；误写入已登记并请求回滚。
