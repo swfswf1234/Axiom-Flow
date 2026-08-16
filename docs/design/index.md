@@ -1,7 +1,7 @@
 # 设计索引
 
 状态：Current
-最后更新：2026-08-14
+最后更新：2026-08-16
 
 本目录保存当前流程、接口、数据模型与验收契约（v2 纪元）。v1 设计已归档
 （`docs/history/v1-20260814/design/`）。元数据规则见 [文档规范](../standards/documentation.md)。
@@ -10,4 +10,5 @@
 
 | 文档 | 设计状态 | 实现状态 | 内容 |
 | --- | --- | --- | --- |
-| [PDF 解析与渲染（v2 探索基线）](pdf-parsing-and-rendering.md) | Accepted | Pending | MinerU 解析、统一格式、兜底通道、API 契约、产物模型 |
+| [PDF 解析与渲染（v2 探索基线）](pdf-parsing-and-rendering.md) | Accepted | Partial | MinerU 解析、统一格式、兜底通道、API 契约、产物模型（ingest/schemas 已实现） |
+| [8902 集成契约与联调对齐](8902-integration-contract.md) | Accepted | Pending | C 组 8900↔8902 联调时序、8902 API 契约草案、待对齐问题（V2-007 冻结） |

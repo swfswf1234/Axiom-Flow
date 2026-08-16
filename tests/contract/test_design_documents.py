@@ -15,6 +15,7 @@ DESIGN = ROOT / "docs" / "design"
 MERMAID_BLOCK = re.compile(r"```mermaid\s*\n(?P<body>.*?)```", re.DOTALL)
 CURRENT_DOCUMENTS = {
     "pdf-parsing-and-rendering.md",
+    "8902-integration-contract.md",
 }
 
 
