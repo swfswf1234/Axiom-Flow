@@ -102,8 +102,9 @@ def main() -> int:
         page = markdown_to_blocks(result.markdown, page=no, page_width=int(width), page_height=int(height))
         formula_count = sum(1 for b in page.blocks if b.type.value == "formula")
         total_formula += formula_count
-        (book_dir / f"p{no:04d}.md").write_text(result.markdown, encoding="utf-8")
-        (book_dir / f"p{no:04d}.blocks.json").write_text(page.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        pages_dir = book_dir / "pages"
+        (pages_dir / f"p{no:04d}.md").write_text(result.markdown, encoding="utf-8")
+        (pages_dir / f"p{no:04d}.blocks.json").write_text(page.model_dump_json(indent=2) + "\n", encoding="utf-8")
         summary["per_page"][str(no)] = {
             "blocks": len(page.blocks),
             "formulas": formula_count,

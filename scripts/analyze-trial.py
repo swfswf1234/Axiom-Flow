@@ -37,7 +37,7 @@ def _inline_math(text: str) -> list[str]:
 
 
 def _load_blocks(book_dir: Path, page_no: int) -> dict | None:
-    path = book_dir / f"p{page_no:04d}.blocks.json"
+    path = book_dir / "pages" / f"p{page_no:04d}.blocks.json"
     if not path.is_file():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
