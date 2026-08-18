@@ -1,7 +1,7 @@
 # 待做任务
 
 状态：Current
-最后更新：2026-08-16
+最后更新：2026-08-18
 
 本表是全部未关闭工作的统一导航（v2 纪元）。v1 任务台账已归档
 （`docs/history/v1-20260814/trackers/todo.md`）。Plan 行镜像计划正文状态；其他行在具备
@@ -22,6 +22,7 @@
 | V2-008 | Gap | P1 | Open | 2 本代表书验收（Rudin 英文 + 陈纪修中文） | 抽查 20 页/本公式可渲染 ≥90%；验收标准逐项通过 |
 | V2-009 | Gap | P2 | Open | 批量处理其余 10 本 | V2-008 关闭后拆 D 类计划执行 |
 | V2-010 | Plan | P0 | Accepted | [计划 2026-08：qwen-vl-plus 最小闭环实验](../plans/2026-08-qwen-vl-plus-trial.md) | 计划正文 Accepted；**实验已执行（2026-08-16）**：20 页成功 0 失败，公式可解析率 100%（4/4 + 365/365 行内），text_length_ratio 全 ≥0.7，预算 <1 元（35890 tokens）；采纳门槛 ①③ 已达标，② 人工抽查待用户；通过后 ADR 接受先导引擎并调主线顺序 |
+| V2-011 | Gap | P1 | In Progress | 生命周期脚本 `scripts/axiom_flow_service.py`（服务化，对齐根仓库 REQ-017①/REQ-039） | **设计与实现已在工作区就绪（2026-08-17，未提交）**：[服务生命周期脚本设计](../design/service-lifecycle.md)（Accepted/Implemented）+ `scripts/axiom_flow_service.py` + `tests/unit/test_service_scripts.py` + `src/axiom_flow/api/main.py` 加 `/api/v1/health`；**根仓库侧已接入**（8900 axiom 单元黑盒调用本脚本，stop/restart 冒烟通过，REQ-039 回执前提示）；**待用户评审后由本仓库提交并回执根仓库 REQ-039** |
 
 ## 探索路线图
 

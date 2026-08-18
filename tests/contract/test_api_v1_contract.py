@@ -66,6 +66,16 @@ def client(tmp_path, monkeypatch) -> TestClient:
         yield test_client
 
 
+class TestHealthEndpoint:
+    """服务健康：8900 探测与生命周期脚本 --wait/status 的就绪判据。"""
+
+    def test_health_returns_200(self, client):
+        response = client.get("/api/v1/health")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+
+
 class TestBooksEndpoints:
     """书目与页数据端点：结构符合 schemas，错误语义正确。"""
 

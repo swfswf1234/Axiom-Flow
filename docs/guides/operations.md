@@ -1,7 +1,23 @@
 # 运维指南
 
 状态：Current
-最后更新：2026-08-14
+最后更新：2026-08-17
+
+## 8902 API 服务生命周期
+
+本仓库 8902 API 服务（`uvicorn axiom_flow.api.main:app`，Windows 侧）启停由生命周期脚本
+`scripts/axiom_flow_service.py` 管理（契约见[服务生命周期脚本设计](../design/service-lifecycle.md)）：
+
+```powershell
+& D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py start --wait
+& D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py status
+& D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py restart --wait
+& D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py stop
+```
+
+- 就绪判据：`GET /api/v1/health` 返回 200（8900 控制中心与 `start-all.ps1` 探测路径一致）。
+- PID 文件 `logs/qed-axiom.pid`，子进程日志 `logs/qed-axiom-serve.log`。
+- 端口来源：`QED_AXIOM_URL` 解析 > `AXIOM_PORT` > 8902。
 
 ## 推理基础设施（WSL + Docker Compose）
 

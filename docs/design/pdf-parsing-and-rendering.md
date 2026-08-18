@@ -148,6 +148,7 @@ LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入
 
 ```
 scripts/
+├── axiom_flow_service.py # 8902 API 服务生命周期（start/stop/restart/status，见 service-lifecycle.md）
 ├── infra-up.ps1      # wsl docker compose up -d（mineru-api）+ 等待健康
 ├── infra-down.ps1    # 优雅停止（down，容器重建不重新下载模型——模型在镜像内）
 ├── infra-status.ps1  # 容器健康检查 + GPU 可见性 + 端点探测
