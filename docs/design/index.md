@@ -13,3 +13,4 @@
 | [PDF 解析与渲染（v2 探索基线）](pdf-parsing-and-rendering.md) | Accepted | Partial | MinerU 解析、统一格式、兜底通道、API 契约、产物模型（ingest/schemas 已实现） |
 | [8902 集成契约与联调对齐](8902-integration-contract.md) | Accepted | Pending | C 组 8900↔8902 联调时序、8902 API 契约草案、待对齐问题（V2-007 冻结） |
 | [服务生命周期脚本](service-lifecycle.md) | Accepted | Implemented | 8902 服务启停脚本契约（start/stop/restart/status）与 8900 接入方式 |
+| [生命周期脚本编码修复](service-lifecycle-encoding-fix.md) | Accepted | Implemented | `_pid_is_alive` 容忍中文 Windows tasklist GBK 输出（errors=replace + stdout 空值兜底） |

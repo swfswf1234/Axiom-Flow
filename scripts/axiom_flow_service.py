@@ -88,18 +88,24 @@ def _load_env(start: Path) -> None:
 
 
 def _pid_is_alive(pid: int) -> bool:
-    """Windows 进程存在性检测：tasklist（os.kill(pid, 0) 会直接 TerminateProcess）。"""
+    """Windows 进程存在性检测：tasklist（os.kill(pid, 0) 会直接 TerminateProcess）。
+
+    中文 Windows 下 tasklist 表头为 GBK 编码，text=True 默认 utf-8 解码失败会使
+    readerthread 中断导致 stdout=None；errors="replace" 容忍乱码（PID 数字为 ASCII
+    不受影响），stdout 为空时兜底返回 False（V2-012）。
+    """
     try:
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}"],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=10,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False
-    return str(pid) in result.stdout
+    return str(pid) in (result.stdout or "")
 
 
 def read_pid() -> int | None:
@@ -231,8 +237,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 0
     if pid is not None:
         PID_FILE.unlink(missing_ok=True)
-    if _port_open(args.port) and _health_ok(args.port):
-        print(f"running (port probe {args.port})")
+    if _port_open(port) and _health_ok(port):
+        print(f"running (port probe {port})")
         return 0
     print("stopped")
     return 0

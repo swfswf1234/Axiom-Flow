@@ -44,6 +44,52 @@ def isolated(module, monkeypatch, tmp_path):
     return tmp_path
 
 
+class FakeRunResult:
+    """subprocess.run 替身：仅暴露 stdout（V2-012 编码修复回归）。"""
+
+    def __init__(self, stdout: str | None) -> None:
+        self.stdout = stdout
+
+
+def test_pid_is_alive_stdout_none_returns_false(module, monkeypatch):
+    """解码失败（readerthread 中断 → stdout=None）时兜底返回 False，不抛 TypeError。"""
+    monkeypatch.setattr(module.subprocess, "run", lambda *a, **kw: FakeRunResult(None))
+    assert module._pid_is_alive(4242) is False
+
+
+def test_pid_is_alive_passes_errors_replace(module, monkeypatch):
+    """中文 Windows tasklist 输出为 GBK，subprocess 必须 errors=replace 容忍。"""
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeRunResult("")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    module._pid_is_alive(4242)
+    assert captured["errors"] == "replace"
+
+
+def test_pid_is_alive_ascii_stdout_matches(module, monkeypatch):
+    """正常 ASCII tasklist 输出仍能正确判定进程存活。"""
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *a, **kw: FakeRunResult("python.exe          4242\n"),
+    )
+    assert module._pid_is_alive(4242) is True
+
+
+def test_pid_is_alive_stdout_without_pid_returns_false(module, monkeypatch):
+    """stdout 不含目标 PID 时返回 False（既有语义不回退）。"""
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *a, **kw: FakeRunResult("python.exe          9999\n"),
+    )
+    assert module._pid_is_alive(4242) is False
+
+
 def test_parser_has_subcommands(module):
     parser = module.build_parser()
     for name in ("start", "stop", "restart", "status"):

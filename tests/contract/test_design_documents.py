@@ -17,6 +17,7 @@ CURRENT_DOCUMENTS = {
     "pdf-parsing-and-rendering.md",
     "8902-integration-contract.md",
     "service-lifecycle.md",
+    "service-lifecycle-encoding-fix.md",
 }
 
 
