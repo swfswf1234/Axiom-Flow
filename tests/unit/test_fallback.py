@@ -110,6 +110,13 @@ def _make_client(handler) -> QwenVLPlusClient:
 class TestQwenVLPlusClient:
     """客户端：请求构造、编码、重试语义与错误处理。"""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_env(self, monkeypatch, tmp_path):
+        """隔离父目录 .env 与真实环境：模型/凭据默认取 config 层而非本机 .env。"""
+        monkeypatch.chdir(tmp_path)
+        for key in ("API_KEY", "AXIOM_API_KEY", "AXIOM_VISION_MODEL"):
+            monkeypatch.delenv(key, raising=False)
+
     def test_recognize_page_sends_base64_image_and_prompt(self):
         captured = {}
 
@@ -201,16 +208,16 @@ class TestQwenVLPlusClient:
             client.recognize_page(b"png", page_no=1)
 
     def test_api_key_from_environment(self, monkeypatch):
-        monkeypatch.setenv("AXIOM_API_KEY", "env-key")
+        monkeypatch.setenv("API_KEY", "env-key")
 
         client = QwenVLPlusClient(transport=httpx.MockTransport(lambda r: _ok_response("ok")))
 
         assert client.api_key == "env-key"
 
     def test_missing_api_key_raises(self, monkeypatch):
-        monkeypatch.delenv("AXIOM_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
 
-        with pytest.raises(VisionError, match="AXIOM_API_KEY"):
+        with pytest.raises(VisionError, match="请配置 API_KEY"):
             QwenVLPlusClient(api_key=None)
 
     def test_vision_result_carries_contract_version(self):

@@ -6,11 +6,12 @@
 """
 
 import base64
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+
+from axiom_flow.config import llm_api_key, load_settings
 
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 DEFAULT_MODEL = "qwen-vl-plus"
@@ -43,7 +44,8 @@ class QwenVLPlusClient:
     """qwen-vl-plus 视觉识别客户端（OpenAI 兼容协议，不依赖 dashscope SDK）。
 
     页级重试语义：限流（429）、5xx 与网络/超时错误按指数退避重试，最多
-    ``max_attempts`` 次；其余 4xx 立即失败。凭据取 ``AXIOM_API_KEY``。
+    ``max_attempts`` 次；其余 4xx 立即失败。凭据取 ``config.llm_api_key()``（API_KEY），
+    缺省模型取 ``config.load_settings().vision_model``（V2-014 对齐 QED-Tracker REQ-043）。
     """
 
     CONTRACT_VERSION = "qwen-vl-markdown-v1"
@@ -51,7 +53,7 @@ class QwenVLPlusClient:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str = "",
         base_url: str = DEFAULT_BASE_URL,
         max_tokens: int = 8192,
         timeout: float = 180.0,
@@ -59,11 +61,11 @@ class QwenVLPlusClient:
         retry_delay: float = 2.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        api_key = api_key if api_key is not None else os.environ.get("AXIOM_API_KEY")
+        api_key = api_key if api_key is not None else llm_api_key()
         if not api_key:
-            raise VisionError("缺少凭据：请配置 AXIOM_API_KEY（阿里百炼）")
+            raise VisionError("缺少凭据：请配置 API_KEY（阿里百炼）")
         self.api_key = api_key
-        self.model = model
+        self.model = model or load_settings().vision_model
         self.base_url = base_url
         self.max_tokens = max_tokens
         self.timeout = timeout
