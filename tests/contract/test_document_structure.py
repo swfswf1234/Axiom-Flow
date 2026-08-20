@@ -71,8 +71,11 @@ def test_guides_are_two_human_handbooks_and_an_index():
 
     operations = (DOCS / "guides" / "operations.md").read_text(encoding="utf-8")
     todo = (DOCS / "trackers" / "todo.md").read_text(encoding="utf-8")
+    completed = (DOCS / "trackers" / "completed.md").read_text(encoding="utf-8")
     assert "infra-up.ps1" in operations
-    assert "V2-001" in todo and "WSL 容器基建" in todo
+    # 关闭任务原子迁移 completed.md；todo 仅保留未关闭工作（MODEL-001 轮清理 V2-001）
+    assert "V2-001" in completed and "WSL 容器基建" in completed
+    assert "V2-001" not in todo
     assert "WSL" in operations
 
 
