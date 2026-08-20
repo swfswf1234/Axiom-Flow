@@ -2,9 +2,12 @@
 
 子进程 = `sys.executable -m uvicorn axiom_flow.api.main:app`（继承当前解释器，天然落在
 QED_env）；PID 文件 logs/qed-axiom.pid，子进程 stdout/stderr 落 logs/qed-axiom-serve.log。
-环境：从仓库根向上查找 `.env`，setdefault 注入 `AXIOM_*` 与供应商 key（已有环境不覆盖），
-standalone 启动不缺凭据。接口契约（含 8900 控制中心接入方式）见
-docs/design/service-lifecycle.md。
+环境：从仓库根查找 `.env`，setdefault 注入 `AXIOM_*` / `QED_*` 与 `API_KEY`（已有环境
+不覆盖，逐厂商 key 别名已退役），standalone 启动不缺凭据。
+模型模式：`--mode local|qed-engine`（start/restart 可传），持久化到 logs/qed-axiom-mode；
+不传时默认读自身 .env 的 QED_API_SELECT（缺省 local）；子进程 env 注入 QED_API_SELECT。
+接口契约（含 8900 控制中心接入方式）见 docs/design/service-lifecycle.md 与
+docs/design/model-mode-config.md。
 
 退出码：0 成功/幂等；1 运行失败（spawn 失败、health 超时）；2 参数错误（argparse）。
 Windows 注意：os.kill(pid, 0) 会直接 TerminateProcess，进程存在性检测用 tasklist。
@@ -25,6 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = ROOT / "logs"
 PID_FILE = LOG_DIR / "qed-axiom.pid"
+MODE_FILE = LOG_DIR / "qed-axiom-mode"
 SERVE_LOG = LOG_DIR / "qed-axiom-serve.log"
 
 DEFAULT_PORT = 8902
@@ -68,9 +72,10 @@ def serve_command(port: int) -> list[str]:
 
 
 def _load_env(start: Path) -> None:
-    """从 start 向上查找 `.env`，注入 `AXIOM_*` 与供应商 key（已有环境变量不覆盖）。
+    """从 start 向上查找 `.env`，注入 `AXIOM_*` / `QED_*` 与 `API_KEY`（已有环境变量不覆盖）。
 
     独立启动 `axiom_flow_service.py` 时补上仓库统一配置，保持与调用方注入环境一致。
+    逐厂商 key 别名（QWEN_API_KEY / DEEPSEEK_API_KEY / GLM_API_KEY）按根仓库裁决退役。
     """
     env_path = next(
         (candidate / ".env" for candidate in [start, *start.parents] if (candidate / ".env").is_file()), None
@@ -83,7 +88,7 @@ def _load_env(start: Path) -> None:
             continue
         key, _, value = line.partition("=")
         key = key.strip()
-        if key.startswith("AXIOM_") or key in ("QWEN_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY"):
+        if key.startswith(("AXIOM_", "QED_")) or key == "API_KEY":
             os.environ.setdefault(key, value.strip().strip('"').strip("'"))
 
 
@@ -133,8 +138,41 @@ def _health_ok(port: int) -> bool:
         return False
 
 
-def _spawn(port: int) -> int:
-    """拉起服务进程并写 PID 文件；返回退出码。"""
+def default_mode() -> str:
+    """模式默认：自身 .env 的 QED_API_SELECT（缺省 local）。"""
+    env_path = ROOT / ".env"
+    if env_path.is_file():
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            if key.strip() == "QED_API_SELECT":
+                value = value.strip().strip('"').strip("'")
+                if value:
+                    return value
+    return "local"
+
+
+def read_mode() -> str:
+    """当前运行模式：状态文件优先，缺省读自身 .env。"""
+    if MODE_FILE.is_file():
+        try:
+            value = MODE_FILE.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    return default_mode()
+
+
+def write_mode(mode: str) -> None:
+    MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MODE_FILE.write_text(mode, encoding="utf-8")
+
+
+def _spawn(port: int, mode: str) -> int:
+    """拉起服务进程并写 PID 文件；返回退出码。env 注入 QED_API_SELECT（模式生效）。"""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = open(SERVE_LOG, "ab")  # noqa: SIM115 - 子进程继承句柄，随其生命周期
     try:
@@ -144,7 +182,7 @@ def _spawn(port: int) -> int:
             stdout=log_file,
             stderr=subprocess.STDOUT,
             creationflags=NEW_PROCESS_GROUP,
-            env=os.environ.copy(),
+            env={**os.environ.copy(), "QED_API_SELECT": mode},
         )
     except Exception as exc:
         log_file.close()
@@ -176,7 +214,9 @@ def cmd_start(args: argparse.Namespace) -> int:
     if _port_open(port):
         print(f"already running (port {port})")
         return 0
-    if _spawn(port) != 0:
+    mode = getattr(args, "mode", None) or default_mode()
+    write_mode(mode)
+    if _spawn(port, mode) != 0:
         return 1
     if args.wait and args.wait > 0:
         return _wait_healthy(port, args.wait)
@@ -233,7 +273,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     port = args.port if args.port is not None else default_port()
     pid = read_pid()
     if pid is not None and _pid_is_alive(pid):
-        print(f"running (pid {pid})")
+        print(f"running (pid {pid}, mode {read_mode()})")
         return 0
     if pid is not None:
         PID_FILE.unlink(missing_ok=True)
@@ -260,15 +300,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--wait", nargs="?", const=HEALTH_TIMEOUT_SECONDS, type=float, default=0.0,
         help=f"等待 /api/v1/health 就绪，默认 {HEALTH_TIMEOUT_SECONDS:g}s",
     )
+    start.add_argument(
+        "--mode", choices=("local", "qed-engine"), default=None,
+        help="模型模式：local=直连 qwen-vl / qed-engine=经 8900 网关（默认读自身 .env 的 QED_API_SELECT）",
+    )
     start.set_defaults(func=cmd_start)
 
     stop = subparsers.add_parser("stop", help="停止服务（优雅 + 强杀兜底）")
     stop.set_defaults(func=cmd_stop)
 
-    restart = subparsers.add_parser("restart", help="重启服务")
+    restart = subparsers.add_parser("restart", help="重启服务（可 --mode 换模式，重启后生效）")
     restart.add_argument(
         "--wait", nargs="?", const=HEALTH_TIMEOUT_SECONDS, type=float, default=0.0,
         help=f"等待 /api/v1/health 就绪，默认 {HEALTH_TIMEOUT_SECONDS:g}s",
+    )
+    restart.add_argument(
+        "--mode", choices=("local", "qed-engine"), default=None,
+        help="模型模式：local=直连 qwen-vl / qed-engine=经 8900 网关（默认读自身 .env 的 QED_API_SELECT）",
     )
     restart.set_defaults(func=cmd_restart)
 

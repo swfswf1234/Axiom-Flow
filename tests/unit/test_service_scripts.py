@@ -37,10 +37,12 @@ def module():
 
 @pytest.fixture
 def isolated(module, monkeypatch, tmp_path):
-    """把 PID/日志路径全部隔离到 tmp 目录。"""
+    """把 PID/日志/模式文件路径与 ROOT（.env 查找基准）全部隔离到 tmp 目录。"""
     monkeypatch.setattr(module, "LOG_DIR", tmp_path)
     monkeypatch.setattr(module, "PID_FILE", tmp_path / "qed-axiom.pid")
     monkeypatch.setattr(module, "SERVE_LOG", tmp_path / "serve.log")
+    monkeypatch.setattr(module, "MODE_FILE", tmp_path / "qed-axiom-mode")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
     return tmp_path
 
 
@@ -121,6 +123,77 @@ def test_default_port_fallback(module, monkeypatch):
     assert module.default_port() == 8902
 
 
+def test_default_mode_reads_env_qed_api_select(module, monkeypatch, tmp_path):
+    (tmp_path / ".env").write_text(
+        '# comment\nQED_API_SELECT="qed-engine"\nAXIOM_PORT=8902\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    assert module.default_mode() == "qed-engine"
+
+
+def test_default_mode_empty_env_value_falls_back_local(module, monkeypatch, tmp_path):
+    (tmp_path / ".env").write_text('QED_API_SELECT=""\n', encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    assert module.default_mode() == "local"
+
+
+def test_default_mode_no_env_file_is_local(module, monkeypatch, tmp_path):
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    assert module.default_mode() == "local"
+
+
+def test_read_mode_prefers_mode_file(module, isolated):
+    (isolated / "qed-axiom-mode").write_text("qed-engine", encoding="utf-8")
+    assert module.read_mode() == "qed-engine"
+
+
+def test_read_mode_falls_back_to_default(module, isolated):
+    (isolated / ".env").write_text("QED_API_SELECT=qed-engine\n", encoding="utf-8")
+    assert module.read_mode() == "qed-engine"
+
+
+def test_parser_mode_choices_for_start_and_restart(module):
+    for cmd in ("start", "restart"):
+        assert module.build_parser().parse_args([cmd, "--mode", "qed-engine"]).mode == "qed-engine"
+        assert module.build_parser().parse_args([cmd]).mode is None
+    with pytest.raises(SystemExit):
+        module.build_parser().parse_args(["start", "--mode", "bogus"])
+
+
+def test_start_with_mode_writes_mode_file_and_spawn_env(module, isolated, monkeypatch):
+    calls: dict = {}
+
+    def fake_popen(cmd, **kwargs):
+        calls["env"] = kwargs.get("env")
+        return FakeProc(pid=4242)
+
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(module, "_port_open", lambda port: False)
+    monkeypatch.setattr(module, "_pid_is_alive", lambda pid: False)
+    args = module.build_parser().parse_args(["start", "--mode", "qed-engine"])
+    assert module.cmd_start(args) == 0
+    assert (isolated / "qed-axiom-mode").read_text(encoding="utf-8") == "qed-engine"
+    assert calls["env"]["QED_API_SELECT"] == "qed-engine"
+
+
+def test_start_without_mode_uses_default_from_env(module, isolated, monkeypatch):
+    (isolated / ".env").write_text("QED_API_SELECT=qed-engine\n", encoding="utf-8")
+    calls: dict = {}
+
+    def fake_popen(cmd, **kwargs):
+        calls["env"] = kwargs.get("env")
+        return FakeProc(pid=4242)
+
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(module, "_port_open", lambda port: False)
+    monkeypatch.setattr(module, "_pid_is_alive", lambda pid: False)
+    args = module.build_parser().parse_args(["start"])
+    assert module.cmd_start(args) == 0
+    assert (isolated / "qed-axiom-mode").read_text(encoding="utf-8") == "qed-engine"
+    assert calls["env"]["QED_API_SELECT"] == "qed-engine"
+
+
 def test_start_writes_pid_and_spawns_uvicorn(module, isolated, monkeypatch):
     calls: dict = {}
 
@@ -196,24 +269,36 @@ def test_start_wait_timeout_returns_1(module, isolated, monkeypatch):
     assert module.cmd_start(args) == 1
 
 
-def test_load_env_injects_axiom_vars(module, monkeypatch, tmp_path):
+def test_load_env_injects_axiom_qed_and_api_key(module, monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "# comment\nAXIOM_API_KEY=secret-key\nQWEN_API_KEY=shared-key\nAXIOM_VISION_MODEL=qwen-vl-ocr\n",
+        "# comment\n"
+        "AXIOM_API_KEY=secret-key\n"
+        "QWEN_API_KEY=retired-key\n"
+        "AXIOM_VISION_MODEL=qwen-vl-ocr\n"
+        "QED_API_SELECT=qed-engine\n"
+        "API_KEY=sk-test\n"
+        "QED_LLM_GATEWAY_URL=http://127.0.0.1:8900\n"
+        "AXIOM_PORT=8902\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("AXIOM_API_KEY", "existing")
     module._load_env(tmp_path)
     # 已有环境变量不覆盖
     assert module.os.environ["AXIOM_API_KEY"] == "existing"
-    # 缺失变量注入
-    assert module.os.environ["QWEN_API_KEY"] == "shared-key"
+    # 缺失变量注入（QED_* 与 API_KEY；逐厂商 key 别名已退役，不再注入）
+    assert module.os.environ["QED_API_SELECT"] == "qed-engine"
+    assert module.os.environ["API_KEY"] == "sk-test"
+    assert module.os.environ["QED_LLM_GATEWAY_URL"] == "http://127.0.0.1:8900"
+    assert module.os.environ["AXIOM_PORT"] == "8902"
     assert module.os.environ["AXIOM_VISION_MODEL"] == "qwen-vl-ocr"
+    assert "QWEN_API_KEY" not in module.os.environ
 
 
 def test_load_env_no_env_file_is_noop(module, monkeypatch, tmp_path):
+    monkeypatch.delenv("QED_API_SELECT", raising=False)
     module._load_env(tmp_path)
-    assert "QWEN_API_KEY" not in module.os.environ or True  # 不抛异常即通过
+    assert "QED_API_SELECT" not in module.os.environ  # 不抛异常即通过
 
 
 def test_stop_no_pid_file(module, isolated, monkeypatch):
@@ -311,11 +396,13 @@ def test_restart_stops_then_starts(module, monkeypatch):
     assert calls == ["stop", "start"]
 
 
-def test_status_running_by_pid(module, isolated, monkeypatch):
+def test_status_running_by_pid(module, isolated, monkeypatch, capsys):
     (isolated / "qed-axiom.pid").write_text("4242", encoding="utf-8")
+    (isolated / "qed-axiom-mode").write_text("qed-engine", encoding="utf-8")
     monkeypatch.setattr(module, "_pid_is_alive", lambda pid: True)
     args = module.build_parser().parse_args(["status"])
     assert module.cmd_status(args) == 0
+    assert "running (pid 4242, mode qed-engine)" in capsys.readouterr().out
 
 
 def test_status_running_by_port(module, isolated, monkeypatch):
