@@ -86,7 +86,7 @@ class VisionClient:
         if self.is_gateway:
             data = image.read_bytes() if isinstance(image, Path) else bytes(image)
             image_base64 = base64.b64encode(data).decode("ascii")
-            reply = self._gateway_vision(image_base64=image_base64, prompt=PROMPT, page_no=page_no)
+            reply = self._gateway_vision(image_base64=image_base64, prompt=PROMPT)
             return VisionResult(
                 markdown=reply,
                 contract_version="gateway-vision-v1",
@@ -126,7 +126,6 @@ class VisionClient:
         pdf_base64: str | None = None,
         pdf_filename: str = "input.pdf",
         prompt: str = "",
-        page_no: int | None = None,
     ) -> str:
         """调用网关 /llm/vision，返回 ``reply``；``success=false`` / 格式错 / 网络错抛 VisionError。"""
         payload: dict[str, Any] = {"prompt": prompt}

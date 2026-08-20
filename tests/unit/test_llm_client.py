@@ -26,6 +26,31 @@ def _gateway_ok(reply: str, call_id: int | None = 7) -> httpx.Response:
     )
 
 
+_ENV_KEYS = (
+    "API_KEY",
+    "AXIOM_API_KEY",
+    "QED_API_SELECT",
+    "AXIOM_VISION_MODEL",
+    "QED_LLM_GATEWAY_URL",
+    "QED_DB_HOST",
+    "QED_DB_PORT",
+    "QED_DB_NAME",
+    "QED_DB_USER",
+    "QED_DB_PASSWORD",
+    "AXIOM_PORT",
+    "AXIOM_FLOW_DATA_DIR",
+    "AXIOM_DATA_DIR",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env(monkeypatch, tmp_path):
+    """隔离父目录 .env 链与真实环境：默认构造不解析到本机 .env 值。"""
+    monkeypatch.chdir(tmp_path)
+    for key in _ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
 class _RecordingConnection:
     """记录每次 execute 的参数，供断言 INSERT 内容。"""
 
@@ -266,6 +291,42 @@ class TestGateway:
         client = VisionClient(api_select="qed-engine", transport=httpx.MockTransport(handler))
 
         with pytest.raises(VisionError):
+            client.parse_pdf(b"pdf")
+
+    def test_http_5xx_raises_with_status(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(502, json={"error": "bad gateway"})
+
+        client = VisionClient(api_select="qed-engine", transport=httpx.MockTransport(handler))
+
+        with pytest.raises(VisionError, match="502"):
+            client.parse_pdf(b"pdf")
+
+    def test_timeout_raises_readable_error(self):
+        def handler(request: httpx.Request):
+            raise httpx.ReadTimeout("slow")
+
+        client = VisionClient(api_select="qed-engine", transport=httpx.MockTransport(handler))
+
+        with pytest.raises(VisionError, match="网关请求超时"):
+            client.parse_pdf(b"pdf")
+
+    def test_network_error_raises_readable_error(self):
+        def handler(request: httpx.Request):
+            raise httpx.ConnectError("connection refused")
+
+        client = VisionClient(api_select="qed-engine", transport=httpx.MockTransport(handler))
+
+        with pytest.raises(VisionError, match="网关请求失败"):
+            client.parse_pdf(b"pdf")
+
+    def test_non_json_body_raises_format_error(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text="not json", headers={"content-type": "text/plain"})
+
+        client = VisionClient(api_select="qed-engine", transport=httpx.MockTransport(handler))
+
+        with pytest.raises(VisionError, match="网关响应格式无效"):
             client.parse_pdf(b"pdf")
 
     def test_is_gateway_reflects_api_select(self):

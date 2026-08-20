@@ -56,9 +56,10 @@ def _make_book(data_dir: Path, book_id: str = "01-test-book") -> None:
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch) -> TestClient:
-    """隔离数据目录 + TestClient。"""
+    """隔离数据目录 + .env 链 + TestClient。"""
+    monkeypatch.chdir(tmp_path)  # 隔离父目录 .env，凭据只来自下方显式设置
     monkeypatch.setenv("AXIOM_FLOW_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("AXIOM_API_KEY", "test-key")
+    monkeypatch.setenv("API_KEY", "test-key")
     _make_book(default_data_dir())
     from axiom_flow.api.main import app
 
