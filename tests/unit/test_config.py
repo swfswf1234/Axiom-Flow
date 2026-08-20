@@ -70,6 +70,20 @@ class TestLoadSettingsPriority:
         assert settings.data_dir == REPO_ROOT / "data"
 
 
+class TestEnvIntTolerance:
+    """坏值环境变量不阻断启动：int 转换失败回退内置默认。"""
+
+    def test_invalid_db_port_env_falls_back_to_default(self, isolated, monkeypatch):
+        monkeypatch.setenv("QED_DB_PORT", "abc")
+
+        assert load_settings().db_port == 3306
+
+    def test_invalid_port_env_falls_back_to_default(self, isolated, monkeypatch):
+        monkeypatch.setenv("AXIOM_PORT", "notnum")
+
+        assert load_settings().port == 8902
+
+
 class TestDotenvIsolation:
     """.env 只读合并，不污染 os.environ。"""
 
@@ -95,6 +109,11 @@ class TestDotenvIsolation:
         (isolated / ".env").write_text("API_KEY=\n", encoding="utf-8")
 
         assert llm_api_key() == ""
+
+    def test_utf8_bom_dotenv_first_key_parsed(self, isolated):
+        (isolated / ".env").write_bytes(b"\xef\xbb\xbfQED_API_SELECT=local\n")
+
+        assert load_settings().api_select == "local"
 
 
 class TestLlmApiKey:

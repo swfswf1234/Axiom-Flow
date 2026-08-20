@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -36,16 +37,24 @@ class Settings:
         return bool(self.db_password)
 
 
+def _to_int(value: Any, default: int) -> int:
+    """int 转换容错：坏值（ValueError/TypeError）回退内置默认，不阻断启动。"""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
 _ENV_MAP = {
     "QED_API_SELECT": ("api_select", str),
     "QED_LLM_GATEWAY_URL": ("llm_gateway_url", str),
     "AXIOM_VISION_MODEL": ("vision_model", str),
     "QED_DB_HOST": ("db_host", str),
-    "QED_DB_PORT": ("db_port", int),
+    "QED_DB_PORT": ("db_port", partial(_to_int, default=3306)),
     "QED_DB_NAME": ("db_name", str),
     "QED_DB_USER": ("db_user", str),
     "QED_DB_PASSWORD": ("db_password", str),
-    "AXIOM_PORT": ("port", int),
+    "AXIOM_PORT": ("port", partial(_to_int, default=8902)),
 }
 
 
@@ -60,7 +69,7 @@ def _env_file_values(start: Path | None = None) -> dict[str, str]:
     for candidate in (candidate / ".env" for candidate in (start, *start.parents)):
         if not candidate.is_file():
             continue
-        for raw in candidate.read_text(encoding="utf-8").splitlines():
+        for raw in candidate.read_text(encoding="utf-8-sig").splitlines():
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
