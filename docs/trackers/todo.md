@@ -11,7 +11,6 @@
 
 | ID | 类型 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
-| MODEL-001 | Plan | P0 | Completed | [计划 2026-08：模型模式与 MinerU 网关轮](../plans/2026-08-model-mode-and-mineru-gateway.md) | T1-T7 全部通过（2026-08-21）：config.py/llm_client.py/service --mode/文档同步/本地+网关+跨项目冒烟；提交 `fcb9eb9..c212e8e`；门禁 179 passed + ruff 全绿 |
 | V2-004 | Feature | P0 | Open | orchestrator：任务编排 + state.sqlite（jobs/pages）+ 质量信号（空块率/公式置信度/表格成功数） | **根仓库 C 组联调前置请求（2026-08-16）**：8902 API 服务建立（V2-003~007）后回执根仓库（integration-matrix C 组 / REQ-034/036 衔接）；单元 + 集成（mock MinerU）测试通过 |
 | V2-005 | Feature | P0 | Completed | MinerU 接入：HTTP 上传 PDF → 解析 → 结果落盘（md/blocks/页图） | **V2-014 轮完成（MODEL-001，2026-08-21）**：MinerU 编排移交根仓库；qed-engine 模式经 8900 网关 `/llm/vision`（T6 冒烟通过）；local 模式 qwen-vl 直连（T5 冒烟通过）；门禁 179 passed + ruff 全绿 |
 | V2-007 | Feature | P1 | In Progress | API v1 端点：parse-jobs/books/pages/manifest | **第一版已实现并启动（2026-08-16，`ca06a11`）**：8902 服务在线（books/pages/image/manifest/parse-jobs），契约测试 11 通过，冒烟全通；契约草案见 [8902 集成契约与联调对齐](../design/8902-integration-contract.md)，**冻结节点待根仓库 REQ-034 评审确认** |
