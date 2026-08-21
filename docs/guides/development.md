@@ -1,7 +1,7 @@
 # 开发指南
 
 状态：Current
-最后更新：2026-08-14
+最后更新：2026-08-21
 
 ## 环境
 
@@ -10,6 +10,16 @@
 | Python | 3.12（Anaconda 环境 `QED_env`：`D:\software\anaconda3\envs\QED_env\python.exe`） |
 | 包管理 | `pip install -e ".[dev]"`（pyproject.toml 为依赖事实源） |
 | 推理服务 | WSL Ubuntu 24.04 + Docker Compose（见 [运维指南](operations.md)） |
+
+## 必需环境变量
+
+| 变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `API_KEY` | 统一供应商密钥（替代原 `AXIOM_API_KEY`） | — |
+| `QED_API_SELECT` | 调用模式：`local`（自身 API_KEY 直连）或 `qed-engine`（经 8900 网关） | `local` |
+| `QED_LLM_GATEWAY_URL` | 8900 网关地址（qed-engine 模式使用） | `http://127.0.0.1:8900` |
+| `AXIOM_VISION_MODEL` | 视觉模型名 | `qwen-vl-plus` |
+| `AXIOM_MYSQL_*` | MySQL 连接（见 `.env`） | — |
 
 ## 常用命令
 

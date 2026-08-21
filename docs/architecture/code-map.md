@@ -1,7 +1,7 @@
 # 代码映射（v2）
 
 状态：Current
-最后更新：2026-08-16
+最后更新：2026-08-21
 
 本表登记受管模块与其设计文档（DesignRef）、测试的对应关系。v1 模块已归档
 （`docs/history/v1-20260814/`），不在此列。新包结构在实施计划
@@ -16,6 +16,7 @@
 | `src/axiom_flow/ingest/` | PDF 导入、页图渲染、book.json | **Current** | `docs/design/pdf-parsing-and-rendering.md` | `tests/unit/test_ingest.py` | V2-003 完成 |
 | `src/axiom_flow/fallback/` | qwen-vl-plus 客户端（页图 → Markdown → blocks 归一化） | **Current** | `docs/design/pdf-parsing-and-rendering.md` | `tests/unit/test_fallback.py` | V2-010 实验落地（V2-006 继承） |
 | `src/axiom_flow/schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job） | **Current** | `docs/design/pdf-parsing-and-rendering.md` | `tests/unit/test_schemas.py` | V2-002 完成 |
+| `src/axiom_flow/llm_client.py` | VisionClient（双模式视觉调用，local 直连 / qed-engine 网关） | **Current** | `docs/design/model-mode-config.md` | `tests/unit/test_llm_client.py` | V2-014 实现完成 |
 
 ## 非受管配置
 

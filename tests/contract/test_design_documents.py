@@ -20,6 +20,7 @@ CURRENT_DOCUMENTS = {
     "service-lifecycle-encoding-fix.md",
     "af-books-sync.md",
     "model-mode-config.md",
+    "docs-restructure-alignment.md",
 }
 
 
