@@ -22,8 +22,8 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `scripts/compose.yaml` 与 `scripts/infra-*.ps1` | WSL 容器编排与启停（V2-001） |
-| `scripts/axiom_flow_service.py` | 8902 API 服务生命周期（start/stop/restart/status，DesignRef：`docs/design/service-lifecycle.md`） |
+| `scripts/axiom_flow_service.py` | 8902 API 服务唯一启停脚本（start/stop/restart/status，DesignRef：`docs/design/service-lifecycle.md`） |
+| `scripts/tmp/` | 临时/试验脚本（V2-010 试验运行器、质量统计、旧冒烟脚本等） |
 | `data/` | 运行时工作目录（ignore、可再生；`data/books/<book_id>/` 为解析产物），源书在 `dataset/` 只读 |
 | `evaluation/` | 评估专区（样本与报告，与主链路隔离；v1 评测代码已移除，V2 评估体系待 V2-008 重建） |
 | `web/` | 已移交 QED-Engine，本仓库不再维护 |
