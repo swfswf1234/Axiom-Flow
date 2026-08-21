@@ -1,6 +1,10 @@
 # 8902 集成契约与联调对齐（Axiom-Flow × QED-Engine）
 
-设计状态：Accepted
+> 归档说明：Superseded（v0.1 版本文档体系对齐，V2-015）。8902 API 契约已固定落位于
+> `docs/architecture/api.md`；本文件保留联调时序、待对齐问题与契约草案演进记录。历史资料只
+> 解释背景，不覆盖当前设计。
+
+设计状态：Superseded
 实现状态：Pending（V2-007 实现后冻结，本契约草案供根仓库 REQ-034 评审）
 最后更新：2026-08-16
 关联代码：`src/axiom_flow/schemas.py`（统一格式 Pydantic 模型，单一事实源）、`src/axiom_flow/api/`（待 V2-007 实现）

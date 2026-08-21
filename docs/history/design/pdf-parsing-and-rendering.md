@@ -1,6 +1,10 @@
 # PDF 解析与渲染（v2 探索基线）
 
-设计状态：Accepted
+> 归档说明：Superseded（v0.1 版本文档体系对齐，V2-015）。解析管线主体已由
+> `docs/design/parsing-pipeline.md` 承接（本仓库当前设计）；对外 API 契约见
+> `docs/architecture/api.md`。历史资料只解释背景，不覆盖当前设计。
+
+设计状态：Superseded
 实现状态：Partial（ingest/schemas/fallback 已实现，orchestrator/api 待对应 V2 任务；fallback 为 V2-010 实验版本）
 最后更新：2026-08-16
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/fallback/`、`src/axiom_flow/schemas.py`（其余待实现）

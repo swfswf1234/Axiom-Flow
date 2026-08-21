@@ -6,7 +6,7 @@
 ## 8902 API 服务生命周期
 
 本仓库 8902 API 服务（`uvicorn axiom_flow.api.main:app`，Windows 侧）启停由生命周期脚本
-`scripts/axiom_flow_service.py` 管理（契约见[服务生命周期脚本设计](../design/service-lifecycle.md)）：
+`scripts/axiom_flow_service.py` 管理（契约见 [8902 API 接口文档](../architecture/api.md) ①生命周期与健康）：
 
 ```powershell
 & D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py start --wait

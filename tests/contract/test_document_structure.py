@@ -23,7 +23,7 @@ DOCUMENT_DIRECTORIES = (
     "history",
 )
 ACTIVE_GUIDES = {"index.md", "development.md", "operations.md"}
-HISTORY_DIRECTORIES = {"adr", "baselines", "plans", "v1-20260814"}
+HISTORY_DIRECTORIES = {"adr", "baselines", "design", "plans", "v1-20260814"}
 RETAINED_2026_07_PLANS = {
     "2026-07-v02-first-loop.md",
     "2026-07-v03-architecture-rebuild.md",

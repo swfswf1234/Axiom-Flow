@@ -1,6 +1,10 @@
 # 服务生命周期脚本设计（service-lifecycle）
 
-设计状态：Accepted
+> 归档说明：Superseded（v0.1 版本文档体系对齐，V2-015）。服务生命周期契约已固定落位于
+> `docs/architecture/api.md` ①生命周期与健康分类；本文件保留脚本设计与平台约束的演进记录。
+> 历史资料只解释背景，不覆盖当前设计。
+
+设计状态：Superseded
 实现状态：Implemented
 最后更新：2026-08-17
 关联代码：`scripts/axiom_flow_service.py`、`src/axiom_flow/api/main.py`（`/api/v1/health`）

@@ -1,6 +1,6 @@
 """8902 API v1 路由：对外协议适配，返回结构与 schemas 一致（设计文档 §组件职责）。
 
-设计关联（DesignRef）：docs/design/8902-integration-contract.md、docs/design/service-lifecycle.md
+设计关联（DesignRef）：docs/architecture/api.md、docs/design/parsing-pipeline.md
 实现状态：Current（V2-007 第一版；parse-jobs 为内存态同步执行，V2-004 接手 state.sqlite 与后台任务）
 关联测试：tests/contract/test_api_v1_contract.py
 """

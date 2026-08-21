@@ -6,8 +6,8 @@ QED_env）；PID 文件 logs/qed-axiom.pid，子进程 stdout/stderr 落 logs/qe
 不覆盖，逐厂商 key 别名已退役），standalone 启动不缺凭据。
 模型模式：`--mode local|qed-engine`（start/restart 可传），持久化到 logs/qed-axiom-mode；
 不传时默认读自身 .env 的 QED_API_SELECT（缺省 local）；子进程 env 注入 QED_API_SELECT。
-接口契约（含 8900 控制中心接入方式）见 docs/design/service-lifecycle.md 与
-docs/design/model-mode-config.md。
+接口契约（含 8900 控制中心接入方式）见 docs/architecture/api.md ①生命周期与健康分类；
+模型模式设计见 docs/design/model-mode-config.md。
 
 退出码：0 成功/幂等；1 运行失败（spawn 失败、health 超时）；2 参数错误（argparse）。
 Windows 注意：os.kill(pid, 0) 会直接 TerminateProcess，进程存在性检测用 tasklist。

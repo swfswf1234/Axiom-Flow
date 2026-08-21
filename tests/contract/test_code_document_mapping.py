@@ -12,8 +12,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CODE_MAP = ROOT / "docs" / "architecture" / "code-map.md"
 ACTIVE_DOCUMENTS = [
-    ROOT / "docs" / "design" / "pdf-parsing-and-rendering.md",
+    ROOT / "docs" / "design" / "parsing-pipeline.md",
     ROOT / "docs" / "architecture" / "overview.md",
+    ROOT / "docs" / "architecture" / "api.md",
+    ROOT / "docs" / "architecture" / "database-design.md",
 ]
 
 

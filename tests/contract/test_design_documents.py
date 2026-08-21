@@ -14,13 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DESIGN = ROOT / "docs" / "design"
 MERMAID_BLOCK = re.compile(r"```mermaid\s*\n(?P<body>.*?)```", re.DOTALL)
 CURRENT_DOCUMENTS = {
-    "pdf-parsing-and-rendering.md",
-    "8902-integration-contract.md",
-    "service-lifecycle.md",
-    "service-lifecycle-encoding-fix.md",
+    "parsing-pipeline.md",
     "af-books-sync.md",
     "model-mode-config.md",
-    "docs-restructure-alignment.md",
 }
 
 

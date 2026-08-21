@@ -39,10 +39,10 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 | 任务 | 首查实现 | 设计/协议 | 定向测试 |
 | --- | --- | --- | --- |
 | WSL 容器、启停、推理服务 | `scripts/`（compose.yaml、infra-*.ps1） | `guides/operations.md`、ADR 0001 | 冒烟链路 |
-| 解析编排、质量校验、兜底 | `src/axiom_flow/orchestrator/`、`fallback/` | `docs/design/pdf-parsing-and-rendering.md` | `tests/unit/`、`tests/integration/` |
-| PDF 导入与页图 | `src/axiom_flow/ingest/` | `docs/design/pdf-parsing-and-rendering.md` | `tests/unit/` |
-| 统一格式与 schemas | `src/axiom_flow/schemas.py` | `docs/design/pdf-parsing-and-rendering.md` | 契约测试 |
-| API 端点 | `src/axiom_flow/api/` | `docs/design/pdf-parsing-and-rendering.md` | 契约测试 |
+| 解析编排、质量校验、兜底 | `src/axiom_flow/orchestrator/`、`fallback/` | `docs/design/parsing-pipeline.md` | `tests/unit/`、`tests/integration/` |
+| PDF 导入与页图 | `src/axiom_flow/ingest/` | `docs/design/parsing-pipeline.md` | `tests/unit/` |
+| 统一格式与 schemas | `src/axiom_flow/schemas.py` | `docs/design/parsing-pipeline.md` | 契约测试 |
+| API 端点 | `src/axiom_flow/api/` | `docs/architecture/api.md` | 契约测试 |
 | 文档体系、计划、ADR | `docs/` | `docs/standards/documentation.md`、`adr-governance.md` | `tests/contract/` |
 | 测试分层与门禁 | `tests/`、`pyproject.toml` | `docs/standards/testing.md` | `tests/contract/test_test_suite_governance.py` |
 

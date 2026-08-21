@@ -10,6 +10,7 @@
 | --- | --- |
 | [`v1-20260814/`](v1-20260814/index.md) | v1 时代完整快照（ADR/设计/架构/标准/计划/台账），v2 推倒重来归档 |
 | [`adr/`](adr/index.md) | 更早的 Rejected 或 Superseded 架构决策 |
+| [`design/`](design/index.md) | v0.1 文档体系对齐中 Superseded 的设计文档（parsing-pipeline/api 承接） |
 | [`baselines/`](baselines/index.md) | 带 Git 锚点的被替换系统摘要（含 v01 MinerU 基线） |
 | [`plans/`](plans/index.md) | 选择性保留的迁移、发布、数据操作与事故记录 |
 

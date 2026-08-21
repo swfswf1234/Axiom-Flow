@@ -1,6 +1,6 @@
 """Markdown → blocks 确定性归一化：qwen-vl-plus 输出转统一块结构（设计文档 §组件职责）。
 
-设计关联（DesignRef）：docs/design/pdf-parsing-and-rendering.md、docs/design/8902-integration-contract.md
+设计关联（DesignRef）：docs/design/parsing-pipeline.md
 实现状态：Current（V2-010 实验落地，V2-006 继承）
 关联测试：tests/unit/test_fallback.py
 """

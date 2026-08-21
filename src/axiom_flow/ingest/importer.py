@@ -1,6 +1,6 @@
 """ingest 导入逻辑：PDF 导入、页图渲染与 book.json 生成（设计文档 §组件职责）。
 
-设计关联（DesignRef）：docs/design/pdf-parsing-and-rendering.md
+设计关联（DesignRef）：docs/design/parsing-pipeline.md
 实现状态：Current
 关联测试：tests/unit/test_ingest.py
 """

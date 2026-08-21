@@ -1,6 +1,6 @@
 """
 模块职责：守护 8902 API v1 端点返回结构与 schemas 的一致性（对外契约单一事实源）。
-设计关联（DesignRef）：docs/design/8902-integration-contract.md
+设计关联（DesignRef）：docs/architecture/api.md
 实现状态：Current
 被测代码：src/axiom_flow/api/
 守护面：API 契约

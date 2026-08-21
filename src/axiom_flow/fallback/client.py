@@ -1,6 +1,6 @@
 """qwen-vl-plus 客户端：页图 → 阿里百炼 OpenAI 兼容端点 → Markdown（设计文档 §组件职责）。
 
-设计关联（DesignRef）：docs/design/pdf-parsing-and-rendering.md、docs/design/8902-integration-contract.md
+设计关联（DesignRef）：docs/design/parsing-pipeline.md
 实现状态：Current（V2-010 实验落地，V2-006 继承）
 关联测试：tests/unit/test_fallback.py
 """

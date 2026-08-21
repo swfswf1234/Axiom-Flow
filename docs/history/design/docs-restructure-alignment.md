@@ -1,8 +1,13 @@
 # 文档体系范本对齐设计（docs-restructure-alignment）
 
-设计状态：Proposed
-实现状态：Not Started
-最后更新：2026-08-20
+> 归档说明：Superseded（V2-015 执行完毕，2026-08-21）。本任务已按设计落地：architecture/
+> 固定化（api.md / database-design.md / code-map）、adr/index v0.1 版本声明、design/ 三态梳理、
+> 契约测试同步。文档体系持续维护转长期任务 V2-016（版本末期规范化重新整理一轮）。历史资料
+> 只解释背景，不覆盖当前设计。
+
+设计状态：Superseded
+实现状态：Completed
+最后更新：2026-08-21
 需求方：QED-Engine 根仓库（REQ-002 文档治理，依据 ADR 0010 文档体系分层与版本治理）
 关联代码：无（本任务仅涉及文档结构调整，不改动功能代码）
 关联测试：`tests/contract/test_design_documents.py`（architecture/design/guides 目录集合与元数据门禁）

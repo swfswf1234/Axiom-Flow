@@ -1,6 +1,10 @@
 # 生命周期脚本 `_pid_is_alive` 编码修复（V2-012）
 
-设计状态：Accepted
+> 归档说明：Superseded（v0.1 版本文档体系对齐，V2-015）。随 service-lifecycle.md 一并归档；
+> 服务生命周期契约见 `docs/architecture/api.md` ①生命周期与健康分类。历史资料只解释背景，
+> 不覆盖当前设计。
+
+设计状态：Superseded
 实现状态：Implemented
 最后更新：2026-08-18
 关联代码：`scripts/axiom_flow_service.py`（`_pid_is_alive`）

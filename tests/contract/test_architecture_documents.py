@@ -15,6 +15,8 @@ ARCHITECTURE = ROOT / "docs" / "architecture"
 MERMAID_BLOCK = re.compile(r"```mermaid\s*\n(?P<body>.*?)```", re.DOTALL)
 CURRENT_DOCUMENTS = {
     "overview.md",
+    "api.md",
+    "database-design.md",
     "code-map.md",
 }
 
@@ -51,4 +53,28 @@ def test_code_map_lists_v2_modules_with_design_references():
         "src/axiom_flow/schemas.py",
     ):
         assert f"`{module}`" in content, module
-    assert "docs/design/pdf-parsing-and-rendering.md" in content
+    assert "docs/design/parsing-pipeline.md" in content
+
+
+def test_api_document_declares_four_categories_and_contract_endpoints():
+    content = (ARCHITECTURE / "api.md").read_text(encoding="utf-8")
+    for heading in ("生命周期与健康", "数据查询", "解析结果与 PDF 对照", "RAG·知识图谱预留"):
+        assert heading in content, heading
+    for endpoint in (
+        "GET /api/v1/health",
+        "GET /api/v1/books",
+        "POST /api/v1/parse-jobs",
+        "GET /api/v1/books/{book_id}/pages/{page_no}",
+        "GET /api/v1/books/{book_id}/manifest",
+        "GET /api/v1/parse-jobs/{job_id}",
+    ):
+        assert endpoint in content, endpoint
+    assert "src/axiom_flow/schemas.py" in content
+
+
+def test_database_design_document_declares_af_namespace_and_tables():
+    content = (ARCHITECTURE / "database-design.md").read_text(encoding="utf-8")
+    for table in ("af_books", "af_block_reviews"):
+        assert table in content, table
+    assert "af_*" in content
+    assert "qed" in content

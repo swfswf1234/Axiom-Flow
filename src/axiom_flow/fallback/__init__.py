@@ -1,6 +1,6 @@
 """fallback：qwen-vl-plus 兜底通道（页图 → Markdown → 统一 blocks）。
 
-设计关联（DesignRef）：docs/design/pdf-parsing-and-rendering.md
+设计关联（DesignRef）：docs/design/parsing-pipeline.md
 实现状态：Current（V2-010 实验落地，V2-006 继承）
 关联测试：tests/unit/test_fallback.py
 """

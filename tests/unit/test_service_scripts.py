@@ -1,6 +1,6 @@
 """scripts/axiom_flow_service.py 生命周期脚本契约测试。
 
-脚本是 8902 API 服务的启停封装（设计见 docs/design/service-lifecycle.md）。
+脚本是 8902 API 服务的启停封装（契约见 docs/architecture/api.md ①生命周期与健康）。
 测试用 tmp 目录与 monkeypatch 隔离 PID/日志路径与系统调用，不访问公网、
 不启动真实进程、不读写真实数据根。
 """
