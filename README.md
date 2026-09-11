@@ -21,7 +21,7 @@ flowchart LR
 ## 核心能力
 
 - 导入 PDF（页范围可控），以持久任务方式提交解析。
-- 使用 MinerU（vlm/hybrid 后端，本地 vLLM 推理）生成页级 Markdown、LaTeX 公式、表格与结构化块。
+- 使用 MinerU（vlm/hybrid 后端，经 8900 网关调用）生成页级 Markdown、LaTeX 公式、表格与结构化块。
 - 页级质量信号校验，效果不达标时按页调用百炼 qwen-vl-plus 兜底。
 - 产物落盘 `data/books/<book_id>/`：页图、markdown、blocks.json、state.sqlite、manifest。
 - 对外 `/api/v1` 契约：书目、任务、单页数据与产物清单，供 QED-Engine 前端调用。
@@ -31,7 +31,7 @@ flowchart LR
 | 范围 | 技术 |
 | --- | --- |
 | Backend 与协议 | Python 3.12、FastAPI、Pydantic |
-| PDF 解析 | MinerU（vlm/hybrid 后端）+ vLLM（WSL Docker 容器化，GPU 穿透） |
+| PDF 解析 | MinerU（vlm/hybrid 后端，经 8900 网关调用；容器由根仓库 `scripts/image-model/` 托管） |
 | 兜底通道 | 阿里百炼 OCR（`qwen-vl-plus`） |
 | 持久化 | 文件系统产物 + 轻量 SQLite（`state.sqlite`） |
 | 部署 | WSL Ubuntu 24.04 + Docker Compose（启停脚本控制） |
@@ -53,7 +53,7 @@ flowchart LR
 前置条件：Python 3.12（QED_env）、WSL Ubuntu 24.04 与 Docker。
 
 ```powershell
-powershell -File scripts/infra-up.ps1        # 启动推理容器（vLLM + mineru-api）
+# 推理容器由根仓库 scripts/image-model/ 托管（见运维指南）；本仓库只需安装依赖
 & D:\software\anaconda3\envs\QED_env\python.exe -m pip install -e ".[dev]"
 ```
 
@@ -63,8 +63,8 @@ powershell -File scripts/infra-up.ps1        # 启动推理容器（vLLM + miner
 ## 典型流程
 
 1. `POST /api/v1/parse-jobs` 提交解析任务（book_id、页范围、策略）。
-2. 编排层逐页调用 MinerU，质量信号校验后落盘产物。
-3. 不达标页面自动走 qwen-vl-plus 兜底（hybrid 策略）。
+2. 编排层逐页调用 MinerU（经 8900 网关，qed-engine 模式），质量信号校验后落盘产物。
+3. local 模式可直连 qwen-vl-plus 作为独立识别通道（非兜底；V2-006 兜底已取消）。
 4. QED-Engine 前端经 `/api/v1` 拉取页图与统一格式做对照展示。
 
 ## 仓库结构

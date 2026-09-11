@@ -1,6 +1,6 @@
 """
 模块职责：守护设计文档集合、Mermaid 视图和元数据保持同步。
-设计关联（DesignRef）：docs/standards/documentation.md
+设计关联（DesignRef）：docs/standards/doc-governance.md
 实现状态：Current
 被测代码：docs/design
 守护面：设计文档治理
@@ -42,3 +42,9 @@ def test_active_design_documents_declare_metadata():
         content = (DESIGN / document).read_text(encoding="utf-8")
         for field in ("设计状态：", "实现状态：", "最后更新：", "关联代码：", "关联测试：", "关联 ADR："):
             assert field in content, f"{document}: 缺少 {field}"
+
+
+def test_active_design_documents_declare_confirmation_status():
+    for document in CURRENT_DOCUMENTS:
+        content = (DESIGN / document).read_text(encoding="utf-8")
+        assert "确认状态：" in content, document

@@ -1,7 +1,7 @@
 # 关闭台账
 
 状态：Current
-最后更新：2026-08-21
+最后更新：2026-09-11
 
 本表登记已关闭任务（v2 纪元）。v1 关闭台账已归档
 （`docs/history/v1-20260814/trackers/completed.md`）。
@@ -20,3 +20,21 @@
 | 2026-08-21 | V2-014 | 模型模式与 MinerU 移交（REQ-044）：config.py + llm_client.py 双模式 + service --mode + MinerU 编排移交 | Completed | Achieved | config.py(19 tests)/llm_client.py(16 tests + fallback 重构)/service --mode(35 tests)/文档同步+契约修复；T5 本地冒烟通过；T6 网关冒烟通过（call_id=17）；T7 跨项目通过；提交 `fcb9eb9..9573fb0`（10 commits）；门禁 pytest 179 passed + ruff 全绿 |
 | 2026-08-21 | MODEL-001 | 模型模式与 MinerU 网关轮（计划 2026-08-model-mode-and-mineru-gateway.md） | Completed | Achieved | T1-T7 全部通过：config.py/llm_client.py/service --mode/文档同步/本地+网关+跨项目冒烟；提交 `fcb9eb9..9573fb0`（10 commits）；门禁 pytest 179 passed + ruff 全绿；V2-015 todo 行类型问题为外部并发变更，非本任务范围 |
 | 2026-08-21 | V2-015 | 文档体系范本对齐（计划 2026-08-docs-restructure-alignment.md，根仓库 REQ-048/ADR 0010 范本）：architecture/ 固定化（新增 api.md 8902 API 四分类 + database-design.md af_* 表 + code-map 更新）、parsing-pipeline.md 承接解析管线、Superseded 4+1 篇归档 history/design/、adr/index v0.1 版本声明、todo 转长期任务 V2-016、契约测试同步 | Completed | Achieved | 门禁 pytest 182 passed + ruff clean + 契约 56 passed；根仓库 REQ-048 回执（提交号 + 门禁输出）已交用户登记；文档体系持续维护转 V2-016（版本末期规范化整理轮） |
+| 2026-09-11 | V2-017 | 文档治理体系对齐（Axiom-Flow）：AGENT 流程/边界落位 + standards 对齐（doc-governance 改名扩写、local-dev）+ project-status 快照 + design 三态 | Completed | Achieved | 门禁 pytest 187 passed + ruff clean + 契约 57 passed；新增 ADR 0003；计划按 Delete 删除，事实并入 `docs/standards/`、`AGENTS.md`、`docs/guides/development.md` |
+| 2026-09-11 | PLAN-001 | 文档清理与任务台账重构（Axiom-Flow）：stale 清理 + 确认状态补登记为暂定 + todo 改用 ARCH/REQ/PLAN/DEFECT 前缀与主线/支线/长期类别 | Completed | Achieved | 门禁 pytest 189 passed + ruff clean + 契约 59 passed；计划按 Delete 删除，事实并入 tracker 与相关文档 |
+
+## v0.1 任务 ID 迁移（2026-09-11）
+
+未关闭任务改用 QED-Engine 式前缀（ARCH/REQ/PLAN/DEFECT）；已关闭的 `V2-xxx` 保留原编号
+（前缀不同，ID 不冲突）。映射如下，规则见 [待做任务](todo.md)「规则」节：
+
+| 原 ID | 新 ID | 说明 |
+| --- | --- | --- |
+| V2-004 | ARCH-003 | orchestrator 任务编排 |
+| V2-007 | ARCH-007 | API v1 契约冻结 |
+| V2-008 | ARCH-009 | 套1 代表书验收 |
+| V2-009 | ARCH-011 | 批量处理其余书籍 |
+| V2-013 | ARCH-008 | af_* 书目同步与块判定 |
+| V2-016 | ARCH-010 | 文档体系对齐维护 |
+| —（新增） | ARCH-001/002/004/005/006/012、REQ-001 | v0.1 解析对照闭环新增任务 |
+

@@ -1,6 +1,6 @@
 """
 模块职责：验证标准目录的边界、统一元数据和索引登记保持一致。
-设计关联（DesignRef）：docs/standards/documentation.md
+设计关联（DesignRef）：docs/standards/doc-governance.md
 实现状态：Current
 被测代码：docs/standards、AGENTS.md
 守护面：标准治理
@@ -13,12 +13,14 @@ ROOT = Path(__file__).resolve().parents[2]
 STANDARDS = ROOT / "docs" / "standards"
 STANDARD_INDEX = STANDARDS / "index.md"
 STANDARD_FILES = {
+    "doc-governance.md",
     "task-lifecycle.md",
-    "documentation.md",
     "adr-governance.md",
     "testing.md",
     "cross-project-collaboration.md",
+    "local-dev.md",
 }
+UNIFORM_FIELDS = ("状态：Current", "确认状态：", "最后更新：", "治理对象：", "依据：", "关联测试：")
 
 
 def test_standards_directory_has_only_governed_documents_and_index():
@@ -26,13 +28,14 @@ def test_standards_directory_has_only_governed_documents_and_index():
     assert filenames == {"index.md", *STANDARD_FILES}
 
 
-def test_every_standard_has_uniform_metadata():
+def test_every_standard_has_uniform_metadata_and_sections():
     for filename in STANDARD_FILES:
         content = (STANDARDS / filename).read_text(encoding="utf-8")
         assert content.splitlines()[0].startswith("# "), filename
-        assert "状态：Current" in content, filename
-        assert "最后更新：" in content, filename
-        assert "## 目的" in content, filename
+        for field in UNIFORM_FIELDS:
+            assert field in content, f"{filename}: 缺少 {field}"
+        assert "## 目的与边界" in content, filename
+        assert "## 变更与取代" in content, filename
 
 
 def test_standards_index_matches_body_boundaries():

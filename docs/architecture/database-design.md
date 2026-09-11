@@ -1,9 +1,10 @@
 # 数据库设计（Axiom-Flow af_* 命名空间）
 
 设计状态：Accepted
-实现状态：Pending（表结构登记为 V2-013 规划契约；Alembic 建表与端点实现待 V2-013）
-最后更新：2026-08-21
-关联代码：无（V2-013 建表后登记 `src/axiom_flow/` 对应模块）
+确认状态：暂定
+实现状态：Pending（表结构登记为 ARCH-008 规划契约；Alembic 建表与端点实现待 ARCH-008）
+最后更新：2026-09-11
+关联代码：无（ARCH-008 建表后登记 `src/axiom_flow/` 对应模块）
 关联测试：`tests/contract/test_architecture_documents.py`（本文档守护）
 关联 ADR：`docs/adr/0001-v2-exploration-direction.md`、根仓库 [ADR 0010](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0010-documentation-versioning.md)（固定文档范本）、根仓库 ADR 0003（共享 qed 库独立性例外）
 
@@ -26,8 +27,8 @@
 
 | 表 | 前缀 | 一行 = | 状态 | 事实源 |
 | --- | --- | --- | --- | --- |
-| `af_books` | af_*（私有） | 一册已验证书（qt_books 只读快照 + 解析进度，本侧维护） | **规划**（V2-013 承接） | 本文档 |
-| `af_block_reviews` | af_*（私有） | 一次块级判定（人工核对一致/不一致） | **规划**（V2-013 承接） | 本文档 |
+| `af_books` | af_*（私有） | 一册已验证书（qt_books 只读快照 + 解析进度，本侧维护） | **规划**（ARCH-008 承接） | 本文档 |
+| `af_block_reviews` | af_*（私有） | 一次块级判定（人工核对一致/不一致） | **规划**（ARCH-008 承接） | 本文档 |
 
 ```mermaid
 erDiagram
@@ -91,7 +92,7 @@ CREATE TABLE af_books (
   不影响已同步行（快照语义）。
 - **进度自持**：解析进度（pages_done/parse_status）由 Axiom-Flow 侧维护（解析任务/产物推断），
   不依赖 qt_books.page_count 之外的上游字段。更新路径：parse-jobs 完成页 / 产物落盘后回写
-  （V2-004 state.sqlite 接手后由后台任务回写；第一版可在 parse-jobs 同步执行结束时回写）。
+  （ARCH-003 state.sqlite 接手后由后台任务回写；第一版可在 parse-jobs 同步执行结束时回写）。
 - **字段冗余**：课程归属（domain_id/course_id/course_name）冗余进表，前端只消费 8902
   `/books` 即可建树（8901 离线不影响树展示）。
 
@@ -122,7 +123,7 @@ CREATE TABLE af_block_reviews (
   Alembic 建表与维护（本仓库只读）。
 - 新增表或字段变化：先更新本文档与对应契约测试，再实现迁移（根仓库 REQ-047 数据库设计
   长期任务）。
-- 规划边界：本文档登记的表为 **V2-013 规划契约**，冻结节点以 V2-013 回执为准；冻结前设计
+- 规划边界：本文档登记的表为 **ARCH-008 规划契约**，冻结节点以 ARCH-008 回执为准；冻结前设计
   演进以 [af-books-sync](../design/af-books-sync.md) 为准，本文档随其定稿同步。
 
 ## 敏感字段规则
@@ -133,5 +134,5 @@ CREATE TABLE af_block_reviews (
 ## 验证
 
 - `tests/contract/test_architecture_documents.py` 全绿（本文档守护：表清单、命名空间声明）。
-- V2-013 落地后：Alembic 迁移可重复执行（升级→降级→升级）；sync 幂等（重复同步不产生重复
+- ARCH-008 落地后：Alembic 迁移可重复执行（升级→降级→升级）；sync 幂等（重复同步不产生重复
   行）；review upsert 覆盖；8901/8902 离线降级不影响本表读取。

@@ -1,10 +1,11 @@
 # 模型模式与 MinerU 移交设计（model-mode-config）
 
 设计状态：Accepted
+确认状态：暂定
 Plan: docs/plans/2026-08-model-mode-and-mineru-gateway.md
 Approved-by: 用户评审
 实现状态：Implemented
-最后更新：2026-08-20
+最后更新：2026-09-11
 关联代码：`.env`、`src/axiom_flow/llm_client.py`（新增）、`scripts/axiom_flow_service.py`（`--mode` 扩展）、`scripts/compose.yaml`/`scripts/infra-*.ps1`/`scripts/docker/Dockerfile`（迁出根仓库）
 关联测试：`tests/unit/test_service_scripts.py`（`--mode` 用例）、llm_client 兼容层单测（实施时新增）
 关联 ADR：无（随根仓库 LLM 网关设计执行，实施验证后按需沉淀）

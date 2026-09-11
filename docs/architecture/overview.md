@@ -1,8 +1,9 @@
 # 系统概览（v2）
 
 设计状态：Accepted
+确认状态：暂定
 实现状态：Pending
-最后更新：2026-08-14
+最后更新：2026-09-11
 关联代码：无（新包结构实现中，见 code-map）
 关联测试：无（新测试体系建立中）
 关联 ADR：`docs/adr/0001-v2-exploration-direction.md`

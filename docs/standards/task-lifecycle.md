@@ -1,12 +1,16 @@
 # 任务生命周期
 
 状态：Current
-最后更新：2026-08-14
+确认状态：已确认
+最后更新：2026-09-11
+治理对象：任务分类（A/B/C/D）、计划生命周期、探索项目节奏
+依据：QED-Tracker 任务台账惯例与 QED-Engine 根仓库风险分级（[ADR 0003](../adr/0003-standards-governance-alignment.md)）
+关联测试：`tests/contract/test_plan_governance.py`、`tests/contract/test_tracker_governance.py`
 
-## 目的
+## 目的与边界
 
 为探索项目提供从想法到关闭的轻量流程：按风险分级，多数任务无需重流程，破坏性/受保护操作
-必须计划与备份。
+必须计划与备份。任务工作类型（A/B/C/D）与变更对象分级（见 `AGENTS.md`）正交，均须遵守。
 
 ## 任务分类
 
@@ -30,3 +34,14 @@
 - 破坏性重构允许，但必须：先归档旧物（git mv/提交）、保留回滚点、逐轮小步推进。
 - 外部模型/工具实验前必须冻结假设、样本、内容哈希、预算和采纳门槛。
 - 不做委员会式评审；用户是唯一决策者。
+
+## 执行与门禁
+
+- 计划与任务台账变更后运行 `tests/contract/test_plan_governance.py` 与
+  `tests/contract/test_tracker_governance.py`，再运行全量门禁
+  （见[开发指南](../guides/development.md)）。
+- 计划元数据、章节与关闭归档规则以[文档治理规范](doc-governance.md)为准。
+
+## 变更与取代
+
+改变任务分类、计划准入或关闭规则时必须先新增 ADR；措辞、链接和不改变语义的整理可直接修改。

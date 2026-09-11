@@ -1,6 +1,6 @@
 """
 模块职责：守护架构正文与 Mermaid 视图保持同步。
-设计关联（DesignRef）：docs/standards/documentation.md
+设计关联（DesignRef）：docs/standards/doc-governance.md
 实现状态：Current
 被测代码：docs/architecture
 守护面：架构文档治理
@@ -78,3 +78,9 @@ def test_database_design_document_declares_af_namespace_and_tables():
         assert table in content, table
     assert "af_*" in content
     assert "qed" in content
+
+
+def test_architecture_documents_declare_confirmation_status():
+    for document in CURRENT_DOCUMENTS:
+        content = (ARCHITECTURE / document).read_text(encoding="utf-8")
+        assert "确认状态：" in content, document

@@ -7,7 +7,7 @@
 - 解析任务（API 契约）     ← ParseJob / ParseJobCreate
 
 块类型：heading / paragraph / formula / table / image / list / caption / header / footer / page_number
-来源：mineru | qwen-vl-plus（兜底标记）
+来源：mineru（主引擎，经 8900 网关）| qwen-vl-plus（local 直连通道）
 """
 
 from enum import StrEnum
@@ -34,14 +34,14 @@ class BlockType(StrEnum):
 
 
 class Source(StrEnum):
-    """解析来源：mineru 主引擎 / qwen-vl-plus 兜底。"""
+    """解析来源：mineru 主引擎（经 8900 网关）/ qwen-vl-plus（local 直连通道）。"""
 
     MINERU = "mineru"
     QWEN_VL_PLUS = "qwen-vl-plus"
 
 
 class Strategy(StrEnum):
-    """任务策略：local 纯本地 / hybrid 质量不达标走兜底。"""
+    """任务策略：local 纯本地 / hybrid（历史字段，V2-006 兜底已取消，当前不做自动切换）。"""
 
     LOCAL = "local"
     HYBRID = "hybrid"

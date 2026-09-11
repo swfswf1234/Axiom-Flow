@@ -1,7 +1,7 @@
 """8902 API v1 路由：对外协议适配，返回结构与 schemas 一致（设计文档 §组件职责）。
 
 设计关联（DesignRef）：docs/architecture/api.md、docs/design/parsing-pipeline.md
-实现状态：Current（V2-007 第一版；parse-jobs 为内存态同步执行，V2-004 接手 state.sqlite 与后台任务）
+实现状态：Current（ARCH-007 第一版；parse-jobs 为内存态同步执行，ARCH-003 接手 state.sqlite 与后台任务）
 关联测试：tests/contract/test_api_v1_contract.py
 """
 
@@ -121,7 +121,7 @@ def create_app() -> FastAPI:
     def create_parse_job(payload: ParseJobCreate) -> ParseJob:
         """提交解析任务：同步执行逐页识别（qwen-vl-plus），产物覆盖落盘。
 
-        第一版内存态同步执行（页数少时可用）；V2-004 接手 state.sqlite 与后台任务。
+        第一版内存态同步执行（页数少时可用）；ARCH-003 接手 state.sqlite 与后台任务。
         """
         book_dir = _book_dir(payload.book_id)
         meta = _load_book_meta(book_dir)

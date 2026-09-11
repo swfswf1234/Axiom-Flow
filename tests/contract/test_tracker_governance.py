@@ -19,20 +19,30 @@ PLAN_LINK = re.compile(r"^\[(?P<title>[^]]+)]\(\.\./plans/(?P<path>[^)]+\.md)\)$
 ACTIVE_STATUSES = {"Accepted", "In Progress", "Blocked"}
 TERMINAL_STATUSES = {"Completed", "Cancelled", "Superseded"}
 CLOSE_RESULTS = {"Achieved", "Rejected", "Partial", "Not Applicable"}
+TODO_COLUMNS = ("ID", "类别", "优先级", "状态", "任务", "证据/下一条件")
+
+
+def _rows_from(
+    lines: list[str], header: str, columns: tuple[str, ...]
+) -> list[dict[str, str]]:
+    """收集文档中所有匹配表头的表格行（todo 按主线/治理/长期分表）。"""
+    rows: list[dict[str, str]] = []
+    for index, line in enumerate(lines):
+        if line != header:
+            continue
+        for row_line in lines[index + 2 :]:
+            if not row_line.startswith("|"):
+                break
+            cells = [cell.strip() for cell in row_line.strip().strip("|").split("|")]
+            assert len(cells) == len(columns), row_line
+            rows.append(dict(zip(columns, cells, strict=True)))
+    return rows
 
 
 def _table(path: Path, columns: tuple[str, ...]) -> list[dict[str, str]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     header = f"| {' | '.join(columns)} |"
-    start = lines.index(header)
-    rows = []
-    for line in lines[start + 2 :]:
-        if not line.startswith("|"):
-            break
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        assert len(cells) == len(columns), line
-        rows.append(dict(zip(columns, cells, strict=True)))
-    return rows
+    return _rows_from(lines, header, columns)
 
 
 def _field(content: str, name: str) -> str:
@@ -42,10 +52,7 @@ def _field(content: str, name: str) -> str:
 
 
 def _todo_rows() -> list[dict[str, str]]:
-    return _table(
-        TRACKERS / "todo.md",
-        ("ID", "类型", "优先级", "状态", "任务", "证据/下一条件"),
-    )
+    return _table(TRACKERS / "todo.md", TODO_COLUMNS)
 
 
 def _completed_rows() -> list[dict[str, str]]:
@@ -59,12 +66,19 @@ def test_tracker_directory_has_exact_governed_files_and_index_links():
     assert {path.name for path in TRACKERS.glob("*.md")} == {
         "index.md",
         "roadmap.md",
+        "project-status.md",
         "todo.md",
         "completed.md",
     }
     index = (TRACKERS / "index.md").read_text(encoding="utf-8")
-    for filename in ("roadmap.md", "todo.md", "completed.md"):
+    for filename in ("roadmap.md", "project-status.md", "todo.md", "completed.md"):
         assert f"]({filename})" in index
+
+
+def test_project_status_snapshot_declares_metadata():
+    content = (TRACKERS / "project-status.md").read_text(encoding="utf-8")
+    for field in ("设计状态：", "实现状态：", "最后更新：", "关联代码：", "关联测试：", "关联 ADR："):
+        assert field in content, field
 
 
 def test_task_ids_are_stable_unique_and_rows_are_complete():
@@ -79,13 +93,12 @@ def test_task_ids_are_stable_unique_and_rows_are_complete():
 
 
 def test_todo_plan_rows_exactly_mirror_active_plan_bodies():
-    plan_rows = {}
+    plan_rows: dict[str, tuple[dict[str, str], str]] = {}
     for row in _todo_rows():
-        if row["类型"] != "Plan":
-            continue
         link = PLAN_LINK.fullmatch(row["任务"])
-        assert link, row["ID"]
-        assert link.group("path") not in plan_rows
+        if link is None:
+            continue
+        assert link.group("path") not in plan_rows, row["ID"]
         plan_rows[link.group("path")] = (row, link.group("title"))
 
     plan_files = {path.name: path for path in PLANS.glob("*.md") if path.name != "index.md"}

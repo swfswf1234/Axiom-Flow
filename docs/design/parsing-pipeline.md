@@ -1,8 +1,9 @@
 # PDF 解析与渲染管线设计（parsing-pipeline）
 
 设计状态：Accepted
-实现状态：Partial（ingest/schemas/fallback 已实现，orchestrator 待 V2-004；fallback 为 V2-010 实验版本）
-最后更新：2026-08-21
+确认状态：暂定
+实现状态：In Progress（ingest/schemas/fallback 已实现，orchestrator 待 ARCH-003；fallback 为 V2-010 实验版本）
+最后更新：2026-09-11
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/fallback/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/orchestrator/`（待实现）
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_fallback.py`（orchestrator 待对应任务）
 关联 ADR：`docs/adr/0001-v2-exploration-direction.md`
@@ -23,8 +24,8 @@
 | --- | --- |
 | 重构策略 | 推倒重来：旧代码与 115+ 测试不沿用，git 历史与 docs/history 保留作经验参考 |
 | 第一版范围 | 解析 + 渲染数据供给；Milvus/LangChain/知识图谱/数学解析器列为后续探索项 |
-| 解析引擎 | MinerU vlm/hybrid 后端（mineru-api 单体：内嵌 vLLM + MinerU2.5 VLM，OmniDocBench 95.39） |
-| 兜底通道 | MinerU 质量不达标时按页调用百炼 qwen-vl-plus，标记 source 区分 |
+| 解析引擎 | MinerU vlm/hybrid 后端（经 8900 网关调用；容器由根仓库 `scripts/image-model/` 托管） |
+| 替代通道 | local 模式直连百炼 qwen-vl-plus（独立识别通道，标记 source 区分；**非兜底**，V2-006 兜底已取消） |
 | 展示形态 | 对照模式：原页高清图 + 解析重渲染，由 QED-Engine 前端实现 |
 | 首批书目 | 2 本代表样本（Rudin 英文 + 陈纪修中文）跑通验收后批量处理其余 10 本 |
 | 持久化 | 文件系统 + 轻量 SQLite（`data/books/<book_id>/`），Milvus 后续接入 |
@@ -40,17 +41,17 @@ flowchart TB
     end
     subgraph WIN["Windows 本地"]
         API["FastAPI 后端<br/>解析编排 + 对外 API v1"]
-        FALLBACK["百炼 qwen-vl-plus 兜底通道"]
+        QVL["百炼 qwen-vl-plus<br/>（local 直连通道）"]
         DATA["data/books/&lt;书名&gt;/<br/>页图 + markdown + blocks + sqlite"]
     end
-    subgraph WSL["WSL Ubuntu 24.04 + Docker Compose"]
+    subgraph WSL["WSL Ubuntu 24.04 + Docker Compose（根仓库托管）"]
         MA["mineru-api 服务<br/>(内嵌 vLLM, hybrid-engine)"]
         MV["Milvus（后续接入，占位）"]
     end
 
     UI -->|"REST /api/v1"| API
-    API -->|"PDF 上传 / 结果返回"| MA
-    API -->|"质量不达标兜底"| FALLBACK
+    API -->|"PDF 解析（经 8900 网关）"| MA
+    API -->|"local 直连识别"| QVL
     API -->|"产物落盘"| DATA
 ```
 
@@ -105,9 +106,9 @@ LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入
 | 模块 | 职责 |
 | --- | --- |
 | `api/` | 对外 `/api/v1` 路由，只做协议适配，不掺业务（契约见 `../architecture/api.md`） |
-| `orchestrator/` | 解析任务编排：接收 job → 逐页调 MinerU → 校验质量 → 需要时走兜底 → 产物落盘 → 更新 state.sqlite（V2-004 承接） |
+| `orchestrator/` | 解析任务编排：接收 job → 逐页调 MinerU → 校验质量 → 产物落盘 → 更新 state.sqlite（ARCH-003 承接） |
 | `ingest/` | PDF 导入：渲染页图（150 DPI+）、生成 book.json（含 SHA-256）；源 PDF 留在 `dataset/` 只读不复制（sha256 保证校验） |
-| `fallback/` | qwen-vl-plus 客户端（复用现有百炼凭据配置），输出归一化为同一 blocks 结构 |
+| `fallback/` | qwen-vl-plus 客户端（local 模式直连通道），输出归一化为同一 blocks 结构；非兜底 |
 | `schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job）——内外契约单一事实源 |
 
 与旧代码关系：全新包结构，旧 `pdf_pipeline/bailian/mysql` 等全部不引入，仅参考其配置与百炼
@@ -124,16 +125,17 @@ LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入
 - 第一版固定：单 PDF 顺序页解析（`pipeline` 流式落盘）；GPU 穿透 `--gpus all`
 - 部署实测：router 模式（`mineru-router`，独立 vLLM worker）在本环境 worker 502 循环重启
   不可用，采用单体 `mineru-api`；镜像与模型下载在 WSL 侧一次性完成（构建时拉取）
-- 模型调用形态：V2-014 后经 `llm_client.py` 双模式兼容层（`local` 直连 / `qed-engine` 经
-  8900 网关），编排与容器脚本归根仓库 `scripts/image-model/`（设计见 `model-mode-config.md`）
+- 模型调用形态：V2-014 后经 `llm_client.py` 双模式兼容层——**MinerU 仅经 `qed-engine`（8900
+  网关）可达**，`local` 模式直连 qwen-vl-plus；容器脚本归根仓库 `scripts/image-model/`
+  （设计见 `model-mode-config.md`）
 
-### 兜底通道（qwen-vl-plus）
+### 替代识别通道（qwen-vl-plus，local 模式）
 
-- 触发：页级质量信号不达标（空块率高 / formula 置信度 < 阈值 / 解析失败）+ 任务策略为
-  `hybrid` 时
+- 用途：`local` 模式下直连百炼 qwen-vl-plus 做页级识别（不依赖 8900，独立性铁律）；
+  `qed-engine` 模式下统一走 MinerU（经网关），不触发本通道
 - 输入：该页原图（复用 p0001.png）+ 页码提示；输出：归一化 blocks（同一枚举，
   `source=qwen-vl-plus`）
-- 阈值与触发规则第一版可配置化（`config.yaml`），先粗后细
+- V2-006「质量不达标自动兜底」已取消；`strategy=hybrid` 为历史字段，当前不做自动切换
 
 ### 明确不做（第一版）
 
@@ -148,8 +150,8 @@ LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入
 | 场景 | 行为 |
 | --- | --- |
 | MinerU 单页失败（超时/空输出/异常） | 重试 1 次 → 仍失败标记 `failed`，job 不中断，汇总报告列出失败页 |
-| 页质量信号不达标 | 走兜底通道（strategy=hybrid 时）；纯 local 策略标记 `fallback_skipped` + 记录原因 |
-| 兜底也失败 | 页标记 `failed` 保留原因，可单独重跑单页（job 支持页范围） |
+| 页质量信号不达标 | 记录质量信号并标记；不自动切换通道（V2-006 兜底已取消） |
+| 解析失败 | 页标记 `failed` 保留原因，可单独重跑单页（job 支持页范围） |
 | vLLM/容器未启动 | 编排层启动前健康检查，返回 503 + 提示运行容器编排脚本（见 guides/operations.md） |
 | 电源中断/进程被杀 | state.sqlite 页状态持久化 → 重启后按状态续跑未完成页（幂等） |
 | WSL 不可达 | API 层错误映射为可读中文错误信息，不泄漏堆栈 |
@@ -163,7 +165,7 @@ LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入
 2. 页级质量：抽查每本 20 页（首/中/尾 + 公式密集页），公式 LaTeX 可被 KaTeX 正确渲染 ≥ 90%
    （人工抽查），块类型标注无明显错乱
 3. API 契约：`/api/v1` 全部端点可用，返回结构与 schemas 一致（见 `../architecture/api.md`）
-4. 兜底通道：构造低质量页（如手写笔记扫描页），验证 qwen-vl-plus 兜底触发与 source 标记
+4. 替代通道：local 模式直连 qwen-vl-plus 识别成功并标记 `source=qwen-vl-plus`
 5. 失败恢复：kill 编排进程后重启，未完成页续跑成功
 
 ### 测试策略（探索项目，分层但轻量）

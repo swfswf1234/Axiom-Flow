@@ -1,6 +1,6 @@
 """
 模块职责：守护 code-map 登记的唯一性、DesignRef 有效性与活跃文档元数据。
-设计关联（DesignRef）：docs/standards/documentation.md
+设计关联（DesignRef）：docs/standards/doc-governance.md
 实现状态：Current
 被测代码：docs/architecture/code-map.md、docs/design、docs/architecture
 守护面：代码与文档映射

@@ -1,8 +1,9 @@
 # 8902 API 接口文档
 
 设计状态：Accepted
-实现状态：Current（V2-007 第一版；parse-jobs 为内存态同步执行，V2-004 接手 state.sqlite 与后台任务；数据查询类端点为 V2-013 规划契约）
-最后更新：2026-08-21
+确认状态：暂定
+实现状态：Current（ARCH-007 第一版；parse-jobs 为内存态同步执行，ARCH-003 接手 state.sqlite 与后台任务；数据查询类端点为 ARCH-008 规划契约）
+最后更新：2026-09-11
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
 关联 ADR：`docs/adr/0001-v2-exploration-direction.md`
@@ -25,7 +26,7 @@
 | 类型 | 端点 | 语义 |
 | --- | --- | --- |
 | ① 生命周期与健康 | `GET /health` + `scripts/axiom_flow_service.py {start\|stop\|restart\|status}` | 服务启停/重启/健康检测 |
-| ② 数据查询（af_*） | `GET /books`、`POST /books/sync`、块判定 `PUT/GET .../review` | af_* 数据库知识（V2-013 规划） |
+| ② 数据查询（af_*） | `GET /books`、`POST /books/sync`、块判定 `PUT/GET .../review` | af_* 数据库知识（ARCH-008 规划） |
 | ③ 解析结果与 PDF 对照 | `GET /books/{id}`、`/pages/{no}`、`/pages/{no}/image`、`/manifest`、`POST /parse-jobs`、`GET /parse-jobs/{id}` | 解析进度、原始文档对照 |
 | ④ 未来 RAG·知识图谱预留 | 见「④ 预留分类」节 | Milvus 接入占位、检索端点设计 |
 
@@ -72,8 +73,10 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
 
 - `start`：默认拉起后立即返回；`--wait [SECONDS]` 时轮询 `/api/v1/health` 直到就绪（默认超时
   30s）。已运行时报 `already running`，幂等退出 0。成功输出 `pid: <n>` 与 `log: <path>`。
-- `stop`：优雅停止（CTRL_BREAK）→ 5s 宽限 → taskkill 强杀兜底 → 清理 PID 文件；无 PID/进程
-  已死时清理残留并幂等退出 0。
+- `stop`：优雅停止（CTRL_BREAK）→ 5s 宽限（`_proc_alive` 判活）→ taskkill 强杀整树再等
+  5s → 复核仍存活报 `stop failed` 并退出 1（PID 文件保留现场）；确认终止后清理 PID 文件，
+  强杀兜底生效时输出 `stopped (forced)`；无 PID/进程已死时清理残留并幂等退出 0
+  （2026-09-04 停止可靠性修复，与根仓库脚本同构）。
 - `restart`：先 stop 后 start，透传 `--wait` 与 `--mode`。
 - `status`：PID 存活 / 端口探测（socket 预检 + HTTP 健康确认）双路径，输出
   `running (pid <n>)` / `running (port probe <port>)` / `stopped`，信息型恒退出 0。
@@ -81,22 +84,22 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
   不传默认读自身 `.env` 的 `QED_API_SELECT`（缺省 local）；子进程 env 注入 `QED_API_SELECT`
   （模型调用形态设计见 [model-mode-config](../design/model-mode-config.md)）。
 - `--port` 优先级：`--port` > `QED_AXIOM_URL` > `AXIOM_PORT` > 8902。
-- 退出码：`0` 成功或幂等；`1` 运行失败（spawn 失败、`--wait` 健康超时）；`2` 参数错误。
+- 退出码：`0` 成功或幂等；`1` 运行失败（spawn 失败、`--wait` 健康超时、stop 无法终止）；`2` 参数错误。
 
 运行产物：`logs/qed-axiom.pid`（PID 文件）、`logs/qed-axiom-serve.log`（子进程 stdout/stderr，
 已 gitignore）。环境：脚本从仓库根向上查找 `.env` 并 `setdefault` 注入 `AXIOM_*` 与供应商
 key，已有环境变量不覆盖。
 
-## ② 数据查询（af_* 数据库知识，V2-013 规划契约）
+## ② 数据查询（af_* 数据库知识，ARCH-008 规划契约）
 
 af_* 表（af_books / af_block_reviews）为 Axiom-Flow 私有（qed 库 af_* 命名空间，Alembic
-独立建表），表结构见 [database-design.md](database-design.md)；契约冻结与实现由 V2-013 承接
+独立建表），表结构见 [database-design.md](database-design.md)；契约冻结与实现由 ARCH-008 承接
 （设计：[af-books-sync](../design/af-books-sync.md)）。以下端点为**规划契约**，冻结前按设计
 文档演进。
 
 ### GET /api/v1/books
 
-书目列表。**V2-013 冻结前**读文件系统 `data/books/<book_id>/book.json`（自身登记）；冻结后
+书目列表。**ARCH-008 冻结前**读文件系统 `data/books/<book_id>/book.json`（自身登记）；冻结后
 改读 af_books（含课程归属与解析进度字段），**空表时回退文件系统**（独立性降级）。响应为
 `BookMeta` 列表（扩展字段 domain_id/course_id/course_name/knowledge_id/part/display_title/
 relative_path/parse_status/pages_done 向前兼容）。
@@ -144,7 +147,7 @@ relative_path/parse_status/pages_done 向前兼容）。
 ### POST /api/v1/parse-jobs
 
 提交解析任务。请求：`{book_id, pages?, strategy?}`（`pages` 缺省 = 全部页；`strategy` 缺省
-`local`）。v0.1 为**内存态同步执行**（逐页识别、产物覆盖落盘，返回 `ParseJob`）；V2-004
+`local`）。v0.1 为**内存态同步执行**（逐页识别、产物覆盖落盘，返回 `ParseJob`）；ARCH-003
 接手 state.sqlite 与后台任务后改异步（queued/running/completed/failed）。失败页跳过不中断
 任务，`progress.error` 记录摘要（截断 200 字符）。
 

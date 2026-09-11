@@ -1,10 +1,11 @@
 # af_books 书目同步与块判定（Axiom-Flow × QED-Engine 文档解析管理）
 
 设计状态：Draft
+确认状态：暂定
 实现状态：Not Started
-最后更新：2026-08-18
+最后更新：2026-09-11
 关联代码：`src/axiom_flow/api/main.py`（8902 API）、`src/axiom_flow/ingest/`（数据目录）
-关联测试：契约测试（V2-007 扩展）、`tests/unit/`（sync 归一化/判重）
+关联测试：契约测试（ARCH-007 扩展）、`tests/unit/`（sync 归一化/判重）
 关联 ADR：无（探索基线，实施验证后按需沉淀）
 需求方：QED-Engine 根仓库（文档解析管理轮，跨项目请求）
 
@@ -62,7 +63,7 @@ CREATE TABLE af_books (
 
 - 同步时 qt_books 无 page_count 的书（NULL）允许入库，前端按「页数未知」展示。
 - 解析进度更新路径：parse-jobs 完成页 / 产物落盘后更新 `pages_done`/`parse_status`
-  （V2-004 state.sqlite 接手后由后台任务回写；第一版可在 parse-jobs 同步执行结束时回写）。
+  （ARCH-003 state.sqlite 接手后由后台任务回写；第一版可在 parse-jobs 同步执行结束时回写）。
 
 ### af_block_reviews（块判定表，一行 = 一次块级判定）
 
@@ -138,5 +139,5 @@ sequenceDiagram
 
 ## 待对齐
 
-- V2-004（state.sqlite）接手解析任务后，进度回写由任务侧完成，本设计不绑定第一版实现方式。
+- ARCH-003（state.sqlite）接手解析任务后，进度回写由任务侧完成，本设计不绑定第一版实现方式。
 - ALN-003（产物目录迁移 dataset/axiom-flow/parsed/）落地后，relative_path 语义不变。

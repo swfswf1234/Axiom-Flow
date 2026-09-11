@@ -1,6 +1,6 @@
 """
 模块职责：验证活跃文档入口、目录边界、计划归档和 Agent 协议保持单一。
-设计关联（DesignRef）：docs/standards/documentation.md
+设计关联（DesignRef）：docs/standards/doc-governance.md
 实现状态：Current
 被测代码：README.md、AGENTS.md、docs、pyproject.toml
 守护面：文档结构与导航
@@ -72,7 +72,7 @@ def test_guides_are_two_human_handbooks_and_an_index():
     operations = (DOCS / "guides" / "operations.md").read_text(encoding="utf-8")
     todo = (DOCS / "trackers" / "todo.md").read_text(encoding="utf-8")
     completed = (DOCS / "trackers" / "completed.md").read_text(encoding="utf-8")
-    assert "infra-up.ps1" in operations
+    assert "scripts/image-model" in operations
     # 关闭任务原子迁移 completed.md；todo 仅保留未关闭工作（MODEL-001 轮清理 V2-001）
     assert "V2-001" in completed and "WSL 容器基建" in completed
     assert "V2-001" not in todo

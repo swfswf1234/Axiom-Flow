@@ -1,9 +1,13 @@
 # 跨项目协作流程
 
 状态：Current
-最后更新：2026-08-16
+确认状态：已确认
+最后更新：2026-09-11
+治理对象：工作区边界、跨项目请求的接收/发起/回执路径
+依据：QED-Engine 根仓库 `docs/standards/cross-project-collaboration.md` 范本（[ADR 0003](../adr/0003-standards-governance-alignment.md)）
+关联测试：`tests/contract/test_standard_governance.py`
 
-## 目的
+## 目的与边界
 
 规定本仓库（Axiom-Flow）agent 与 QED-Engine 根仓库、QED-Tracker 之间的工作区边界，
 以及跨项目请求的评审、执行与回执路径。本仓库是独立 git 仓库，agent 的合法工作区

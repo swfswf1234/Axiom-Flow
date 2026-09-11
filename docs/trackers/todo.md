@@ -1,22 +1,50 @@
 # 待做任务
 
 状态：Current
-最后更新：2026-08-21
+最后更新：2026-09-11
 
-本表是全部未关闭工作的统一导航（v2 纪元）。v1 任务台账已归档
-（`docs/history/v1-20260814/trackers/todo.md`）。Plan 行镜像计划正文状态；其他行在具备
-范围、前置条件、验证与成功标准后建立独立计划，并保留原 ID。
+本表是全部未关闭工作的统一导航。v1 台账已归档
+（`docs/history/v1-20260814/trackers/todo.md`）。任务 ID 采用稳定前缀-三位序号；已关闭任务见
+[关闭台账](completed.md)。当前版本 v0.1 目标见 [项目状态快照](project-status.md)。
 
-## v2 任务清单
+## 本期主线：v0.1 解析对照闭环（MinerU）
 
-| ID | 类型 | 优先级 | 状态 | 任务 | 证据/下一条件 |
+对齐根仓库第三轮主线 ARCH-020（与 Axiom-Flow 联调，至少完成一个教程解析）。链路：
+解析（MinerU，经 8900 网关）→ 分块 → 对比解析效果 → 渲染回去 → QED-Engine 前端对照。
+
+| ID | 类别 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
-| V2-004 | Feature | P0 | Open | orchestrator：任务编排 + state.sqlite（jobs/pages）+ 质量信号（空块率/公式置信度/表格成功数） | **根仓库 C 组联调前置请求（2026-08-16）**：8902 API 服务建立（V2-003~007）后回执根仓库（integration-matrix C 组 / REQ-034/036 衔接）；单元 + 集成（mock MinerU）测试通过 |
-| V2-007 | Feature | P1 | In Progress | API v1 端点：parse-jobs/books/pages/manifest | **第一版已实现并启动（2026-08-16，`ca06a11`）**：8902 服务在线（books/pages/image/manifest/parse-jobs），契约测试 11 通过，冒烟全通；契约已固定于 [8902 API 接口文档](../architecture/api.md)（演进记录见 [8902 集成契约与联调对齐](../history/design/8902-integration-contract.md)），**冻结节点待根仓库 REQ-034 评审确认** |
-| V2-008 | Gap | P1 | Open | 套1 代表书验收（教程 Rudin 中译 + 习题集吉米多维奇） | 分阶段验证：①前 20 页冒烟（公式/文本/表格基本可用）→ ②全量解析（≥90% 公式可渲染）；PDF 来源：`dataset/qed-tracker/raw/books/math-qe/01_math_analysis/01-rudin-zh_*.pdf` + `01-demidovich_*.pdf` |
-| V2-009 | Gap | P2 | Open | 批量处理其余 10 本 | V2-008 关闭后拆 D 类计划执行 |
-| V2-013 | Feature | P1 | Open | af_* 书目同步与块判定（需求方：QED-Engine 文档解析管理轮，设计：[af-books-sync](../design/af-books-sync.md)）：af_books / af_block_reviews 建表（Alembic）+ `POST /books/sync`（幂等 upsert）+ `/books` 改读 af_books（含课程/进度字段，空表回退文件系统）+ 块判定端点（PUT/GET review）+ parse-jobs 完成后回写 pages_done/parse_status | **根仓库 C 组联调前置请求（2026-08-18 登记）**：契约草案见设计文档；8900 侧（REQ-041）与前端同步开发，契约冻结后微调；用户评审确认后执行，回执根仓库 REQ-041 |
-| V2-016 | 长期 | P2 | Open | 文档体系对齐维护：v0.1 固定文档集（architecture/overview + api.md + database-design.md + code-map、adr/index 版本声明）随实现演进同步；**版本末期（用户确认发布版本）规范化重新整理一轮**——固定文档旧版本进 `history/`、版本声明更新、design/ 三态再梳理 | 承接 V2-015 关闭后的持续维护；版本末期（用户确认发布）触发完整整理轮 |
+| ARCH-001 | 主线 | 高 | Open | v0.1 解析对照闭环：MinerU 解析 → 分块 → 对比解析效果 → 渲染回去 → QED-Engine 前端对照 | 支线 ARCH-002~009 关闭；一个教程端到端对照验收 |
+| ARCH-002 | 支线 | 高 | Open | MinerU 解析接入（qed-engine 模式经 8900 网关，替换当前 qwen-vl 逐页） | 单页 PDF 经网关解析成功；产物 `source=mineru` |
+| ARCH-003 | 支线 | 高 | Open | orchestrator：任务编排 + state.sqlite（jobs/pages）+ 质量信号（空块率/公式置信度/表格成功数） | 单元 + 集成（mock）测试通过；根仓库 C 组联调前置 |
+| ARCH-004 | 支线 | 高 | Open | 分块模型：blocks → chunk（paragraph/formula/table 为切分点，为 RAG 预留） | 设计 + 契约测试；产物 chunk 结构落盘 |
+| ARCH-005 | 支线 | 高 | Open | 解析对照与质量度量：页图 vs 重渲染对照 + 质量信号落盘 | 对照视图数据契约 + 质量信号测试 |
+| ARCH-006 | 支线 | 高 | Open | 渲染数据供给对接：blocks+md+页图+bbox → QED-Engine 前端（REQ-034/042 衔接） | 前端对照视图联调通过 |
+| ARCH-007 | 支线 | 中 | In Progress | API v1 契约冻结（parse-jobs/books/pages/manifest） | 契约冻结待根仓库 REQ-034 评审确认 |
+| ARCH-008 | 支线 | 中 | Open | af_* 书目同步与块判定（原 V2-013，根仓库 REQ-042）：af_books/af_block_reviews + `POST /books/sync` + 块判定端点 | 用户评审确认后执行；回执 REQ-042 |
+| ARCH-009 | 支线 | 中 | Open | 套1 代表书验收（教程 Rudin 中译 + 习题集吉米多维奇） | 前 20 页冒烟 → 全量（≥90% 公式可渲染） |
+| REQ-001 | 支线 | 高 | Open | 请求：QED-Engine——8900 `/llm/vision` 回传页级 blocks+bbox（对照与渲染需要） | 根仓库回执后关闭；ARCH-006 前置 |
+
+## 长期任务
+
+| ID | 类别 | 优先级 | 状态 | 任务 | 证据/下一条件 |
+| --- | --- | --- | --- | --- | --- |
+| ARCH-010 | 长期 | 中 | In Progress | 文档体系对齐维护：固定文档随实现同步；版本末期规范化整理轮（原 V2-016） | 每次版本确认前执行一轮 |
+| ARCH-011 | 长期 | 低 | Open | 批量处理其余书籍（原 V2-009） | ARCH-009 关闭后拆 D 类计划执行 |
+| ARCH-012 | 长期 | 低 | Open | 探索路线图：Milvus 检索 / 知识图谱 / 数学解析器 / 学习交互闭环 | 见 [路线图](roadmap.md)，按需立项 |
+
+## 规则
+
+- **ID 前缀**：`ARCH`=主线/支线实现；`REQ`=跨项目请求；`PLAN`=计划类（必有 `plans/` 正文）；
+  `DEFECT`=缺陷。
+- **类别**只允许 `主线 / 支线 / 长期`：主线 = 大类目标（聚合支线）；支线 = 主线细则，可独立
+  完成；长期 = 持续存在、无单一终态。
+- **状态**只允许 `Open / In Progress / Blocked`；阻塞必须声明证据、恢复条件和责任位置。
+- **优先级**只允许 `高 / 中 / 低`。
+- 涉及子项目改造的请求在本表登记并标注目标仓库（`请求：<目标仓库>`）；根仓库不直接修改子项目
+  文件（见[跨项目协作流程](../standards/cross-project-collaboration.md)）。
+- Plan 行镜像 `docs/plans/` 活跃计划正文（标题、链接、状态、关联 Tracker）。
+- 任务终态时从本表原子移除并写入 [关闭台账](completed.md)。
 
 ## 探索路线图
 

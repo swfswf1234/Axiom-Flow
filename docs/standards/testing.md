@@ -1,9 +1,13 @@
 # 测试架构与门禁
 
 状态：Current
-最后更新：2026-08-14
+确认状态：已确认
+最后更新：2026-09-11
+治理对象：测试分层、门禁组成、测试编写约定
+依据：QED-Tracker `docs/standards/testing.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)）
+关联测试：`tests/contract/test_test_suite_governance.py`
 
-## 目的
+## 目的与边界
 
 探索项目采用分层但轻量的测试策略：单元测试覆盖纯逻辑，集成测试用 mock 覆盖外部服务，冒烟
 测试在本地真实链路验证。无远端 CI（本仓库唯一门禁是本地门禁）。
@@ -35,3 +39,15 @@ ruff check src tests
 - 冒烟测试必须能单独运行且真实调用外部服务（需要 WSL 容器在线时先检查健康）。
 - 契约测试守护文档体系：活跃设计集合、架构文档集合、标准集合、ADR 编号、code-map 映射。
   文档体系变更必须同步契约测试。
+- 默认测试不得访问公网、不得要求 API key、不得调用外部模型、不得写运行数据库；TLS 校验
+  默认开启。
+
+## 执行与门禁
+
+- 测试分层与门禁配置变更后运行 `tests/contract/test_test_suite_governance.py`，再运行全量
+  门禁（见[开发指南](../guides/development.md)）。
+- 契约测试守护面变化时同步 `docs/architecture/code-map.md` 与相关设计文档。
+
+## 变更与取代
+
+改变测试分层、门禁组成或隔离边界时必须先新增 ADR；措辞、链接和不改变语义的整理可直接修改。

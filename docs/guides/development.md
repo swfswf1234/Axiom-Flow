@@ -1,7 +1,7 @@
 # 开发指南
 
 状态：Current
-最后更新：2026-08-21
+最后更新：2026-09-11
 
 ## 环境
 
@@ -10,6 +10,8 @@
 | Python | 3.12（Anaconda 环境 `QED_env`：`D:\software\anaconda3\envs\QED_env\python.exe`） |
 | 包管理 | `pip install -e ".[dev]"`（pyproject.toml 为依赖事实源） |
 | 推理服务 | WSL Ubuntu 24.04 + Docker Compose（见 [运维指南](operations.md)） |
+
+机器绑定事实（UUID、绝对路径、端口速查）见[本地开发环境](../standards/local-dev.md)。
 
 ## 必需环境变量
 
@@ -36,8 +38,7 @@
 # 静态检查
 & D:\software\anaconda3\envs\QED_env\python.exe -m ruff check src tests
 
-# 启动推理基础设施（vLLM + mineru-api）
-powershell -File scripts/infra-up.ps1
+# 推理基础设施由根仓库 scripts/image-model/ 托管（见运维指南）
 ```
 
 ## 门禁
@@ -47,4 +48,29 @@ powershell -File scripts/infra-up.ps1
 ## 新增/改动文档
 
 活跃架构、设计、ADR 或 code-map 变更后，运行契约测试（`tests/contract/`）并保持元数据
-（设计状态/实现状态/最后更新/关联代码/关联测试/关联 ADR）同步。
+（设计状态/实现状态/最后更新/关联代码/关联测试/关联 ADR）同步。文档分类、确认状态与归档
+规则见[文档治理规范](../standards/doc-governance.md)。
+
+## AI 开发工作流程
+
+每个任务按六步执行（本指南是流程正文事实源；全局 agent 工具层与技能只引用概念，实际文件由
+[AGENTS.md](../../AGENTS.md)「标准映射」定位）：
+
+1. **进场读必读**：读本仓库 `AGENTS.md` → `docs/trackers/project-status.md`（30 秒现状）→
+   `docs/standards/local-dev.md`（环境与命令）→ `docs/standards/doc-governance.md`（文档链路）→
+   `docs/standards/task-lifecycle.md`（任务分类与计划准入）；涉及契约再读对应 `architecture/`
+   文档与 `docs/architecture/code-map.md`。
+2. **定级**：按 `AGENTS.md`「变更分级与边界」表判定；未定级不实施，无法判定时询问用户。
+3. **立项**：大修改先建 todo 任务 + `docs/plans/` 计划；design 小修/bug 登记对应台账并补设计
+   文档；豁免级直接实施。
+4. **实现**：用 `code-map.md` 定位模块与关联设计；先写测试再写实现（TDD），遵循
+   [测试架构与门禁](../standards/testing.md)的分层与隔离铁律。
+5. **验证**：运行本指南「门禁」的完整命令，展示真实输出后才可声称完成。
+6. **收尾**：计划关闭两态判定（Retain/Delete）、todo 移入 `completed.md`、同步受影响的
+   design/architecture 文档、契约测试全绿。
+
+### 标准映射机制
+
+全局 agent 工具层（`~/.config/opencode/`）与 `qed-*` 技能只引用「概念」（如「文档治理」
+「任务生命周期」），不硬编码路径；本仓库实际文件由 `AGENTS.md`「标准映射（概念 → 本仓库
+文件）」表定位。新增或改名标准后，同步更新该表与 `docs/standards/index.md`。
