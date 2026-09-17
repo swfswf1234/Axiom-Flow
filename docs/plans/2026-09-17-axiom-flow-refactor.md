@@ -130,6 +130,20 @@ qwen-vl 引擎（仅预留）；不实现 RAG / Milvus / 知识图谱 / 数学�
 | E.1 | 编辑仓储与端点 | `af_block_edits` upsert / 列表；`pages/{no}` 合并回显 |
 | E.2 | 测试 | edit upsert 覆盖 + 契约测试 |
 
+## 进展（2026-09-17）
+
+| 阶段 | 状态 | 证据 |
+| --- | --- | --- |
+| Step 1 文档与契约 | 完成 | 文档 commit `b1bd9b1`（16 files）；`tests/contract` 59 passed |
+| Step 2-A 配置简化 | 完成 | `config.py` 三段式、服务脚本去 `--mode`；`test_config.py` / `test_service_scripts.py` |
+| Step 2-B DB + 骨架 | 完成 | `db/`（engine/models/repositories）、`migrations/` 四表一次迁移；`test_db.py` / `test_db_migrations.py` |
+| Step 2-C 基本解析 | 完成 | `schemas.py` 升级、ingest `parsed/` 布局、`engines/mineru.py`、`normalize/`、`orchestrator/`、API 全端点；`test_engines.py` / `test_normalize.py` / `test_ingest.py` / `test_orchestrator.py` / `test_api_v1_contract.py` |
+| Step 2-D 分块 | 完成 | `normalize/chunking.py` + `chunks.json` + `GET /chunks`；`test_chunking.py` |
+| Step 2-E 对照编辑 | 完成 | `af_block_edits` 仓储 + `PUT .../edit` / `GET .../edits`（含在契约测试） |
+| 剩余 | 待做 | MinerU 5002 真机冒烟；REQ-001/REQ-075 回执；Rudin 验收（ARCH-009） |
+
+门禁：`pytest tests -q` 245 passed；`ruff check src tests scripts` 全绿。
+
 ## 验证与验收
 
 - **定向测试**：`tests/unit/test_config.py`、`test_schemas.py`、`test_ingest.py`、引擎归一化

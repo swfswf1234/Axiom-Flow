@@ -2,10 +2,10 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：In Progress（config 已实现；engines/ 适配器待实现；llm_client/fallback 待退役）
+实现状态：Current（config/engines 已实现，MinerU 适配器落地；paddleocr-vl/qwen-vl 预留；llm_client/fallback 已退役）
 最后更新：2026-09-17
-关联代码：`src/axiom_flow/config.py`、`src/axiom_flow/engines/`（待实现）、`src/axiom_flow/normalize/`（待实现）、`src/axiom_flow/llm_client.py`（待退役）、`src/axiom_flow/fallback/`（待退役）
-关联测试：`tests/unit/test_config.py`
+关联代码：`src/axiom_flow/config.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`
+关联测试：`tests/unit/test_config.py`、`tests/unit/test_engines.py`
 关联 ADR：`docs/adr/0004-model-boundary-and-pipeline-ownership.md`
 
 > 本文档定义 Axiom-Flow 如何对接解析模型：配置键、适配器接口、各引擎接入方式，以及与根仓库
@@ -110,10 +110,11 @@ flowchart LR
 模型服务地址可配置：默认直连本地服务（`QED_OCR_MODEL_URL`）；部署形态需要时可指向 8900
 提供的代理地址，适配器契约不变。
 
-## 退役清单
+## 退役清单（已执行，2026-09-17）
 
-- `src/axiom_flow/llm_client.py`（VisionClient 双模式视觉调用）：由 `engines/` 适配器承接后删除。
-- `src/axiom_flow/fallback/`（qwen-vl-plus 直连通道）：由 `engines/qwen_vl`（预留）承接后退役。
+- `src/axiom_flow/llm_client.py`（VisionClient 双模式视觉调用）：已删除，由 `engines/` 适配器承接。
+- `src/axiom_flow/fallback/`（qwen-vl-plus 直连通道）：已删除；qwen-vl 以预留引擎身份保留（未实现）。
+- `src/axiom_flow/database.py`：并入 `db/engine.py`。
 - 环境变量 `AXIOM_API_KEY` / `AXIOM_MYSQL_*` / `AXIOM_DATA_DIR` / `AXIOM_WEB_DIR` /
   `AXIOM_EVALUATION_DATA_DIR`：v1 残留，配置简化后清除。
 

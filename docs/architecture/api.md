@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：In Progress（现有端点读文件系统；af_* 建表、CRUD/ingest、异步 parse-jobs、edit 与 chunks 待实现）
+实现状态：Current（af_* 持久化 + 异步 parse-jobs + 对照编辑 + 分块预览已实现；8900 透传适配待 REQ-001）
 最后更新：2026-09-17
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`

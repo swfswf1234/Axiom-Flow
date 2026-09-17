@@ -1,1 +1,10 @@
-"""解析任务编排：接收 job → 逐页调 MinerU → 质量校验 → 落盘（ARCH-003 实现）。"""
+"""解析任务编排：全本/逐页调引擎 → 归一化 → 分块 → 落盘 → 回写 af_*。
+
+设计事实源：`docs/design/parsing-pipeline.md`；任务与页状态表见
+`docs/architecture/database-design.md`。
+"""
+
+from axiom_flow.orchestrator.jobs import JobRunner
+from axiom_flow.orchestrator.pipeline import ParseOutcome, rebuild_chunks, run_parse_job
+
+__all__ = ["JobRunner", "ParseOutcome", "rebuild_chunks", "run_parse_job"]

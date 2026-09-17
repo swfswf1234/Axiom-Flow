@@ -2,10 +2,10 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Not Started（四表一次 Alembic 迁移与仓储层待实现，PLAN-002）
+实现状态：Current（四表一次 Alembic 迁移 + 仓储层已实现，PLAN-002）
 最后更新：2026-09-17
-关联代码：无（ARCH-002 建表后登记 `src/axiom_flow/db/` 对应模块）
-关联测试：`tests/contract/test_architecture_documents.py`（本文档守护）
+关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
+关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_migrations.py`、`tests/contract/test_architecture_documents.py`（本文档守护）
 关联 ADR：`docs/adr/0001-v2-exploration-direction.md`、`docs/adr/0004-model-boundary-and-pipeline-ownership.md`、根仓库 [ADR 0003](https://github.com/QED-Engine/qed-engine/blob/main/docs/history/adr/v0.1/0003-shared-qed-database-independence.md)（共享 qed 库独立性例外）
 
 > 本文件是 **Axiom-Flow 的固定数据库设计文档**（根仓库 ADR 0010 范本 / REQ-047）：登记

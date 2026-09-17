@@ -2,10 +2,10 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Not Started（af_* 建表、同步/CRUD/ingest、对照编辑端点待实现）
+实现状态：Current（af_* 四表 + 同步/CRUD/ingest/异步解析/对照编辑/分块端点已实现）
 最后更新：2026-09-17
-关联代码：`src/axiom_flow/db/`（待实现）、`src/axiom_flow/api/`、`src/axiom_flow/orchestrator/`（待实现）
-关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/`（sync 幂等 / edit upsert）
+关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`、`src/axiom_flow/orchestrator/`
+关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`
 关联 ADR：`docs/adr/0004-model-boundary-and-pipeline-ownership.md`、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)
 
 > 本文档定义「文档解析管理」在 Axiom-Flow 侧的闭环：已验证书目同步、ingest、解析进度、

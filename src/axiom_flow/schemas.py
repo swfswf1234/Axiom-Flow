@@ -1,17 +1,21 @@
-"""Axiom-Flow 统一格式 schema：内外契约单一事实源（spec 第 2 节）。
+"""Axiom-Flow 统一格式 schema：内外契约单一事实源（设计见 docs/design/parsing-pipeline.md）。
 
-产物形态（data/books/<book_id>/）：
-- pages/pXXXX.blocks.json  ← BlocksPage（块级结构化，QED-Engine 渲染 + Milvus 切分共同基座）
-- book.json               ← BookMeta
-- manifest.json           ← ManifestEntry 列表
-- 解析任务（API 契约）     ← ParseJob / ParseJobCreate
+产物形态（`<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`）：
+- `book.json`               ← BookMeta
+- `manifest.json`           ← ManifestEntry 列表
+- `chunks.json`             ← ChunkSet（派生、不入库、可重建）
+- `pages/pXXXX.blocks.json` ← BlocksPage（块级结构化，渲染 + 向量化共同基座）
+- `pages/pXXXX.md`          ← 页级 Markdown（`$$...$$` / `$...$` 内嵌公式）
 
-块类型：heading / paragraph / formula / table / image / list / caption / header / footer / page_number
-来源：mineru（主引擎，经 8900 网关）| qwen-vl-plus（local 直连通道）
+API 契约模型：BookOut / BookSyncItem / IngestResponse / PageData / EditRecord / ParseJob。
+块类型 10 种；解析来源 source ∈ {mineru, paddleocr-vl, qwen-vl}（后两者预留）。
 """
 
+from __future__ import annotations
+
+from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -34,17 +38,11 @@ class BlockType(StrEnum):
 
 
 class Source(StrEnum):
-    """解析来源：mineru 主引擎（经 8900 网关）/ qwen-vl-plus（local 直连通道）。"""
+    """解析来源：实际引擎标识（模型无感知，差异在适配层消化）。"""
 
     MINERU = "mineru"
-    QWEN_VL_PLUS = "qwen-vl-plus"
-
-
-class Strategy(StrEnum):
-    """任务策略：local 纯本地 / hybrid（历史字段，V2-006 兜底已取消，当前不做自动切换）。"""
-
-    LOCAL = "local"
-    HYBRID = "hybrid"
+    PADDLEOCR_VL = "paddleocr-vl"
+    QWEN_VL = "qwen-vl"
 
 
 class JobStatus(StrEnum):
@@ -57,11 +55,36 @@ class JobStatus(StrEnum):
 
 
 class PageState(StrEnum):
-    """页状态（state.sqlite 页级）。"""
+    """页状态（af_pages.status）。"""
 
     PENDING = "pending"
     PARSED = "parsed"
-    FALLBACK = "fallback"
+    FAILED = "failed"
+
+
+class Verdict(StrEnum):
+    """块级人工判定。"""
+
+    NONE = ""
+    OK = "ok"
+    BAD = "bad"
+
+
+class IngestStatus(StrEnum):
+    """ingest 状态（af_books.ingest_status）。"""
+
+    NONE = "none"
+    INGESTING = "ingesting"
+    INGESTED = "ingested"
+    FAILED = "failed"
+
+
+class ParseStatus(StrEnum):
+    """书目解析状态（af_books.parse_status）。"""
+
+    PENDING = "pending"
+    PARSING = "parsing"
+    COMPLETED = "completed"
     FAILED = "failed"
 
 
@@ -73,18 +96,27 @@ BBox = Annotated[
 ]
 
 
+class Author(BaseModel):
+    """书目作者（af_books.authors / book.json.authors）。"""
+
+    name: str
+    role: str = ""
+
+
 # ---------- 块 ----------
 
 
 class Block(BaseModel):
     """统一块模型：type 判别 + 按类型校验必需字段。
 
-    宽松构造（字段全部可选），由 model_validator 按 type 强制必需字段，
-    兼顾契约稳定与 MinerU 输出归一化容错。
+    宽松构造（可选字段全部可选），由 model_validator 按 type 强制必需字段，
+    兼顾契约稳定与引擎输出归一化容错。
     """
 
     type: BlockType
     bbox: BBox
+    index: int = Field(ge=0, description="页内块数组下标（0 基，与块编辑定位一致）")
+    order: int = Field(ge=0, description="阅读顺序（0 基）")
     # heading / paragraph / caption / header / footer / page_number
     text: str | None = None
     level: int | None = Field(default=None, ge=1, le=6, description="heading 层级 1-6")
@@ -101,7 +133,7 @@ class Block(BaseModel):
     items: list[str] | None = None
 
     @model_validator(mode="after")
-    def _check_required_by_type(self) -> "Block":
+    def _check_required_by_type(self) -> Block:
         x0, y0, x1, y1 = self.bbox
         if x1 <= x0 or y1 <= y0:
             raise ValueError(f"bbox 倒置: {self.bbox}")
@@ -129,7 +161,7 @@ class Block(BaseModel):
 
 
 class QualityMetrics(BaseModel):
-    """页质量信号（spec：空块率/公式平均置信度/表格成功数/文本长度比）。"""
+    """页质量信号（空块率/公式平均置信度/表格成功数/文本长度比）。"""
 
     empty_block_ratio: float = Field(ge=0.0, le=1.0)
     avg_formula_confidence: float = Field(ge=0.0, le=1.0)
@@ -141,6 +173,7 @@ class BlocksPage(BaseModel):
     """pages/pXXXX.blocks.json：页级结构化数据。"""
 
     page: int = Field(ge=1, description="页码（1 基，对应 p0001.png）")
+    image_size: tuple[int, int] = Field(description="原页图像素尺寸 [width, height]（bbox 基准）")
     source: Source
     blocks: list[Block]
     quality: QualityMetrics | None = None
@@ -150,14 +183,16 @@ class BlocksPage(BaseModel):
 
 
 class BookMeta(BaseModel):
-    """book.json：书目元数据。"""
+    """book.json：书目元数据（产物侧事实源；af_books 承载同步与进度）。"""
 
-    book_id: str = Field(description="目录名即 book_id，如 01-rudin-en-principles-of-math-analysis")
+    book_id: str = Field(description="目录名即 book_id，同源 qt_books")
     title: str
-    author: str | None = None
+    authors: list[Author] = Field(default_factory=list)
     page_count: int = Field(ge=1)
     sha256: str = Field(description="源 PDF SHA-256（64 位十六进制）")
-    strategy: Strategy
+    source_file: str = Field(default="", description="源 PDF 数据根相对路径（同源 qt_books.file_path）")
+    engine: str = Field(default="mineru", description="实际解析引擎标识")
+    ingested_at: datetime | None = Field(default=None, description="ingest 完成时间（UTC naive）")
 
     @field_validator("sha256")
     @classmethod
@@ -178,15 +213,153 @@ class ManifestEntry(BaseModel):
     sha256: str = Field(description="64 位十六进制")
 
 
-# ---------- 解析任务（API 契约） ----------
+# ---------- 分块（chunks.json） ----------
+
+
+class BlockRef(BaseModel):
+    """chunk 的块级溯源引用。"""
+
+    page: int = Field(ge=1)
+    index: int = Field(ge=0)
+
+
+class ChunkParams(BaseModel):
+    """分块参数（可经 GET /chunks 查询参数覆盖后重算）。"""
+
+    max_chars: int = Field(default=1000, ge=1)
+    overlap_blocks: int = Field(default=1, ge=0)
+
+
+class Chunk(BaseModel):
+    """知识单元：blocks 合并结果（formula/table 不可拆），带页/块溯源。"""
+
+    chunk_id: str
+    order: int = Field(ge=0)
+    type: str = Field(description="mixed / paragraph / formula / table / …（按主导块类型）")
+    text: str
+    page_start: int = Field(ge=1)
+    page_end: int = Field(ge=1)
+    block_refs: list[BlockRef]
+    bbox: BBox
+    char_count: int = Field(ge=0)
+
+
+class ChunkSet(BaseModel):
+    """chunks.json：书级分块产物（派生、不入库、可重建）。"""
+
+    book_id: str
+    params: ChunkParams = Field(default_factory=ChunkParams)
+    chunks: list[Chunk] = Field(default_factory=list)
+
+
+# ---------- API：书目 ----------
+
+
+class BookOut(BaseModel):
+    """GET /books 响应：af_books 行（课程归属 + 进度 + 本侧字段）。"""
+
+    book_id: str
+    domain_id: str = ""
+    course_id: str = ""
+    course_name: str = ""
+    knowledge_id: str = ""
+    title: str = ""
+    part: str = ""
+    display_title: str = ""
+    authors: list[Author] = Field(default_factory=list)
+    file_path: str = ""
+    page_count: int | None = None
+    sha256: str = ""
+    ingest_status: str = IngestStatus.NONE
+    parse_status: str = ParseStatus.PENDING
+    pages_done: int = 0
+    notes: str | None = None
+
+
+class BookSyncItem(BaseModel):
+    """POST /books/sync 请求行（同源 qt_books 只读快照）。"""
+
+    book_id: str
+    domain_id: str = ""
+    course_id: str = ""
+    course_name: str = ""
+    knowledge_id: str = ""
+    title: str = ""
+    part: str = ""
+    display_title: str = ""
+    authors: list[Author] = Field(default_factory=list)
+    file_path: str = ""
+
+
+class SyncResponse(BaseModel):
+    """POST /books/sync 响应：幂等 upsert 统计与结果行。"""
+
+    synced: int = Field(ge=0)
+    updated: int = Field(ge=0)
+    books: list[BookOut] = Field(default_factory=list)
+
+
+class BookUpdate(BaseModel):
+    """PATCH /books/{id} 请求：Axiom-Flow 自有字段。"""
+
+    notes: str | None = None
+
+
+class IngestResponse(BaseModel):
+    """POST /books/{id}/ingest 响应。"""
+
+    book_id: str
+    page_count: int = Field(ge=1)
+    sha256: str
+    ingest_status: str = IngestStatus.INGESTED
+
+
+# ---------- API：对照与编辑 ----------
+
+
+class EditRecord(BaseModel):
+    """块级人工编辑记录（af_block_edits 覆盖层）。"""
+
+    edit_id: str
+    book_id: str
+    page_no: int = Field(ge=1)
+    block_index: int = Field(ge=0)
+    block_type: str = ""
+    verdict: Verdict = Verdict.NONE
+    note: str = ""
+    corrected_text: str | None = None
+    corrected_bbox: BBox | None = None
+    edited_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class EditRequest(BaseModel):
+    """PUT /blocks/{index}/edit 请求（同块重复编辑覆盖更新）。"""
+
+    verdict: Verdict = Verdict.NONE
+    note: str = Field(default="", max_length=1000)
+    corrected_text: str | None = None
+    corrected_bbox: BBox | None = None
+
+
+class PageData(BaseModel):
+    """GET /books/{id}/pages/{no} 响应：对照主数据源（已合并人工编辑）。"""
+
+    blocks: BlocksPage
+    markdown: str = ""
+    image_url: str
+    edits: list[EditRecord] = Field(default_factory=list)
+
+
+# ---------- API：解析任务 ----------
 
 
 class ParseJobCreate(BaseModel):
-    """POST /api/v1/parse-jobs 请求体。"""
+    """POST /parse-jobs 请求体。"""
 
     book_id: str
-    pages: list[int] | None = Field(default=None, description="页范围（1 基）；None = 全部页")
-    strategy: Strategy = Strategy.LOCAL
+    pages: list[int] | None = Field(default=None, description="页范围（1 基）；None = 全部页（全本解析）")
+    engine: str = Field(default="mineru", description="解析引擎（缺省 mineru）")
 
 
 class ParseJob(BaseModel):
@@ -195,6 +368,7 @@ class ParseJob(BaseModel):
     id: str
     book_id: str
     pages: list[int] | None = None
-    strategy: Strategy
+    engine: str = "mineru"
     status: JobStatus
-    progress: dict[str, int] = Field(default_factory=dict, description="如 {'parsed': 2, 'total': 5}")
+    progress: dict[str, Any] = Field(default_factory=dict, description="如 {'parsed': 2, 'total': 5}")
+    error: str = ""

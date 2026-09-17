@@ -7,17 +7,17 @@ from pathlib import Path
 import pytest
 
 from axiom_flow.config import llm_api_key, load_settings
-from axiom_flow.database import mysql_url, utc_now
+from axiom_flow.db.engine import mysql_url, utc_now
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _ENV_KEYS = (
     "API_KEY",
     "AXIOM_API_KEY",
-    "AXIOM_FLOW_DATA_DIR",
-    "AXIOM_DATA_DIR",
-    "QED_API_SELECT",
-    "QED_LLM_GATEWAY_URL",
+    "QED_DATA_ROOT",
+    "AXIOM_OCR_ENGINE",
+    "QED_OCR_MODEL_URL",
+    "AXIOM_OCR_TIMEOUT",
     "AXIOM_VISION_MODEL",
     "QED_DB_HOST",
     "QED_DB_PORT",
@@ -58,9 +58,10 @@ class TestLoadSettingsPriority:
     def test_builtin_defaults_when_nothing_set(self, isolated):
         settings = load_settings()
 
-        assert settings.api_select == "local"
-        assert settings.llm_gateway_url == "http://127.0.0.1:8900"
         assert settings.vision_model == "qwen-vl-plus"
+        assert settings.ocr_engine == "mineru"
+        assert settings.ocr_model_url == "http://127.0.0.1:5002"
+        assert settings.ocr_timeout == 600
         assert settings.db_host == "127.0.0.1"
         assert settings.db_port == 3306
         assert settings.db_name == "qed"
@@ -111,9 +112,9 @@ class TestDotenvIsolation:
         assert llm_api_key() == ""
 
     def test_utf8_bom_dotenv_first_key_parsed(self, isolated):
-        (isolated / ".env").write_bytes(b"\xef\xbb\xbfQED_API_SELECT=local\n")
+        (isolated / ".env").write_bytes(b"\xef\xbb\xbfQED_DB_NAME=from-bom\n")
 
-        assert load_settings().api_select == "local"
+        assert load_settings().db_name == "from-bom"
 
 
 class TestLlmApiKey:
@@ -147,21 +148,59 @@ class TestSettingsPrivacy:
 
 
 class TestDataDir:
-    """data_dir：AXIOM_FLOW_DATA_DIR > AXIOM_DATA_DIR > 仓库 data/。"""
+    """data_dir：QED_DATA_ROOT 覆盖，未设置时回退仓库 data/。"""
 
-    def test_flow_var_wins(self, isolated, monkeypatch):
-        monkeypatch.setenv("AXIOM_FLOW_DATA_DIR", str(isolated / "flow-data"))
-        monkeypatch.setenv("AXIOM_DATA_DIR", str(isolated / "plain-data"))
+    def test_data_root_var_wins_over_default(self, isolated, monkeypatch):
+        monkeypatch.setenv("QED_DATA_ROOT", str(isolated / "dataset-root"))
 
-        assert load_settings().data_dir == isolated / "flow-data"
-
-    def test_data_dir_var_wins_over_default(self, isolated, monkeypatch):
-        monkeypatch.setenv("AXIOM_DATA_DIR", str(isolated / "plain-data"))
-
-        assert load_settings().data_dir == isolated / "plain-data"
+        assert load_settings().data_dir == isolated / "dataset-root"
 
     def test_default_is_repo_data(self, isolated):
         assert load_settings().data_dir == REPO_ROOT / "data"
+
+
+class TestEngineConfig:
+    """引擎配置：AXIOM_OCR_ENGINE / QED_OCR_MODEL_URL / AXIOM_OCR_TIMEOUT（PLAN-002）。"""
+
+    def test_engine_defaults(self, isolated):
+        settings = load_settings()
+
+        assert settings.ocr_engine == "mineru"
+        assert settings.ocr_model_url == "http://127.0.0.1:5002"
+        assert settings.ocr_timeout == 600
+
+    def test_engine_env_overrides(self, isolated, monkeypatch):
+        monkeypatch.setenv("AXIOM_OCR_ENGINE", "paddleocr-vl")
+        monkeypatch.setenv("QED_OCR_MODEL_URL", "http://127.0.0.1:9001/")
+        monkeypatch.setenv("AXIOM_OCR_TIMEOUT", "900")
+
+        settings = load_settings()
+
+        assert settings.ocr_engine == "paddleocr-vl"
+        assert settings.ocr_model_url == "http://127.0.0.1:9001"
+        assert settings.ocr_timeout == 900
+
+    def test_legacy_mineru_url_key_is_ignored(self, isolated, monkeypatch):
+        """QED_MINERU_URL 已删除且无别名：设置旧键不改变 ocr_model_url。"""
+        monkeypatch.setenv("QED_MINERU_URL", "http://127.0.0.1:8002")
+
+        assert load_settings().ocr_model_url == "http://127.0.0.1:5002"
+
+    def test_removed_gateway_keys_are_ignored(self, isolated, monkeypatch):
+        """模式/网关键已删除：设置旧键不影响 Settings（无对应字段）。"""
+        monkeypatch.setenv("QED_API_SELECT", "qed-engine")
+        monkeypatch.setenv("QED_LLM_GATEWAY_URL", "http://127.0.0.1:9999")
+        monkeypatch.setenv("QED_LLM_TIMEOUT", "10")
+
+        settings = load_settings()
+
+        assert not hasattr(settings, "api_select")
+        assert not hasattr(settings, "llm_gateway_url")
+
+    def test_invalid_ocr_timeout_falls_back_to_default(self, isolated, monkeypatch):
+        monkeypatch.setenv("AXIOM_OCR_TIMEOUT", "notnum")
+
+        assert load_settings().ocr_timeout == 600
 
 
 class TestOverrides:
@@ -178,7 +217,7 @@ class TestOverrides:
 
 
 class TestDatabase:
-    """database.py 轻量单测：DSN 拼装与 naive UTC。"""
+    """db/engine.py 轻量单测：DSN 拼装与 naive UTC。"""
 
     def test_mysql_url_renders_pymysql_dsn(self, isolated):
         settings = load_settings(db_password="swfswf123")

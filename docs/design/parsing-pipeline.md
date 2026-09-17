@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：In Progress（ingest/schemas 已实现；engines/normalize/orchestrator/db 待实现）
+实现状态：Current（预处理/引擎适配/归一化/分块/编排/落盘全链路已实现；MinerU 真机冒烟待 ARCH-009）
 最后更新：2026-09-17
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`（待实现）、`src/axiom_flow/normalize/`（待实现）、`src/axiom_flow/orchestrator/`（待实现）
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`（engines/normalize/orchestrator 待对应任务）
@@ -207,4 +207,4 @@ flowchart LR
 
 **配置简化（2026-09-17，PLAN-002）**：MinerU 直连地址读 `QED_OCR_MODEL_URL`（5002，`QED_MINERU_URL`
 已删除且无别名）；模型生命周期与调参归 8900，本仓库只连接。v1 的 `llm_client.py` / `fallback/`
-随 `engines/` 落地退役（见 [model-integration.md](model-integration.md) 退役清单）。
+已随 `engines/` 落地退役（见 [model-integration.md](model-integration.md) 退役清单）。

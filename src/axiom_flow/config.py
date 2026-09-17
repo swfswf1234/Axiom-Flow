@@ -1,8 +1,18 @@
-"""统一配置：自身 `.env` → 父目录 `.env`（兜底）→ 内置默认值（V2-014，对齐 QED-Tracker REQ-043）。
+"""统一配置（三段式：服务 / 数据与数据库 / 解析引擎）。
 
 读取优先级：真实环境变量 > 自身 `.env` > 父目录 `.env`（向上走查）> 内置最小默认值。
+本服务只做「模型 API 调用 + 预处理/后处理」：模型生命周期与调参归 QED-Engine（8900），
+配置只保留必要参数与本地模型地址；服务启动不依赖 8900 与模型在线。
+
+本仓库 `.env` 支持独立部署（含 `QED_DB_NAME=qed` 与引擎配置）；由 QED-Engine 启动时经
+向上走查跟随根 `.env`，两边配置允许不一致（2026-09-17 用户裁决，PLAN-002）。
+
 密钥（`API_KEY`、`QED_DB_PASSWORD`）只经环境读取，绝不进入 `Settings` 的 repr；
 `AXIOM_API_KEY` 已退役，无回退。缺密钥时相关能力降级，不阻塞启动。
+
+已删除且不保留别名：`QED_API_SELECT`、`QED_LLM_GATEWAY_URL`、`QED_LLM_TIMEOUT`、
+`QED_PROXY`、`QED_API_PROVIDER`、`QED_MODEL`、`QED_EMBEDDING_MODEL`、`AXIOM_FLOW_DATA_DIR`、
+`AXIOM_PADDLEOCR_URL`；MinerU 直连地址读 `QED_OCR_MODEL_URL`（5002，`QED_MINERU_URL` 已删除）。
 """
 
 from __future__ import annotations
@@ -15,16 +25,17 @@ from typing import Any
 
 
 def _default_data_dir() -> Path:
-    """仓库内默认数据目录（与 `ingest.default_data_dir` 兜底一致）。"""
+    """仓库内默认数据目录（无 `QED_DATA_ROOT` 时的兜底）。"""
     return Path(__file__).resolve().parents[2] / "data"
 
 
 @dataclass(frozen=True, slots=True)
 class Settings:
     data_dir: Path = _default_data_dir()
-    api_select: str = "local"  # local=直连厂商；qed-engine=经 8900 网关（对齐 QED-Tracker REQ-043）
-    llm_gateway_url: str = "http://127.0.0.1:8900"
-    vision_model: str = "qwen-vl-plus"  # 对齐根仓库 QED_OCR_MODEL
+    vision_model: str = "qwen-vl-plus"  # qwen-vl 云端档位身份（预留引擎，注释态配置）
+    ocr_engine: str = "mineru"  # 解析引擎：mineru / paddleocr-vl / qwen-vl（后两者预留）
+    ocr_model_url: str = "http://127.0.0.1:5002"  # 图像槽位本地端点（MinerU 容器，/health）
+    ocr_timeout: int = 600  # 单次解析调用超时秒数（整本解析耗时长）
     db_host: str = "127.0.0.1"
     db_port: int = 3306
     db_name: str = "qed"
@@ -46,9 +57,10 @@ def _to_int(value: Any, default: int) -> int:
 
 
 _ENV_MAP = {
-    "QED_API_SELECT": ("api_select", str),
-    "QED_LLM_GATEWAY_URL": ("llm_gateway_url", str),
     "AXIOM_VISION_MODEL": ("vision_model", str),
+    "AXIOM_OCR_ENGINE": ("ocr_engine", str),
+    "QED_OCR_MODEL_URL": ("ocr_model_url", str),
+    "AXIOM_OCR_TIMEOUT": ("ocr_timeout", partial(_to_int, default=600)),
     "QED_DB_HOST": ("db_host", str),
     "QED_DB_PORT": ("db_port", partial(_to_int, default=3306)),
     "QED_DB_NAME": ("db_name", str),
@@ -56,6 +68,9 @@ _ENV_MAP = {
     "QED_DB_PASSWORD": ("db_password", str),
     "AXIOM_PORT": ("port", partial(_to_int, default=8902)),
 }
+
+# 数据根键：根 .env 统一数据根（本仓库不再有私有覆盖键）。
+_DATA_DIR_KEYS = ("QED_DATA_ROOT",)
 
 
 def _env_file_values(start: Path | None = None) -> dict[str, str]:
@@ -95,7 +110,7 @@ def load_settings(**overrides: Any) -> Settings:
         raw = os.environ.get(env_name) or file_values.get(env_name)
         if raw is not None:
             values[field_name] = converter(raw)
-    for env_name in ("AXIOM_FLOW_DATA_DIR", "AXIOM_DATA_DIR"):
+    for env_name in _DATA_DIR_KEYS:
         raw = os.environ.get(env_name) or file_values.get(env_name)
         if raw:
             values["data_dir"] = raw
@@ -110,10 +125,13 @@ def load_settings(**overrides: Any) -> Settings:
     return replace(
         settings,
         data_dir=data_dir,
-        llm_gateway_url=settings.llm_gateway_url.rstrip("/"),
+        ocr_model_url=settings.ocr_model_url.rstrip("/"),
     )
 
 
 def llm_api_key() -> str:
-    """唯一供应商密钥（对齐 QED-Tracker ARCH-017）：只读 `API_KEY`，`AXIOM_API_KEY` 无回退。"""
+    """唯一供应商密钥（对齐 QED-Tracker ARCH-017）：只读 `API_KEY`，`AXIOM_API_KEY` 无回退。
+
+    仅 qwen-vl 云端档位引擎（预留）使用；本地 MinerU 解析路径不需要密钥。
+    """
     return _env_value("API_KEY")

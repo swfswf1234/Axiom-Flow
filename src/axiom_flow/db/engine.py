@@ -1,6 +1,7 @@
-"""数据库连接工具：共享 qed 库 `qed_llm_calls` 调用日志接入点（V2-014）。
+"""数据库连接与时间工具：`qed` 库 af_* 表接入点。
 
-`QED_DB_*` 经 `config.Settings` 注入；DB 不可达时由上层降级记日志，不在此层抛错。
+`QED_DB_*` 经 `config.Settings` 注入；DB 不可达时由上层降级，不在此层抛错。
+测试可传 `url`（如 sqlite://）绕过 MySQL，保持默认测试隔离。
 """
 
 from __future__ import annotations
@@ -25,9 +26,9 @@ def mysql_url(settings: Settings) -> str:
     ).render_as_string(hide_password=False)
 
 
-def create_engine_for(settings: Settings) -> Engine:
-    """创建 SQLAlchemy engine：pool_pre_ping 防断连，future 行为。"""
-    return create_engine(mysql_url(settings), pool_pre_ping=True, future=True)
+def create_engine_for(settings: Settings, url: str | None = None) -> Engine:
+    """创建 SQLAlchemy engine：pool_pre_ping 防断连，future 行为；url 覆盖用于测试。"""
+    return create_engine(url or mysql_url(settings), pool_pre_ping=True, future=True)
 
 
 def utc_now() -> datetime:
