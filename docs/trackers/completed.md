@@ -1,13 +1,16 @@
 # 关闭台账
 
 状态：Current
-最后更新：2026-09-11
+最后更新：2026-09-14
 
 本表登记已关闭任务（v2 纪元）。v1 关闭台账已归档
 （`docs/history/v1-20260814/trackers/completed.md`）。
 
 | 日期 | ID | 任务 | 终态 | 关闭结果 | 证据 |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-14 | ARCH-002 | MinerU 解析接入（qed-engine 模式经 8900 网关，替换当前 qwen-vl 逐页） | Superseded | Not Applicable | 2026-09-14 关闭（ARCH-020 重构）：解析改为直连模型服务、不经 8900 网关（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）；由 ARCH-016 引擎适配器承接 |
+| 2026-09-14 | ARCH-007 | API v1 契约冻结（parse-jobs/books/pages/manifest） | Superseded | Not Applicable | 2026-09-14 关闭（ARCH-020 重构）：契约按新设计重定义（af_* 四表 + CRUD/ingest/edit），见 [api.md](../architecture/api.md) |
+| 2026-09-14 | ARCH-008 | af_* 书目同步与块判定（af_books/af_block_reviews + sync/review） | Superseded | Not Applicable | 2026-09-14 关闭（ARCH-020 重构）：af_* 重定义为四表、块判定扩展为块编辑；由 ARCH-013/014/006 承接 |
 | 2026-08-20 | V2-001 | WSL 容器基建：Docker Compose（mineru-api 单体，内嵌 vLLM）+ 启停脚本（infra-up/down/status/reset） | Completed | Achieved | `scripts/compose.yaml` + 4 个 ps1 就位；容器 healthy，Windows→8002 连通，sample.pdf 端到端解析成功（hybrid-engine 3.4.4）；router 模式 502 弃用改单体；**MinerU 编排已于 V2-014 移交根仓库 `scripts/image-model/`** |
 | 2026-08-20 | V2-002 | 新包结构与 schemas：`src/axiom_flow/{api,orchestrator,ingest,fallback}/` + `schemas.py`（blocks/page/book/job Pydantic 模型） | Completed | Achieved | `tests/unit/test_schemas.py` 31 通过；契约 42 + ruff 全绿；code-map 同步（v1 旧代码与测试已按 spec 清除） |
 | 2026-08-20 | V2-003 | ingest：PDF 导入、页图渲染（150 DPI+）、book.json（SHA-256） | Completed | Achieved | 已审阅 2026-08-16 根仓库侧越界产物（`importer.py` + 8 测试）与设计一致；全量 81 passed + ruff clean；设计文档/code-map 同步 |

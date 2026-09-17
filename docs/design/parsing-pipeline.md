@@ -2,184 +2,163 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：In Progress（ingest/schemas/fallback 已实现，orchestrator 待 ARCH-003；fallback 为 V2-010 实验版本）
-最后更新：2026-09-11
-关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/fallback/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/orchestrator/`（待实现）
-关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_fallback.py`（orchestrator 待对应任务）
-关联 ADR：`docs/adr/0001-v2-exploration-direction.md`
+实现状态：In Progress（ingest/schemas 已实现；orchestrator/normalize/engines 待 ARCH-003/016）
+最后更新：2026-09-17
+关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/orchestrator/`（待实现）、`src/axiom_flow/engines/`（待实现）、`src/axiom_flow/normalize/`（待实现）
+关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`（orchestrator/engines 待对应任务）
+关联 ADR：`docs/adr/0001-v2-exploration-direction.md`、`docs/adr/0004-model-boundary-and-pipeline-ownership.md`
 
-> 本文档承接原 pdf-parsing-and-rendering.md（v2 探索基线）的解析管线主体，v0.1 版本文档体系
-> 对齐（V2-015）后替代之。对外 API 契约见 `../architecture/api.md`（8902 API 接口文档，REQ-046
-> 分类）；服务生命周期脚本契约见 `../architecture/api.md` ①生命周期与健康分类。
+> 本文档定义解析管线的内部结构：PDF ingest → 引擎适配 → 归一化 → 编排落盘 → 质量信号。
+> 对外 API 契约见 `../architecture/api.md`；数据库表见 `../architecture/database-design.md`；
+> 模型/引擎配置与对接见 [model-integration.md](model-integration.md)；解析管理闭环见
+> [parsing-management.md](parsing-management.md)。
 
 ## 背景与决策记录
 
-2026-08-14 用户裁决：Axiom-Flow 转入探索型重构，与 QED-Engine 合作展示。已下载 12 本数学分析
-书籍（`D:\coding\QED-Engine\dataset\qed-tracker\raw\books\math-qe\01_math_analysis`），第一版
-聚焦「PDF 完整解析 + 统一格式 + 高还原展示」的**后端解析能力**，前端展示由 QED-Engine 负责。
+2026-08-14 用户裁决：Axiom-Flow 转入探索型重构，聚焦「PDF 完整解析 + 统一格式 + 高还原展示」
+的后端解析能力。2026-09-14（根仓库 ARCH-020，[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）
+进一步裁决：**模型生命周期归 8900、解析管线归本仓库**，解析直连模型服务。
 
 关键决策：
 
 | 维度 | 决策 |
 | --- | --- |
 | 重构策略 | 推倒重来：旧代码与 115+ 测试不沿用，git 历史与 docs/history 保留作经验参考 |
-| 第一版范围 | 解析 + 渲染数据供给；Milvus/LangChain/知识图谱/数学解析器列为后续探索项 |
-| 解析引擎 | MinerU vlm/hybrid 后端（经 8900 网关调用；容器由根仓库 `scripts/image-model/` 托管） |
-| 替代通道 | local 模式直连百炼 qwen-vl-plus（独立识别通道，标记 source 区分；**非兜底**，V2-006 兜底已取消） |
-| 展示形态 | 对照模式：原页高清图 + 解析重渲染，由 QED-Engine 前端实现 |
-| 首批书目 | 2 本代表样本（Rudin 英文 + 陈纪修中文）跑通验收后批量处理其余 10 本 |
-| 持久化 | 文件系统 + 轻量 SQLite（`data/books/<book_id>/`），Milvus 后续接入 |
-| 部署 | 分层混合：WSL Docker Compose 容器化（mineru-api 单体，后续 Milvus），Windows 本地跑编排层与 API |
+| 管线归属 | 全部在本仓库（ingest/引擎适配/归一化/编排/落盘）；模型生命周期在根仓库 8900 |
+| 解析引擎 | 引擎适配器可插拔：MinerU 先落地，PaddleOCR-VL / qwen-vl 预留（见 [model-integration.md](model-integration.md)） |
+| 模型调用 | 直连本地模型服务（不经 8900 网关）；统一 blocks 归一化在适配层完成 |
+| 展示形态 | 对照模式：原页高清图 + 解析重渲染 + 块级人工校验修改 |
+| 持久化 | 产物文件（`QED_DATA_ROOT/parsed/`）+ af_* 四表元数据（见 [parsing-management.md](parsing-management.md)） |
 | 前端 | QED-Engine 负责；本仓库只保证 API 契约与产物格式稳定 |
 
 ## 总体架构
 
 ```mermaid
-flowchart TB
-    subgraph QED["QED-Engine（前端/展示）"]
-        UI["前端对照展示"]
+flowchart LR
+    subgraph WIN["Axiom-Flow 8902（Windows）"]
+        API["api/ 协议适配"]
+        OR["orchestrator/ 任务编排<br/>af_parse_jobs + af_pages"]
+        ING["ingest/ PDF→页图<br/>book.json（sha256）"]
+        ENG["engines/ 引擎适配器"]
+        NRM["normalize/ 统一 blocks"]
+        SCH["schemas.py 统一模型"]
+        ST["产物落盘<br/>QED_DATA_ROOT/parsed/"]
     end
-    subgraph WIN["Windows 本地"]
-        API["FastAPI 后端<br/>解析编排 + 对外 API v1"]
-        QVL["百炼 qwen-vl-plus<br/>（local 直连通道）"]
-        DATA["data/books/&lt;书名&gt;/<br/>页图 + markdown + blocks + sqlite"]
+    subgraph MODELS["本地模型服务（8900 启停托管）"]
+        MRU["MinerU 5002"]
+        PVL["PaddleOCR-VL（预留）"]
+        QVL["qwen-vl（api 档位）"]
     end
-    subgraph WSL["WSL Ubuntu 24.04 + Docker Compose（根仓库托管）"]
-        MA["mineru-api 服务<br/>(内嵌 vLLM, hybrid-engine)"]
-        MV["Milvus（后续接入，占位）"]
-    end
+    RAW["QED_DATA_ROOT/raw/ 源 PDF（只读）"]
 
-    UI -->|"REST /api/v1"| API
-    API -->|"PDF 解析（经 8900 网关）"| MA
-    API -->|"local 直连识别"| QVL
-    API -->|"产物落盘"| DATA
+    API --> OR
+    OR --> ING
+    OR --> ENG
+    ENG --> MRU
+    ENG -.-> PVL
+    ENG -.-> QVL
+    ENG --> NRM
+    NRM --> SCH
+    NRM --> ST
+    ING --> RAW
+    ING --> ST
 ```
 
-依赖关系：Windows 应用层 → WSL 推理服务只经 HTTP 双向调用（PDF 上传、解析结果返回），WSL
-不直接读写 Windows 文件系统（避免 `/mnt/d` 慢路径），产物一律由 Windows 编排层落盘
-`data/`。容器化边界：仅推理服务（GPU 密集型、依赖复杂）进容器；应用层留在 Windows（开发
-调试顺手、QED_env 现成）。
+## 统一格式与产物
 
-## 数据模型与产物格式
+产物落 `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`：
 
-```
-data/books/
-└── <book_id>/                    # 如 01-rudin-en-principles-of-math-analysis
-    ├── book.json                 # 元数据：书名/作者/页数/SHA-256/解析策略
-    ├── state.sqlite              # 轻量状态：任务、页状态（pending/parsed/fallback/failed）
-    ├── pages/
-    │   ├── p0001.png             # 原页高清图（150 DPI 以上，QED-Engine 对照左栏）
-    │   ├── p0001.md              # 页级统一 Markdown（人类可读+可再渲染）
-    │   └── p0001.blocks.json     # 结构化块（机器可读，Milvus 切分点）
-    └── manifest.json             # 产物清单（文件路径+大小+哈希，防篡改/增量）
+```text
+<book_id>/
+├── book.json            # book_id/title/authors/page_count/sha256/source_file/engine/ingested_at
+├── manifest.json        # 产物清单（路径 + 大小 + SHA-256）
+└── pages/
+    ├── p0001.png        # 原页图（150 DPI，对照左栏 + bbox 基准）
+    ├── p0001.md         # 页级 Markdown（$$...$$ / $...$ 内嵌公式）
+    └── p0001.blocks.json# 统一 blocks（结构化，含 bbox）
 ```
 
-每页三件套：`blocks.json`（核心结构化数据，QED-Engine 渲染 + 后续向量化共同基座）、`md`
-（页级统一 Markdown，公式以 `$$...$$`/`$...$` 内嵌，KaTeX/MathJax 可渲染）、`png`（原页高清
-渲染，坐标换算基准）。
-
-`blocks.json` 结构（块类型枚举：`heading / paragraph / formula / table / image / list /
-caption / header / footer / page_number`，Pydantic 模型见 `src/axiom_flow/schemas.py`）：
+统一 blocks schema（`schemas.py` 单一事实源）：
 
 ```json
 {
   "page": 1,
+  "image_size": [1240, 1754],
   "source": "mineru",
   "blocks": [
-    {"type": "heading", "level": 1, "text": "1. The Real and Complex Number Systems",
-     "bbox": [72, 54, 540, 80]},
-    {"type": "paragraph", "text": "We assume...", "bbox": [72, 96, 540, 132]},
-    {"type": "formula", "latex": "x + y = y + x", "display": true,
-     "bbox": [72, 150, 540, 175], "confidence": 0.97},
-    {"type": "table", "html": "<table>...</table>", "bbox": [72, 200, 540, 300]},
-    {"type": "image", "path": "images/p0001_im1.png", "caption": null, "bbox": [...]}
-  ]
+    {"index": 0, "type": "heading", "level": 1, "text": "...", "bbox": [72, 54, 540, 80], "order": 0, "confidence": 0.97},
+    {"index": 1, "type": "formula", "latex": "x + y = y + x", "display": true, "bbox": [72, 150, 540, 175], "order": 1}
+  ],
+  "quality": {"empty_block_ratio": 0.0, "avg_formula_confidence": 0.95, "table_count": 1, "text_length_ratio": 0.98}
 }
 ```
 
-设计预留：blocks 的 `paragraph/formula/table` 块即 Milvus 天然切分点（块级向量化，无需
-LangChain 文本切分器）；`formula.latex` 字段为数学解析器探索入口；块类型 + text 支持后续
-定义/定理语义识别（知识图谱探索）。
+- 块类型 10 种：`heading / paragraph / formula / table / image / list / caption / header / footer /
+  page_number`；按类型强制必需字段（heading.text+level、formula.latex、table.html、image.path、
+  list.items、其余 text）。
+- `bbox`：原页图像素坐标 `[x0, y0, x1, y1]`（左上原点），基准 `pages/pXXXX.png`；模型坐标系差异
+  由 `normalize/` 按 `image_size` 缩放归一。
+- 人工编辑为覆盖层（`af_block_edits`），不改产物文件。
 
 ## 组件职责
 
 | 模块 | 职责 |
 | --- | --- |
-| `api/` | 对外 `/api/v1` 路由，只做协议适配，不掺业务（契约见 `../architecture/api.md`） |
-| `orchestrator/` | 解析任务编排：接收 job → 逐页调 MinerU → 校验质量 → 产物落盘 → 更新 state.sqlite（ARCH-003 承接） |
-| `ingest/` | PDF 导入：渲染页图（150 DPI+）、生成 book.json（含 SHA-256）；源 PDF 留在 `dataset/` 只读不复制（sha256 保证校验） |
-| `fallback/` | qwen-vl-plus 客户端（local 模式直连通道），输出归一化为同一 blocks 结构；非兜底 |
-| `schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job）——内外契约单一事实源 |
+| `api/` | 对外 `/api/v1` 路由，只做协议适配（契约见 `../architecture/api.md`） |
+| `orchestrator/` | 解析任务编排：接收 job → 逐页/全本 → 调引擎 → 归一化 → 落盘 → 更新 af_parse_jobs/af_pages/af_books（ARCH-003） |
+| `ingest/` | PDF 导入：渲染页图（150 DPI+）、生成 book.json（含 SHA-256/page_count）；源 PDF 只读不复制 |
+| `engines/` | 引擎适配器：调用模型服务，返回原始输出（见 [model-integration.md](model-integration.md)） |
+| `normalize/` | 引擎原始输出 → 统一 blocks（坐标归一、类型映射、阅读序） |
+| `schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job/edit）——内外契约单一事实源 |
 
-与旧代码关系：全新包结构，旧 `pdf_pipeline/bailian/mysql` 等全部不引入，仅参考其配置与百炼
-凭据接入方式。
+## 引擎接入
 
-### MinerU 接入（WSL / Docker Compose）
-
-- `mineru-api`（官方镜像，内嵌 vLLM 推理引擎；`POST /file_parse` 同步返回解析结果，
-  多文件字段名 `files`；另有 `POST /tasks` 异步）；实测版本 3.4.4，`backend=hybrid-engine`
-- 数据流：Windows 编排层经 HTTP 上传 PDF → WSL 内解析 → 结果经 HTTP 返回 → 编排层落盘
-  `data/books/<book_id>/`
-- 模型：MinerU2.5 VLM，模型固化在镜像内（`MINERU_MODEL_SOURCE=local`，约 4.6GB 缓存）；
-  容器不挂载 Windows 盘，文件交互经 HTTP 上传
-- 第一版固定：单 PDF 顺序页解析（`pipeline` 流式落盘）；GPU 穿透 `--gpus all`
-- 部署实测：router 模式（`mineru-router`，独立 vLLM worker）在本环境 worker 502 循环重启
-  不可用，采用单体 `mineru-api`；镜像与模型下载在 WSL 侧一次性完成（构建时拉取）
-- 模型调用形态：V2-014 后经 `llm_client.py` 双模式兼容层——**MinerU 仅经 `qed-engine`（8900
-  网关）可达**，`local` 模式直连 qwen-vl-plus；容器脚本归根仓库 `scripts/image-model/`
-  （设计见 `model-mode-config.md`）
-
-### 替代识别通道（qwen-vl-plus，local 模式）
-
-- 用途：`local` 模式下直连百炼 qwen-vl-plus 做页级识别（不依赖 8900，独立性铁律）；
-  `qed-engine` 模式下统一走 MinerU（经网关），不触发本通道
-- 输入：该页原图（复用 p0001.png）+ 页码提示；输出：归一化 blocks（同一枚举，
-  `source=qwen-vl-plus`）
-- V2-006「质量不达标自动兜底」已取消；`strategy=hybrid` 为历史字段，当前不做自动切换
-
-### 明确不做（第一版）
-
-- 检索/向量化/知识图谱/数学解析器（仅预留字段）
-- 多书并发、断点续跑页级任务（job 幂等即可）
-- QED-Engine 前端对接联调（只保证 API 契约与产物格式稳定）
+- 引擎由配置选择（`AXIOM_OCR_ENGINE`，默认 `mineru`）；适配器统一输入（页图字节 / PDF 字节）
+  与输出（页级 blocks+markdown+bbox）。
+- **逐页解析**：页图 → 引擎单页识别（用于重解析/修补）；**全本解析**：PDF → 引擎整本解析
+  （跨页表格/阅读序更优）→ 逐页结果。
+- MinerU 经 `POST /file_parse`（同步）或 `/tasks`（异步）调用，取 `content_list`/`middle.json`
+  结构化输出（不再只取 markdown 字符串）。
+- 详见 [model-integration.md](model-integration.md)。
 
 ## 错误处理与质量验收
 
-### 错误处理
-
 | 场景 | 行为 |
 | --- | --- |
-| MinerU 单页失败（超时/空输出/异常） | 重试 1 次 → 仍失败标记 `failed`，job 不中断，汇总报告列出失败页 |
-| 页质量信号不达标 | 记录质量信号并标记；不自动切换通道（V2-006 兜底已取消） |
-| 解析失败 | 页标记 `failed` 保留原因，可单独重跑单页（job 支持页范围） |
-| vLLM/容器未启动 | 编排层启动前健康检查，返回 503 + 提示运行容器编排脚本（见 guides/operations.md） |
-| 电源中断/进程被杀 | state.sqlite 页状态持久化 → 重启后按状态续跑未完成页（幂等） |
-| WSL 不可达 | API 层错误映射为可读中文错误信息，不泄漏堆栈 |
+| 单页失败（超时/空输出/异常） | 重试 1 次 → 仍失败标记 `failed`，job 不中断，汇总报告列出失败页 |
+| 页质量信号不达标 | 记录质量信号并标记；不自动切换引擎（用户裁决不设自动兜底） |
+| 模型服务未启动 | 任务提交前健康检查（`QED_OCR_MODEL_URL`），返回 503 + 提示经 8900 `/models/{slot}` 启停模型 |
+| 电源中断/进程被杀 | af_pages 页状态持久化 → 重启后按状态续跑未完成页（幂等） |
+| 模型服务不可达 | API 层错误映射为可读中文错误信息，不泄漏堆栈 |
 
 质量信号（每页随 blocks.json 落盘，`QualityMetrics`）：空块率、formula 平均置信度、table
 解析成功数、页文本长度与原生文本长度比值（扫描件无原生文本则跳过）。
 
 ### 验收标准
 
-1. 2 本代表书（Rudin 英文 + 陈纪修中文）全流程跑通：导入 → 解析 → 产物落盘
+1. 代表书（Rudin 中译 + 吉米多维奇习题集）全流程跑通：同步 → ingest → 解析 → 产物落盘；
 2. 页级质量：抽查每本 20 页（首/中/尾 + 公式密集页），公式 LaTeX 可被 KaTeX 正确渲染 ≥ 90%
-   （人工抽查），块类型标注无明显错乱
-3. API 契约：`/api/v1` 全部端点可用，返回结构与 schemas 一致（见 `../architecture/api.md`）
-4. 替代通道：local 模式直连 qwen-vl-plus 识别成功并标记 `source=qwen-vl-plus`
-5. 失败恢复：kill 编排进程后重启，未完成页续跑成功
+   （人工抽查），块类型标注无明显错乱；
+3. API 契约：`/api/v1` 全部端点可用，返回结构与 schemas 一致；
+4. 失败恢复：kill 编排进程后重启，未完成页续跑成功。
 
 ### 测试策略（探索项目，分层但轻量）
 
 | 层 | 内容 | 工具 |
 | --- | --- | --- |
-| 单元 | schemas 校验、质量信号计算、产物文件名/哈希、状态机转换 | pytest |
-| 集成 | 编排层对 WSL 服务的调用（mock 服务代替，CI 无 GPU） | pytest + mock |
-| 冒烟 | 真实调用：单 PDF 小样（5 页含公式）跑通全链路 + 兜底触发 | pytest + `@smoke`，本地手动跑 |
+| 单元 | schemas 校验、质量信号计算、归一化、产物文件名/哈希、状态机转换 | pytest |
+| 集成 | 编排层对模型服务的调用（mock 服务代替，CI 无 GPU） | pytest + mock |
+| 冒烟 | 真实调用：单 PDF 小样（5 页含公式）跑通全链路 | pytest + `@smoke`，本地手动跑 |
 | 契约 | API 返回结构与 schemas 一致性、产物三件套完整性 | pytest（轻量） |
 
 本地门禁 `pytest + ruff`（不引入远端 CI）。
 
 ## 备注
 
-本文档为解析管线契约（ingest/fallback/orchestrator/schemas 的 DesignRef 事实源）。实现中
-允许按实际情况调整（技术选型、端口、产物字段等），调整时同步更新本文档与后续计划。
+本文档为解析管线契约（ingest/normalize/orchestrator/engines/schemas 的 DesignRef 事实源）。
+实现中允许按实际情况调整（技术选型、端口、产物字段等），调整时同步更新本文档与后续计划。
+
+**配置对齐（2026-09-17，根仓库 PLAN-046 / REQ-075）**：MinerU 端口 8002 → 5002，直连地址读
+`QED_OCR_MODEL_URL`（`QED_MINERU_URL` 已删除，不保留别名）；模型生命周期归 8900，本仓库只
+连接。v1 的 `llm_client.py` / `fallback/` 随 `engines/` 落地退役（见
+[model-integration.md](model-integration.md) 退役清单）。

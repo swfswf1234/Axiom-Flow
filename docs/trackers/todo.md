@@ -1,36 +1,41 @@
 # 待做任务
 
 状态：Current
-最后更新：2026-09-11
+最后更新：2026-09-17
 
 本表是全部未关闭工作的统一导航。v1 台账已归档
-（`docs/history/v1-20260814/trackers/todo.md`）。任务 ID 采用稳定前缀-三位序号；已关闭任务见
+（`docs/history/v1-20260814/trackers/todo.md`）。任务 ID 采用稳定前缀-序号；已关闭任务见
 [关闭台账](completed.md)。当前版本 v0.1 目标见 [项目状态快照](project-status.md)。
 
-## 本期主线：v0.1 解析对照闭环（MinerU）
+## 本期主线：解析管理闭环（对齐根仓库 ARCH-020）
 
-对齐根仓库第三轮主线 ARCH-020（与 Axiom-Flow 联调，至少完成一个教程解析）。链路：
-解析（MinerU，经 8900 网关）→ 分块 → 对比解析效果 → 渲染回去 → QED-Engine 前端对照。
+链路：书目同步（af_books）→ ingest（页图）→ 解析（引擎适配，逐页/全本）→ 对照渲染 →
+块级人工校验修改（判定/备注/文字/范围）。设计见
+[parsing-management](../design/parsing-management.md)、[parsing-pipeline](../design/parsing-pipeline.md)、
+[model-integration](../design/model-integration.md)。
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
-| ARCH-001 | 主线 | 高 | Open | v0.1 解析对照闭环：MinerU 解析 → 分块 → 对比解析效果 → 渲染回去 → QED-Engine 前端对照 | 支线 ARCH-002~009 关闭；一个教程端到端对照验收 |
-| ARCH-002 | 支线 | 高 | Open | MinerU 解析接入（qed-engine 模式经 8900 网关，替换当前 qwen-vl 逐页） | 单页 PDF 经网关解析成功；产物 `source=mineru` |
-| ARCH-003 | 支线 | 高 | Open | orchestrator：任务编排 + state.sqlite（jobs/pages）+ 质量信号（空块率/公式置信度/表格成功数） | 单元 + 集成（mock）测试通过；根仓库 C 组联调前置 |
-| ARCH-004 | 支线 | 高 | Open | 分块模型：blocks → chunk（paragraph/formula/table 为切分点，为 RAG 预留） | 设计 + 契约测试；产物 chunk 结构落盘 |
-| ARCH-005 | 支线 | 高 | Open | 解析对照与质量度量：页图 vs 重渲染对照 + 质量信号落盘 | 对照视图数据契约 + 质量信号测试 |
-| ARCH-006 | 支线 | 高 | Open | 渲染数据供给对接：blocks+md+页图+bbox → QED-Engine 前端（REQ-034/042 衔接） | 前端对照视图联调通过 |
-| ARCH-007 | 支线 | 中 | In Progress | API v1 契约冻结（parse-jobs/books/pages/manifest） | 契约冻结待根仓库 REQ-034 评审确认 |
-| ARCH-008 | 支线 | 中 | Open | af_* 书目同步与块判定（原 V2-013，根仓库 REQ-042）：af_books/af_block_reviews + `POST /books/sync` + 块判定端点 | 用户评审确认后执行；回执 REQ-042 |
+| ARCH-001 | 主线 | 高 | In Progress | 解析管理闭环：af_* 四表 + 同步/ingest + 引擎适配 + 编排 + 对照编辑（对齐根仓库 ARCH-020） | 支线关闭；Rudin 教程端到端验收 |
+| PLAN-002 | 主线 | 高 | In Progress | [Axiom-Flow 配置中心对齐与分阶段重构（axiom-flow-refactor）](../plans/2026-09-17-axiom-flow-refactor.md) | 配置对齐 → 设计收口 → 骨架 → 功能；每阶段门禁 + Rudin 端到端 |
+| REQ-075 | 支线 | 高 | Open | 请求接收：QED-Engine——MinerU 直连配置同步（端口 8002→5002、键 `QED_MINERU_URL`→`QED_OCR_MODEL_URL`，不保留别名） | PLAN-002 Phase 1/2 承载；对齐后回执根仓库 |
+| ARCH-013 | 支线 | 高 | Open | af_* 四表建表（Alembic）+ 仓储层（af_books/af_parse_jobs/af_pages/af_block_edits） | 迁移可升降级；单测通过 |
+| ARCH-003 | 支线 | 高 | Open | 解析编排：af_parse_jobs + af_pages + 逐页/全本 + 重试 + 质量信号（取代 state.sqlite 方案） | 任务状态机 + 集成测试 |
+| ARCH-014 | 支线 | 高 | Open | 书目同步与 CRUD：POST /books/sync + GET/PATCH/DELETE /books | 幂等 upsert；契约测试 |
+| ARCH-015 | 支线 | 高 | Open | ingest：PDF→页图 + book.json（sha256/page_count），产物落 `<QED_DATA_ROOT>/parsed/<domain>/<course>/<book_id>/` | 单测 + 幂等覆盖 |
+| ARCH-016 | 支线 | 高 | Open | 引擎适配器：MinerU 接入 + 统一 blocks 归一化（PaddleOCR-VL/qwen-vl 预留）；llm_client/fallback 退役 | mock 引擎单测 + 真实冒烟 |
+| ARCH-005 | 支线 | 高 | Open | 解析对照与质量度量：页图 vs 重渲染 + 质量信号落盘 | 对照视图数据契约 + 质量信号测试 |
+| ARCH-006 | 支线 | 高 | Open | 渲染数据供给与块编辑：pages/blocks/image/manifest + edit 端点（af_block_edits） | 前端对照视图联调通过 |
 | ARCH-009 | 支线 | 中 | Open | 套1 代表书验收（教程 Rudin 中译 + 习题集吉米多维奇） | 前 20 页冒烟 → 全量（≥90% 公式可渲染） |
-| REQ-001 | 支线 | 高 | Open | 请求：QED-Engine——8900 `/llm/vision` 回传页级 blocks+bbox（对照与渲染需要） | 根仓库回执后关闭；ARCH-006 前置 |
+| ARCH-004 | 支线 | 中 | Open | 分块模型：blocks → chunk（paragraph/formula/table 为切分点，为 RAG 预留） | 设计 + 契约测试；chunk 结构落盘 |
+| REQ-001 | 支线 | 高 | Open | 请求：QED-Engine——8900 数据域适配 af_* 新契约（books CRUD/ingest/edits/parsing-tree） | 根仓库回执后关闭；ARCH-014/015/006 前置 |
 
 ## 长期任务
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
-| ARCH-010 | 长期 | 中 | In Progress | 文档体系对齐维护：固定文档随实现同步；版本末期规范化整理轮（原 V2-016） | 每次版本确认前执行一轮 |
-| ARCH-011 | 长期 | 低 | Open | 批量处理其余书籍（原 V2-009） | ARCH-009 关闭后拆 D 类计划执行 |
+| ARCH-010 | 长期 | 中 | In Progress | 文档体系对齐维护：固定文档随实现同步；版本末期规范化整理轮 | 每次版本确认前执行一轮 |
+| ARCH-011 | 长期 | 低 | Open | 批量处理其余书籍 | ARCH-009 关闭后拆 D 类计划执行 |
 | ARCH-012 | 长期 | 低 | Open | 探索路线图：Milvus 检索 / 知识图谱 / 数学解析器 / 学习交互闭环 | 见 [路线图](roadmap.md)，按需立项 |
 
 ## 规则

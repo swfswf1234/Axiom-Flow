@@ -39,7 +39,7 @@ def test_architecture_directory_has_one_index_and_two_current_documents():
 def test_system_context_diagram_names_boundary_inputs_and_outputs():
     diagrams = _mermaid("overview.md")
     assert len(diagrams) == 1
-    for label in ("QED-Engine", "Windows", "WSL", "mineru-api", "vLLM", "qwen-vl-plus", "data/books"):
+    for label in ("QED-Engine", "8900 网关", "MinerU", "PaddleOCR-VL", "parsed"):
         assert label in diagrams[0]
 
 
@@ -47,9 +47,9 @@ def test_code_map_lists_v2_modules_with_design_references():
     content = (ARCHITECTURE / "code-map.md").read_text(encoding="utf-8")
     for module in (
         "src/axiom_flow/api/",
-        "src/axiom_flow/orchestrator/",
         "src/axiom_flow/ingest/",
-        "src/axiom_flow/fallback/",
+        "src/axiom_flow/orchestrator/",
+        "src/axiom_flow/engines/",
         "src/axiom_flow/schemas.py",
     ):
         assert f"`{module}`" in content, module
@@ -63,10 +63,13 @@ def test_api_document_declares_four_categories_and_contract_endpoints():
     for endpoint in (
         "GET /api/v1/health",
         "GET /api/v1/books",
+        "POST /api/v1/books/sync",
+        "POST /api/v1/books/{book_id}/ingest",
         "POST /api/v1/parse-jobs",
         "GET /api/v1/books/{book_id}/pages/{page_no}",
         "GET /api/v1/books/{book_id}/manifest",
         "GET /api/v1/parse-jobs/{job_id}",
+        "PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit",
     ):
         assert endpoint in content, endpoint
     assert "src/axiom_flow/schemas.py" in content
@@ -74,7 +77,7 @@ def test_api_document_declares_four_categories_and_contract_endpoints():
 
 def test_database_design_document_declares_af_namespace_and_tables():
     content = (ARCHITECTURE / "database-design.md").read_text(encoding="utf-8")
-    for table in ("af_books", "af_block_reviews"):
+    for table in ("af_books", "af_parse_jobs", "af_pages", "af_block_edits"):
         assert table in content, table
     assert "af_*" in content
     assert "qed" in content

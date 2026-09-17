@@ -15,8 +15,8 @@ DESIGN = ROOT / "docs" / "design"
 MERMAID_BLOCK = re.compile(r"```mermaid\s*\n(?P<body>.*?)```", re.DOTALL)
 CURRENT_DOCUMENTS = {
     "parsing-pipeline.md",
-    "af-books-sync.md",
-    "model-mode-config.md",
+    "parsing-management.md",
+    "model-integration.md",
 }
 
 

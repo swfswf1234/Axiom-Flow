@@ -2,7 +2,7 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-11
+最后更新：2026-09-17
 治理对象：本地机器标识、环境依赖、构建命令与开发约定（仅机器绑定事实）
 依据：QED-Tracker `docs/standards/local-dev.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)）
 关联测试：无
@@ -48,6 +48,7 @@ Windows 文件系统大小写不敏感，历史文档曾写作 `qed_env`，与�
 | 服务 | 端口 | 说明 |
 | --- | --- | --- |
 | Axiom-Flow API | 8902 | 本仓库 FastAPI 服务（8000 旧端口兼容保留） |
+| MinerU 解析服务 | 5002 | WSL 容器 `mineru-api`，健康端点 `/health`（生命周期由 8900 托管，本仓库只连接 `QED_OCR_MODEL_URL`） |
 | QED-Tracker | 8901 | 同级子仓库（本仓库只读，不复制其细节） |
 | QED-Engine 后端 | 8900 | 根仓库（LLM 网关 `QED_LLM_GATEWAY_URL` 默认 `http://127.0.0.1:8900`） |
 | QED-Engine 前端 | 8903 | 根仓库 |
@@ -55,13 +56,15 @@ Windows 文件系统大小写不敏感，历史文档曾写作 `qed_env`，与�
 ## 推理基础设施
 
 - WSL Ubuntu 24.04 + Docker Compose：`mineru-api`（MinerU FastAPI 单体，内嵌 vLLM，
-  hybrid-engine 后端，需 GPU 穿透）；容器与启停脚本由根仓库 `scripts/image-model/` 托管。
+  hybrid-engine 后端，需 GPU 穿透）；容器与启停脚本由根仓库 `scripts/image-model/` 托管，
+  启停/探针/资源互斥由 8900 `/models/vision` 统一管理，本仓库只连接 `QED_OCR_MODEL_URL`
+  （默认 `http://127.0.0.1:5002`，健康端点 `/health`）。
 - 详细操作与排障见[运维指南](../guides/operations.md)与根仓库 `scripts/image-model/`。
 
 ## 常见误判注记
 
-- **API 503 / MinerU 未起**：确认 8900 网关与根仓库 `scripts/image-model/` 的 mineru-api 容器
-  在线后重试；首次请求含 vLLM warmup（约 1 分钟）。
+- **API 503 / MinerU 未起**：经 8900 `/models/vision` 或根仓库 `scripts/image-model/` 启动
+  mineru-api 容器（5002）后重试；首次请求含 vLLM warmup（约 1 分钟）。
 - **模型调用模式**：`QED_API_SELECT` 取 `local`（自身 `API_KEY` 直连厂商）或 `qed-engine`
   （经 8900 网关，不接触密钥）；服务脚本 `--mode` 可覆盖，选择持久化到 `logs/qed-axiom-mode`。
 - **密钥兜底**：`API_KEY` 统一供应商密钥；未配置时相关端点按契约降级而非崩溃。

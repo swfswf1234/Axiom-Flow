@@ -3,8 +3,12 @@
 ## 项目目标
 
 Axiom-Flow 是 QED-Engine 的后端解析组件（v2 探索纪元，ADR 0001）：把 PDF 教材完整解析为统一
-格式（Markdown/LaTeX/结构化块），支撑 QED-Engine 前端高还原对照展示。前端由 QED-Engine 负责，
-本仓库只保证 API 契约与产物格式稳定。当前重点是解析与渲染数据供给，检索/知识图谱为后续探索项。
+格式（Markdown/LaTeX/结构化块），支撑 QED-Engine 前端高还原对照展示与人工校验修改。前端由
+QED-Engine 负责，本仓库只保证 API 契约与产物格式稳定。
+
+**模型生命周期归 8900、解析管线归本仓库**（ADR 0004）：模型文件/启停/探针由根仓库 8900 管理，
+本仓库经**引擎适配器直连模型服务**（MinerU 先落地，PaddleOCR-VL/qwen-vl 预留），不感知具体
+模型。当前重点是解析与渲染数据供给，检索/知识图谱为后续探索项。
 
 ## 快速开始
 
@@ -12,7 +16,7 @@ Axiom-Flow 是 QED-Engine 的后端解析组件（v2 探索纪元，ADR 0001）�
 
 1. 检查工作树和当前分支，保留用户已有变更。
 2. 先读 `docs/trackers/project-status.md`（30 秒现状）与 `docs/architecture/overview.md` 了解
-   拓扑，再从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/todo.md`（v2 任务清单）和
+   拓扑，再从 `docs/index.md` 进入对应文档域，阅读 `docs/trackers/todo.md`（任务清单）和
    关联计划。
 3. 从 `docs/standards/index.md` 选择本任务适用的强制规则；开发命令查
    `docs/guides/development.md`，运行与数据操作查 `docs/guides/operations.md`。
@@ -49,11 +53,13 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 | 任务 | 首查实现 | 设计/协议 | 定向测试 |
 | --- | --- | --- | --- |
-| MinerU 推理、容器启停 | 根仓库 `scripts/image-model/`（本仓库只读引用） | `guides/operations.md`、ADR 0001 | 经 8900 网关冒烟 |
-| 解析编排、质量校验、兜底 | `src/axiom_flow/orchestrator/`、`fallback/` | `docs/design/parsing-pipeline.md` | `tests/unit/`、`tests/integration/` |
-| PDF 导入与页图 | `src/axiom_flow/ingest/` | `docs/design/parsing-pipeline.md` | `tests/unit/` |
-| 统一格式与 schemas | `src/axiom_flow/schemas.py` | `docs/design/parsing-pipeline.md` | 契约测试 |
-| API 端点 | `src/axiom_flow/api/` | `docs/architecture/api.md` | 契约测试 |
+| 解析编排、任务/页状态、质量信号 | `src/axiom_flow/orchestrator/`（待实现） | `docs/design/parsing-pipeline.md` | `tests/unit/`、`tests/integration/` |
+| 引擎适配与归一化 | `src/axiom_flow/engines/`、`normalize/`（待实现） | `docs/design/model-integration.md` | `tests/unit/` |
+| PDF 导入与页图 | `src/axiom_flow/ingest/` | `docs/design/parsing-pipeline.md` | `tests/unit/test_ingest.py` |
+| 书目同步 / af_* 表 / 块编辑 | `src/axiom_flow/db/`（待实现） | `docs/design/parsing-management.md`、`docs/architecture/database-design.md` | `tests/unit/`、契约测试 |
+| 统一格式与 schemas | `src/axiom_flow/schemas.py` | `docs/design/parsing-pipeline.md` | `tests/unit/test_schemas.py` |
+| API 端点 | `src/axiom_flow/api/` | `docs/architecture/api.md` | `tests/contract/test_api_v1_contract.py` |
+| 模型启停、容器 | 根仓库 `scripts/image-model/`（本仓库只读引用） | `docs/design/model-integration.md` | 经 8900 控制台冒烟 |
 | 文档体系、计划、ADR | `docs/` | `docs/standards/doc-governance.md`、`adr-governance.md` | `tests/contract/` |
 | 测试分层与门禁 | `tests/`、`pyproject.toml` | `docs/standards/testing.md` | `tests/contract/test_test_suite_governance.py` |
 
@@ -63,10 +69,11 @@ rg -n "<接口或状态名>" docs/adr docs/design docs/history
 
 | 现象 | 首查位置 | 首个验证 |
 | --- | --- | --- |
-| API 503、MinerU 未起 | `guides/operations.md`、根仓库 `scripts/image-model/` | 确认 8900 网关与 mineru-api 在线后重试 |
-| 解析失败/空输出/超时 | `orchestrator/`、MinerU 任务日志 | 冒烟链路测试 |
-| 质量不达标未触发兜底 | `orchestrator/` 质量信号、`fallback/` | 低质量页构造验证 |
+| API 503、模型服务未起 | `docs/guides/operations.md`、根仓库 `scripts/image-model/` | 经 8900 启停 MinerU 后重试 |
+| 解析失败/空输出/超时 | `orchestrator/`、`engines/`、模型服务日志 | 冒烟链路测试 |
+| 归一化块类型/坐标异常 | `normalize/`、`schemas.py` | 低质量页/坐标系构造验证 |
 | 产物缺失或哈希不符 | `orchestrator/` 落盘逻辑、`manifest.json` | 产物完整性测试 |
+| 书目同步/编辑不落库 | `db/`、`api/`、`af_*` 表 | sync 幂等 / edit upsert 测试 |
 | WSL 不可达 | `wsl -l -v` | 由根仓库 `scripts/image-model/` 恢复容器 |
 | 文档链接、DesignRef 或映射失败 | `docs/architecture/code-map.md`、模块文件头 | 契约测试 |
 

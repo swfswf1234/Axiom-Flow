@@ -1,15 +1,15 @@
 # Axiom-Flow 文档索引
 
 状态：Current
-最后更新：2026-08-14
+最后更新：2026-09-14
 
 本文件只负责导航。项目定位、能力和快速启动见[根 README](../README.md)，Agent 执行协议见
 [AGENTS.md](../AGENTS.md)。
 
 | 目录 | 内容 | 索引 |
 | --- | --- | --- |
-| `architecture/` | v2 系统拓扑与代码映射 | [架构索引](architecture/index.md) |
-| `design/` | 当前设计契约（解析与渲染） | [设计索引](design/index.md) |
+| `architecture/` | v2 系统拓扑、API 契约、af_* 数据库与代码映射 | [架构索引](architecture/index.md) |
+| `design/` | 当前设计契约（解析管线 / 解析管理闭环 / 模型对接） | [设计索引](design/index.md) |
 | `adr/` | v2 决策登记 | [ADR 索引](adr/index.md) |
 | `standards/` | 工程治理规则 | [规范索引](standards/index.md) |
 | `guides/` | 开发与运维步骤 | [指南索引](guides/index.md) |
