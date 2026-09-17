@@ -18,23 +18,9 @@
 - 就绪判据：`GET /api/v1/health` 返回 200（8900 控制中心与 `start-all.ps1` 探测路径一致）。
 - PID 文件 `logs/qed-axiom.pid`，子进程日志 `logs/qed-axiom-serve.log`。
 - 端口来源：`QED_AXIOM_URL` 解析 > `AXIOM_PORT` > 8902。
-
-### 配置双模式启动（`--mode local|qed-engine`）
-
-脚本支持两种配置语境启动，也可经 `restart --mode` 切换（重启后生效）：
-
-| 模式 | 配置来源 | 用途 |
-| --- | --- | --- |
-| `--mode local`（默认） | **自有本地配置**：自身 `.env`（从仓库根向上查找父级 `.env` 兜底）+ 环境变量，直连厂商/本地模型服务 | 独立运行，不依赖 8900 |
-| `--mode qed-engine` | **QED-Engine 配置语境**：供应商配置以根 `.env` 为准 | 与 QED-Engine 联运 |
-
-> **ARCH-020（2026-09-14，[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）**：
-> 解析管线经引擎适配器**直连本地模型服务**，不再经 8900 网关；`--mode` 只影响模型/供应商
-> 配置语境。引擎与对接见 [model-integration](../design/model-integration.md)。
-
-不传 `--mode` 时默认读自身 `.env` 的 `QED_API_SELECT`（缺省 `local`），选择持久化到
-`logs/qed-axiom-mode`，子进程 env 注入 `QED_API_SELECT` 生效。环境变量清单见
-[开发指南](development.md)。
+- 配置语境：脚本不再传 `--mode`（2026-09-17 配置简化，PLAN-002）——解析始终直连模型服务
+  （[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)），配置由 `config.py`
+  从仓库根向上走查 `.env` 自读；变量清单见[开发指南](development.md)。
 
 ### 停止可靠性语义（2026-09-04，与根仓库 8900/8903 脚本同构）
 
@@ -62,9 +48,10 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/` | 每本书解析产物：`book.json`、`pages/pXXXX.png|.md|.blocks.json`、`manifest.json`（ARCH-015 落地） |
+| `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/` | 每本书解析产物：`book.json`、`pages/pXXXX.png|.md|.blocks.json`、`chunks.json`、`manifest.json`（PLAN-002 落地） |
 | `<QED_DATA_ROOT>/raw/<domain_id>/<course_id>/*.pdf` | 源书库（只读，QED-Tracker 写入；如 `math-advanced/math_analysis/`） |
-| `data/` | 过渡期工作目录（ARCH-015 后退役） |
+| `<QED_DATA_ROOT>/tmp/axiom-flow/<job_id>/` | 模型调用暂存（任务结束清理） |
+| `data/` | 过渡期工作目录（落点迁移后退役） |
 
 产物只落 Windows 本地；WSL 不读写 Windows 文件系统（MinerU 容器不挂载 Windows 盘）。
 
@@ -75,7 +62,7 @@
 | `stop` 回显 `stopped (forced)` | 优雅信号（CTRL_BREAK）未生效（conda run 等跨 console 语境常见），taskkill 强杀兜底成功——正常现象，无需处理 |
 | `stop` 回显 `stop failed: pid …` | 按提示手动 `taskkill /PID <pid> /T /F`，确认进程退出后重试 `stop` 清理 PID 文件 |
 | API 返回 503（模型服务不可用） | 确认 MinerU 服务在线：经 8900 `/models/vision/start`（旧名 `/models/mineru/start`）或根仓库 `scripts/image-model/` 脚本；再确认 `QED_OCR_MODEL_URL`（5002）可达 |
-| 容器已起但解析慢/超时 | 由根仓库 `scripts/image-model/` 排查 GPU 穿透与 vLLM warmup（首次约 1 分钟） |
+| 容器已起但解析慢/超时 | 由根仓库 `scripts/image-model/` 排查 GPU 穿透与 vLLM warmup（首次约 1 分钟）；整本解析超时调大 `AXIOM_OCR_TIMEOUT`（默认 600s） |
 | 模型异常 | 由根仓库 `scripts/image-model/` 重建容器/镜像 |
 | WSL 不可达 | `wsl -l -v` 确认状态；容器由根仓库 `scripts/image-model/` 脚本恢复 |
 

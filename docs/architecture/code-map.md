@@ -12,16 +12,16 @@ api / ingest / engines / normalize / orchestrator / db / schemas / config。
 
 | 路径 | 职责 | 状态 | 设计 | 测试 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| `src/axiom_flow/api/` | 对外 `/api/v1` 路由，只做协议适配 | **Current** | `docs/architecture/api.md` | 契约测试 | 现有端点读文件系统；ARCH-002~007 扩展 |
-| `src/axiom_flow/ingest/` | PDF 导入、页图渲染、book.json（SHA-256） | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_ingest.py` | 产物落点迁 `QED_DATA_ROOT/parsed`（ARCH-015） |
-| `src/axiom_flow/orchestrator/` | 解析任务编排、页状态、质量信号、重试 | Pending | `docs/design/parsing-pipeline.md` | 集成测试 | ARCH-003；落 af_parse_jobs/af_pages |
-| `src/axiom_flow/engines/` | 引擎适配器（mineru / paddleocr-vl / qwen-vl） | Pending | `docs/design/model-integration.md` | 单元测试（mock） | ARCH-016；统一 blocks 归一化入口 |
-| `src/axiom_flow/normalize/` | 模型输出 → 统一 blocks schema 归一化 | Pending | `docs/design/parsing-pipeline.md` | 单元测试 | ARCH-016 |
-| `src/axiom_flow/db/` | af_* 四表 ORM/仓储（Alembic 迁移） | Pending | `docs/design/parsing-management.md` | `tests/unit/` | ARCH-002/003 |
-| `src/axiom_flow/schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job/edit） | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_schemas.py` | 内外契约单一事实源 |
-| `src/axiom_flow/config.py` | 统一配置（`.env` 向上走查、数据根、引擎、端口） | **Current** | `docs/design/model-integration.md` | `tests/unit/test_config.py` | `AXIOM_OCR_ENGINE` / `QED_OCR_MODEL_URL`（5002）/ `QED_DATA_ROOT`；v1 键退役 |
-| `src/axiom_flow/fallback/` | qwen-vl-plus 客户端（历史直连通道） | Deprecated | `docs/design/model-integration.md` | `tests/unit/test_fallback.py` | ARCH-016 由 `engines/qwen_vl` 取代后退役 |
-| `src/axiom_flow/llm_client.py` | VisionClient（历史双模式视觉调用） | Deprecated | `docs/design/model-integration.md` | `tests/unit/test_llm_client.py` | ARCH-016 退役（解析直连，[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)） |
+| `src/axiom_flow/api/` | 对外 `/api/v1` 路由，只做协议适配 | **Current** | `docs/architecture/api.md` | 契约测试 | 现有端点读文件系统；sync/ingest/parse-jobs/edit/chunks 待实现 |
+| `src/axiom_flow/ingest/` | 预处理：PDF 导入、页图渲染、book.json（SHA-256） | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_ingest.py` | 产物落点迁 `QED_DATA_ROOT/parsed` |
+| `src/axiom_flow/orchestrator/` | 解析任务编排、页状态、质量信号、重试 | Pending | `docs/design/parsing-pipeline.md` | 集成测试 | 落 af_parse_jobs/af_pages；默认全本、指定页逐页 |
+| `src/axiom_flow/engines/` | 引擎适配器（mineru 先落地；paddleocr-vl / qwen-vl 预留） | Pending | `docs/design/model-integration.md` | 单元测试（mock） | 直连 `QED_OCR_MODEL_URL`；不暴露调参 |
+| `src/axiom_flow/normalize/` | 后处理：模型输出 → 统一 blocks + Markdown + 质量信号 | Pending | `docs/design/parsing-pipeline.md` | 单元测试 | 含 `chunking`（blocks → chunks） |
+| `src/axiom_flow/db/` | af_* 四表 ORM/仓储（Alembic 迁移，一次建全） | Pending | `docs/design/parsing-management.md` | `tests/unit/` | 迁移在 `src/axiom_flow/migrations/` |
+| `src/axiom_flow/schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job/edit/chunk） | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_schemas.py` | 内外契约单一事实源 |
+| `src/axiom_flow/config.py` | 统一配置（`.env` 向上走查、数据根、数据库、引擎） | **Current** | `docs/design/model-integration.md` | `tests/unit/test_config.py` | 三段式：服务/数据与库/解析引擎；v1 键退役 |
+| `src/axiom_flow/fallback/` | qwen-vl-plus 客户端（历史直连通道） | Deprecated | `docs/design/model-integration.md` | `tests/unit/test_fallback.py` | 由 `engines/qwen_vl`（预留）承接后退役 |
+| `src/axiom_flow/llm_client.py` | VisionClient（历史双模式视觉调用） | Deprecated | `docs/design/model-integration.md` | `tests/unit/test_llm_client.py` | 解析直连后退役（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)） |
 
 ## 非受管配置
 

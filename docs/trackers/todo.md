@@ -17,18 +17,18 @@
 | ID | 类别 | 优先级 | 状态 | 任务 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- |
 | ARCH-001 | 主线 | 高 | In Progress | 解析管理闭环：af_* 四表 + 同步/ingest + 引擎适配 + 编排 + 对照编辑（对齐根仓库 ARCH-020） | 支线关闭；Rudin 教程端到端验收 |
-| PLAN-002 | 主线 | 高 | In Progress | [Axiom-Flow 配置中心对齐与分阶段重构（axiom-flow-refactor）](../plans/2026-09-17-axiom-flow-refactor.md) | 配置对齐 → 设计收口 → 骨架 → 功能；每阶段门禁 + Rudin 端到端 |
-| REQ-075 | 支线 | 高 | Open | 请求接收：QED-Engine——MinerU 直连配置同步（端口 8002→5002、键 `QED_MINERU_URL`→`QED_OCR_MODEL_URL`，不保留别名） | PLAN-002 Phase 1/2 承载；对齐后回执根仓库 |
-| ARCH-013 | 支线 | 高 | Open | af_* 四表建表（Alembic）+ 仓储层（af_books/af_parse_jobs/af_pages/af_block_edits） | 迁移可升降级；单测通过 |
-| ARCH-003 | 支线 | 高 | Open | 解析编排：af_parse_jobs + af_pages + 逐页/全本 + 重试 + 质量信号（取代 state.sqlite 方案） | 任务状态机 + 集成测试 |
-| ARCH-014 | 支线 | 高 | Open | 书目同步与 CRUD：POST /books/sync + GET/PATCH/DELETE /books | 幂等 upsert；契约测试 |
-| ARCH-015 | 支线 | 高 | Open | ingest：PDF→页图 + book.json（sha256/page_count），产物落 `<QED_DATA_ROOT>/parsed/<domain>/<course>/<book_id>/` | 单测 + 幂等覆盖 |
-| ARCH-016 | 支线 | 高 | Open | 引擎适配器：MinerU 接入 + 统一 blocks 归一化（PaddleOCR-VL/qwen-vl 预留）；llm_client/fallback 退役 | mock 引擎单测 + 真实冒烟 |
-| ARCH-005 | 支线 | 高 | Open | 解析对照与质量度量：页图 vs 重渲染 + 质量信号落盘 | 对照视图数据契约 + 质量信号测试 |
-| ARCH-006 | 支线 | 高 | Open | 渲染数据供给与块编辑：pages/blocks/image/manifest + edit 端点（af_block_edits） | 前端对照视图联调通过 |
+| PLAN-002 | 主线 | 高 | In Progress | [Axiom-Flow 配置简化与解析重构（axiom-flow-refactor）](../plans/2026-09-17-axiom-flow-refactor.md) | 配置简化 → 契约 → DB/骨架 → 基本解析 → 分块；每阶段门禁 |
+| REQ-075 | 支线 | 高 | Open | 请求接收：QED-Engine——MinerU 直连配置同步（端口 8002→5002、键 `QED_MINERU_URL`→`QED_OCR_MODEL_URL`，不保留别名） | PLAN-002 Step 1 承载；对齐后回执根仓库 |
+| ARCH-013 | 支线 | 高 | Open | af_* 四表建表（Alembic）+ 仓储层（af_books/af_parse_jobs/af_pages/af_block_edits） | PLAN-002 Step 2-B 承载（四表一次迁移）；迁移可升降级；单测通过 |
+| ARCH-003 | 支线 | 高 | Open | 解析编排：af_parse_jobs + af_pages + 逐页/全本 + 重试 + 质量信号（取代 state.sqlite 方案） | PLAN-002 Step 2-C 承载；任务状态机 + 集成测试 |
+| ARCH-014 | 支线 | 高 | Open | 书目同步与 CRUD：POST /books/sync + GET/PATCH/DELETE /books | PLAN-002 Step 2-C 承载；幂等 upsert；契约测试 |
+| ARCH-015 | 支线 | 高 | Open | ingest：PDF→页图 + book.json（sha256/page_count），产物落 `<QED_DATA_ROOT>/parsed/<domain>/<course>/<book_id>/` | PLAN-002 Step 2-C 承载；单测 + 幂等覆盖 |
+| ARCH-016 | 支线 | 高 | Open | 引擎适配器：MinerU 接入 + 统一 blocks 归一化（PaddleOCR-VL/qwen-vl 预留）；llm_client/fallback 退役 | PLAN-002 Step 2-B/2-C 承载；mock 引擎单测 + 真实冒烟 |
+| ARCH-005 | 支线 | 高 | Open | 解析对照与质量度量：页图 vs 重渲染 + 质量信号落盘 | PLAN-002 Step 2-C/2-E 承载；对照视图数据契约 + 质量信号测试 |
+| ARCH-006 | 支线 | 高 | Open | 渲染数据供给与块编辑：pages/blocks/image/manifest + edit 端点（af_block_edits） | PLAN-002 Step 2-E 承载；前端对照视图联调通过 |
 | ARCH-009 | 支线 | 中 | Open | 套1 代表书验收（教程 Rudin 中译 + 习题集吉米多维奇） | 前 20 页冒烟 → 全量（≥90% 公式可渲染） |
-| ARCH-004 | 支线 | 中 | Open | 分块模型：blocks → chunk（paragraph/formula/table 为切分点，为 RAG 预留） | 设计 + 契约测试；chunk 结构落盘 |
-| REQ-001 | 支线 | 高 | Open | 请求：QED-Engine——8900 数据域适配 af_* 新契约（books CRUD/ingest/edits/parsing-tree） | 根仓库回执后关闭；ARCH-014/015/006 前置 |
+| ARCH-004 | 支线 | 中 | Open | 分块模型：blocks → chunk（paragraph/formula/table 为切分点，为 RAG 预留） | PLAN-002 Step 2-D 承载（chunks.json + GET /chunks）；设计 + 契约测试 |
+| REQ-001 | 支线 | 高 | Open | 请求：QED-Engine——8900 数据域适配 af_* 新契约（books CRUD/ingest、`/review`→`/edit`、chunks 透传） | PLAN-002 Step 1 契约冻结后发起/回执；ARCH-014/015/006 前置 |
 
 ## 长期任务
 

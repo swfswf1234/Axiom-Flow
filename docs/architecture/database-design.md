@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Not Started（ARCH-001 解析管理闭环：Alembic 建表与端点实现待 ARCH-002~007）
+实现状态：Not Started（四表一次 Alembic 迁移与仓储层待实现，PLAN-002）
 最后更新：2026-09-17
 关联代码：无（ARCH-002 建表后登记 `src/axiom_flow/db/` 对应模块）
 关联测试：`tests/contract/test_architecture_documents.py`（本文档守护）
@@ -23,6 +23,8 @@
 - af_* 表为 Axiom-Flow **私有**：只从 qt_books 同步已验证书行的只读元数据，任何外部故障/
   变更不影响本表读取；Axiom-Flow 用 Alembic 独立初始化自己的表，不依赖其他项目迁移。
 - 凭据与库名唯一事实源：根 `.env` 的 `QED_DB_*` 变量；密码值绝不下发。
+- **入库边界**：文件系统承载产物正本（`parsed/` 页图/Markdown/blocks/分块），DB 只存元数据与
+  状态；`chunks.json` 为派生文件，**不入库**（可重建）。
 
 ## 表清单总览
 

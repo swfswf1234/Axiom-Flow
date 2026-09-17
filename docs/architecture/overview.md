@@ -27,7 +27,7 @@ flowchart TB
     subgraph WIN["Windows 本地（本仓库）"]
         API["8902 FastAPI<br/>解析编排 + 对外 API v1"]
         ENG["引擎适配器<br/>mineru / paddleocr-vl / qwen-vl"]
-        DATA["QED_DATA_ROOT/parsed/&lt;domain&gt;/&lt;course&gt;/&lt;book_id&gt;/<br/>页图 + markdown + blocks.json"]
+        DATA["QED_DATA_ROOT/parsed/&lt;domain&gt;/&lt;course&gt;/&lt;book_id&gt;/<br/>页图 + markdown + blocks.json + chunks.json"]
         RAW["QED_DATA_ROOT/raw/&lt;domain&gt;/&lt;course&gt;/&lt;*.pdf&gt;（只读）"]
     end
     subgraph MODELS["本地模型服务（8900 启停托管）"]
@@ -47,8 +47,8 @@ flowchart TB
 
 ## 边界原则
 
-- **模型生命周期与应用层分离**：模型文件、启停、探针与资源互斥由根仓库 8900 管理；本仓库
-  只经引擎适配器消费模型服务端点，不感知具体模型。
+- **模型生命周期与应用层分离**：模型文件、启停、探针、资源互斥与**模型调参**由根仓库 8900
+  管理；本仓库只经引擎适配器消费模型服务端点，不感知具体模型、不暴露调参入口。
 - **解析直连**：Axiom-Flow 直连本地模型服务（不经 8900 网关），保证解析管线在本仓库一端可
   完整调试（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
 - **数据边界**：源 PDF 在 `<QED_DATA_ROOT>/raw/` 只读；产物落
@@ -60,5 +60,6 @@ flowchart TB
 
 ## 第一版范围
 
-解析 + 渲染数据供给 + 人工校验修改（书目同步 → ingest → 引擎解析 → 归一化 → 产物落盘 →
-对照供给 → 块编辑）。Milvus 检索、知识图谱、数学解析器为后续探索项，仅预留字段。
+解析 + 渲染数据供给 + 人工校验修改（书目同步 → ingest → 引擎解析 → 归一化 → 分块 → 产物落盘
+→ 对照供给 → 块编辑）。Milvus 检索、知识图谱、数学解析器为后续探索项，仅预留字段与切分点
+（`chunks.json` 即向量化单元）。

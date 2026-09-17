@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：In Progress（ARCH-001 解析管理闭环：现有端点读文件系统，af_* 建表与 CRUD/ingest/edit 待实现）
+实现状态：In Progress（现有端点读文件系统；af_* 建表、CRUD/ingest、异步 parse-jobs、edit 与 chunks 待实现）
 最后更新：2026-09-17
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | ① 生命周期与健康 | `GET /health` + `scripts/axiom_flow_service.py {start\|stop\|restart\|status}` | 服务启停/重启/健康检测 |
 | ② 数据查询（af_*） | `GET /books`、`GET/PATCH/DELETE /books/{id}`、`POST /books/sync`、`POST /books/{id}/ingest` | 书目同步与 CRUD、页图 ingest |
-| ③ 解析结果与 PDF 对照 | `GET /books/{id}/manifest`、`/pages/{no}`、`/pages/{no}/image`、`PUT /blocks/{index}/edit`、`GET /pages/{no}/edits`、`POST /parse-jobs`、`GET /parse-jobs/{id}` | 解析进度、对照供给、块编辑 |
+| ③ 解析结果与 PDF 对照 | `GET /books/{id}/manifest`、`/pages/{no}`、`/pages/{no}/image`、`PUT /blocks/{index}/edit`、`GET /pages/{no}/edits`、`GET /books/{id}/chunks`、`POST /parse-jobs`、`GET /parse-jobs/{id}` | 解析进度、对照供给、块编辑、分块预览 |
 | ④ 未来 RAG·知识图谱预留 | 见「④ 预留分类」节 | Milvus 接入占位、检索端点设计 |
 
 ## 服务信息
@@ -72,7 +72,7 @@ sequenceDiagram
 `docs/history/design/service-lifecycle.md`，本文件为其固定落位）：
 
 ```text
-python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [--wait [SECONDS]] [--mode local|qed-engine]
+python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [--wait [SECONDS]]
 ```
 
 - `start`：默认拉起后立即返回；`--wait [SECONDS]` 时轮询 `/api/v1/health` 直到就绪（默认超时
@@ -80,18 +80,17 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
 - `stop`：优雅停止（CTRL_BREAK）→ 5s 宽限（`_proc_alive` 判活）→ taskkill 强杀整树再等
   5s → 复核仍存活报 `stop failed` 并退出 1（PID 文件保留现场）；确认终止后清理 PID 文件，
   强杀兜底生效时输出 `stopped (forced)`；无 PID/进程已死时清理残留并幂等退出 0。
-- `restart`：先 stop 后 start，透传 `--wait` 与 `--mode`。
+- `restart`：先 stop 后 start，透传 `--wait`。
 - `status`：PID 存活 / 端口探测（socket 预检 + HTTP 健康确认）双路径，输出
   `running (pid <n>)` / `running (port probe <port>)` / `stopped`，信息型恒退出 0。
-- `--mode local|qed-engine`（V2-014）：start/restart 可传，持久化到 `logs/qed-axiom-mode`；
-  不传默认读自身 `.env` 的 `QED_API_SELECT`（缺省 local）；子进程 env 注入 `QED_API_SELECT`。
-  **ARCH-020 后解析不经网关**，`--mode` 仅影响模型/供应商配置语境（引擎适配器与本地模型服务）。
 - `--port` 优先级：`--port` > `QED_AXIOM_URL` > `AXIOM_PORT` > 8902。
 - 退出码：`0` 成功或幂等；`1` 运行失败（spawn 失败、`--wait` 健康超时、stop 无法终止）；`2` 参数错误。
+- **配置简化（2026-09-17，PLAN-002）**：`--mode local|qed-engine` 与密钥注入退役——解析始终
+  直连模型服务（ADR 0004），配置由 `config.py` 向上走查 `.env` 自读。
 
 运行产物：`logs/qed-axiom.pid`（PID 文件）、`logs/qed-axiom-serve.log`（子进程 stdout/stderr，
-已 gitignore）。环境：脚本从仓库根向上查找 `.env` 并 `setdefault` 注入 `AXIOM_*` 与供应商
-key，已有环境变量不覆盖。
+已 gitignore）。环境：脚本从仓库根向上查找 `.env` 并 `setdefault` 注入 `AXIOM_*`，已有环境
+变量不覆盖。
 
 ## ② 数据查询（af_*）
 
@@ -133,6 +132,9 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 
 ## ③ 解析结果与 PDF 对照
 
+块编辑端点（`PUT .../blocks/{index}/edit`）为 af_* 四表契约，**取代** 8900 现用的 `/review`
+（ok/bad）；8900 侧适配（`/review`→`/edit`、补 ingest/chunks 透传）由本仓库 `REQ-001` 请求承载。
+
 ### GET /api/v1/books/{book_id}/manifest
 
 产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），响应为 `ManifestEntry` 列表。
@@ -165,12 +167,17 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 
 页内编辑列表（对照视图回显）。响应：`EditRecord[]`。
 
+### GET /api/v1/books/{book_id}/chunks
+
+分块预览（blocks → chunk，派生数据，不入库）：读 `chunks.json`；带 `?max_chars=&overlap_blocks=`
+时基于页级 blocks 实时重算（不落盘）。响应：`ChunkSet`（book_id/params/chunks）。**错误：** 404
+书目不存在 / 分块未生成。
+
 ### POST /api/v1/parse-jobs
 
-提交解析任务。请求：`{book_id, pages?, engine?}`（`pages` 缺省 = 全部页；`engine` 缺省
-`mineru`）。202 返回 `ParseJob`（queued/running/completed/failed）；逐页/全本由 pages 决定。
-v0.1 为内存态同步执行；ARCH-003 接手 af_parse_jobs + 后台任务后改异步。失败页跳过不中断，
-`progress.error` 记录摘要（截断 200 字符）。
+提交解析任务。请求：`{book_id, pages?, engine?}`（`pages` 缺省 = 全部页，走**全本解析**；指定
+页 = 逐页页图重解析；`engine` 缺省 `mineru`）。202 返回 `ParseJob`（queued/running/completed/failed），
+任务落 `af_parse_jobs` 并由后台执行。失败页跳过不中断，`progress.error` 记录摘要（截断 200 字符）。
 
 ### GET /api/v1/parse-jobs/{job_id}
 
@@ -190,8 +197,8 @@ v0.1 为内存态同步执行；ARCH-003 接手 af_parse_jobs + 后台任务后�
 
 本类不开放具体端点，登记**预留设计**（第一版明确不做，仅预留字段与切分点）：
 
-- **Milvus 接入占位**：blocks 的 `paragraph/formula/table` 块即天然切分点（块级向量化，无需
-  文本切分器），接入时不改产物格式。
+- **Milvus 接入占位**：`chunks.json` 已按块级切分（paragraph/formula/table 为切分点，含页/块
+  溯源），即天然向量化单元；接入时不改产物格式。
 - **检索端点预留**：块级语义检索端点设计（如 `GET /api/v1/search`）待检索任务立项后按 ADR
   流程登记，本文件届时新增分类或小节。
 - **知识图谱预留**：`formula.latex` 字段为数学解析器探索入口；块类型 + text 支持定义/定理

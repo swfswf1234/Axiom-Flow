@@ -17,19 +17,20 @@
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `API_KEY` | 云端档位供应商密钥（qwen-vl 等） | — |
-| `QED_API_SELECT` | 配置语境：`local`（自身配置）/ `qed-engine`（根 `.env` 为准） | `local` |
-| `AXIOM_OCR_ENGINE` | 解析引擎：`mineru` / `paddleocr-vl` / `qwen-vl` | `mineru` |
-| `QED_OCR_MODEL_URL` | 图像槽位本地端点（MinerU 容器，`/health`） | `http://127.0.0.1:5002` |
-| `AXIOM_VISION_MODEL` | qwen-vl 档位模型名（预留引擎） | `qwen-vl-plus` |
+| `AXIOM_PORT` | 本服务监听端口 | `8902` |
 | `QED_DATA_ROOT` | 数据根：产物落 `parsed/`，源 PDF 读 `raw/` | `<workspace>/dataset` |
-| `QED_DB_*` | MySQL 连接（qed 库 af_* 表） | — |
+| `QED_DB_*` | MySQL 连接（qed 库 af_* 表；`qed_test` 为测试库） | — |
+| `AXIOM_OCR_ENGINE` | 解析引擎：`mineru`（先落地）/ `paddleocr-vl` / `qwen-vl`（预留） | `mineru` |
+| `QED_OCR_MODEL_URL` | 图像槽位本地端点（MinerU 容器，`/health`） | `http://127.0.0.1:5002` |
+| `AXIOM_OCR_TIMEOUT` | 单次解析调用超时秒数 | `600` |
+| `API_KEY` / `AXIOM_VISION_MODEL` | 仅 qwen-vl 云端档位预留（`.env` 注释态） | — |
 
 > **ARCH-020（2026-09-14）**：解析直连模型服务、不经 8900 网关；引擎与对接见
 > [model-integration](../design/model-integration.md)。
 >
-> **配置对齐（2026-09-17，根仓库 PLAN-046 / REQ-075）**：`QED_MINERU_URL` 删除改为
-> `QED_OCR_MODEL_URL`（MinerU 端口 8002 → 5002），模型生命周期归 8900，本仓库只连接。
+> **配置简化（2026-09-17，PLAN-002）**：本服务只做「模型 API 调用 + 预处理/后处理」，模型
+> 生命周期与调参归 QED-Engine（8900）；配置三段式——服务 / 数据与数据库 / 解析引擎。
+> `QED_MINERU_URL` 删除改为 `QED_OCR_MODEL_URL`（MinerU 端口 8002 → 5002，无旧键别名）。
 > 本服务支持独立部署：自身 `.env` 含 `QED_DB_NAME=qed` 与引擎配置；由 QED-Engine 启动时经
 > 向上走查跟随根 `.env`（两边配置允许不一致）。
 
