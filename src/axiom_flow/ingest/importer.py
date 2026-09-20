@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import uuid
 from collections.abc import Mapping, Sequence
@@ -20,6 +19,7 @@ from axiom_flow.db.engine import utc_now
 from axiom_flow.ingest.artifacts import (
     atomic_write_text,
     book_dir_for,
+    ensure_within,
     sha256_file,
     write_book_meta,
     write_manifest,
@@ -27,14 +27,6 @@ from axiom_flow.ingest.artifacts import (
 from axiom_flow.schemas import Author, BookMeta
 
 DEFAULT_DPI = 150
-
-
-def default_data_dir() -> Path:
-    """数据根目录：QED_DATA_ROOT 覆盖，未设置时回退仓库内 data/（配置简化，PLAN-002）。"""
-    override = os.environ.get("QED_DATA_ROOT")
-    if override:
-        return Path(override)
-    return Path(__file__).resolve().parents[3] / "data"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,9 +40,14 @@ class IngestResult:
 
 
 def resolve_source_pdf(data_root: Path | str, source_file: str) -> Path:
-    """源 PDF 绝对路径：数据根相对路径（同源 qt_books.file_path）；绝对路径原样使用。"""
+    """源 PDF 路径（数据根相对，同源 `qt_books.file_path`）。
+
+    绝对路径同样限在数据根之内（条文 7）：越界一律 `ValueError`，避免把数据根外的
+    文件当作教材读入或写入。
+    """
     path = Path(source_file)
-    return path if path.is_absolute() else Path(data_root) / path
+    candidate = path if path.is_absolute() else Path(data_root) / path
+    return ensure_within(data_root, candidate)
 
 
 def _normalize_authors(authors: Sequence[Author | Mapping[str, str]]) -> list[Author]:
@@ -121,7 +118,7 @@ def ingest_book(
 
 
 def write_page_markdown(book_dir: Path, page_no: int, markdown: str) -> Path:
-    """页级 Markdown 原子写入（`pages/pXXXX.md`）。"""
+    """页级 Markdown 原子写入（`pages/p<NNNN>.md`）。"""
     path = book_dir / "pages" / f"p{page_no:04d}.md"
     atomic_write_text(path, markdown.rstrip("\n") + "\n")
     return path

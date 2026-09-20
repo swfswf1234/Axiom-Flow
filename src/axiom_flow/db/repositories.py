@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from axiom_flow.db.engine import utc_now
@@ -261,6 +261,12 @@ class PageRepository:
             AfPage.book_id == book_id, AfPage.status == "parsed"
         )
         return int(self.session.scalar(stmt) or 0)
+
+    def reset_for_book(self, book_id: str) -> int:
+        """清空整本书的页行（重新 ingest 后产物已作废，页状态需回到无行 = pending）。"""
+        deleted = self.session.execute(delete(AfPage).where(AfPage.book_id == book_id)).rowcount
+        self.session.flush()
+        return int(deleted or 0)
 
 
 class EditRepository:

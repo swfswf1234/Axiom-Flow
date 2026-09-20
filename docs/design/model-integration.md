@@ -2,10 +2,11 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（config/engines 已实现，MinerU 适配器落地；paddleocr-vl/qwen-vl 预留；llm_client/fallback 已退役）
-最后更新：2026-09-17
+实现状态：Current（config/engines 已实现，MinerU 适配器按 3.4.4 异步协议落地 + `factory.py` 显式
+分派 + `bbox_space` 坐标空间声明；paddleocr-vl/qwen-vl 预留；llm_client/fallback 已退役）
+最后更新：2026-09-21
 关联代码：`src/axiom_flow/config.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`
-关联测试：`tests/unit/test_config.py`、`tests/unit/test_engines.py`
+关联测试：`tests/unit/test_config.py`、`tests/unit/test_engines.py`、`tests/unit/test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：`docs/adr/0004-model-boundary-and-pipeline-ownership.md`
 
 > 本文档定义 Axiom-Flow 如何对接解析模型：配置键、适配器接口、各引擎接入方式，以及与根仓库
@@ -57,7 +58,8 @@ v0.1 的 `llm_client.py` 双模式（local 直连 qwen-vl / qed-engine 经 8900 
 
 ```mermaid
 flowchart LR
-    OR["orchestrator/"] --> ADP["engines/ 适配器接口<br/>parse_document / parse_page"]
+    OR["orchestrator/"] --> FAC["engines/factory.py<br/>resolve_engine_name → build_engine"]
+    FAC --> ADP["engines/ 适配器接口<br/>parse_document / parse_page"]
     ADP --> M["MinerUEngine<br/>mineru-api 5002"]
     ADP -.-> P["PaddleOCRVLEngine<br/>（预留）"]
     ADP -.-> Q["QwenVLEngine<br/>（云端 api 档位，预留）"]
@@ -78,20 +80,62 @@ flowchart LR
 
 ## 各引擎接入
 
-### MinerU（先落地）
+### MinerU（已落地，3.4.4 异步任务协议）
 
 - 服务：`mineru-api` 容器（WSL，**5002**），健康端点 `GET /health`（**不是** `/api/v1/health`）；
   生命周期（启停/探针/资源互斥）由 8900 托管，本仓库只连接 `QED_OCR_MODEL_URL`。
-- 调用：`POST /file_parse`（multipart，同步；整本上传 PDF、逐页上传页图），取结构化输出
-  （`content_list` 含块类型与 bbox），归一化为统一 blocks；HTTP 超时读 `AXIOM_OCR_TIMEOUT`。
-- 失败语义：模型服务不可达 → 提交前健康检查返回 503；解析失败 → 页/任务 `failed`，**不自动
-  切换引擎**（不设自动兜底）。
+- 调用固定三段（`engines/mineru.py`；端点终版由 PLAN-003 W0 冻结探测确立，留档
+  `data/probes/mineru-3.4.4-20260920/`）：
+
+| 阶段 | 端点 | 请求与响应要点 |
+| --- | --- | --- |
+| 提交 `_submit` | `POST /tasks`（multipart 字段 `files`） | 200/202 受理，任务号在响应**顶层** `task_id`；全本上传 PDF、逐页上传页图 |
+| 轮询 `_wait_done` | `GET /tasks/{task_id}` | 状态取**顶层** `status`（`pending → processing → completed`）；失败态附顶层 `error` 文本 |
+| 取结果 `_fetch_result` | `GET /tasks/{task_id}/result` | **202＝未就绪**（继续等待，受同一 `deadline` 约束）、200＝载荷为 `results[<file_stem>]`，正文 `md_content`、块结构 `content_list`、页尺寸 `middle_json.pdf_info[*].page_size` |
+
+  旧式同步 `POST /file_parse` 与 `GET /get_task_results/{task_id}` 在 3.4.4 **均不存在**（后者
+  返回 404，即 DEFECT-002 根因）。
+
+- **只设产物形态开关，不设解析调参**：必须显式发送 `return_content_list=true`、
+  `return_middle_json=true`（openapi 默认 false，不送则 blocks 与页尺寸恒缺失），并按需
+  `return_md=true`；**不发送** `backend`、`effort`、`parse_method`、`lang_list`、`formula_enable`、
+  `table_enable`、`image_analysis`、`server_url`，让容器环境配置生效（模型调参归 8900，ADR 0004）；
+  不请求 `return_images`（页图由本仓库 ingest 自产）。
+- **原始块坐标空间与类型字面值（2026-09-20 真机锚点实验测定，2026-09-21 适配层落地）**：
+  `content_list[].bbox` 为**相对页框逐轴归一化 0–1000**（整本与逐页两条路径一致），适配器必须在
+  `PageResult.bbox_space` 声明 `"normalized_1000"`，由归一化侧按 `bbox / 1000 * image_size` 换算；
+  `middle_json.pdf_info[*].page_size` 对 PNG 输入返回按 200 DPI 折算的标称点尺寸（与页图像素比
+  约 1:2.78），**不能**当缩放基准，`page_size` 只留档、不参与坐标换算。`content_list[].type`
+  实测字面值含 `text`、`header`、`footer`（**不是** `page_header`/`page_footer`）。类型映射仍待修
+  （[DEFECT-005](../trackers/todo.md)）；坐标空间已修复（[DEFECT-004](../trackers/todo.md) 见关闭台账）。
+  实验与复验留档 `data/probes/live-bringup-20260920/{L3d_coord_space.json,L3c_page0003.json}`、
+  `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`。
+
+- 超时与两类重试分列：整次调用共享 `AXIOM_OCR_TIMEOUT` 推出的 `deadline`；**单页重试** 1 次
+  （编排层，见 [parsing-pipeline.md](parsing-pipeline.md)）与**轮询瞬时失败容忍** 连续 3 次
+  （适配层，成功一次即清零计数）互不吞并。
+- 响应解析防御式双兼容：正文接受 `md_content` 或 `markdown`；`content_list` 与 `middle_json`
+  兼容「JSON 字符串」与「已解析对象」两种载体；状态兼容顶层 `status` 与旧式 `data.state`；
+  单文件提交时 `results` 按唯一键回落。非 JSON 或非 2xx 一律归一为 `EngineError`，`JSONDecodeError`
+  等内部异常不得穿透编排层（否则会牵连回滚已解析页）。
+- **直连，不经系统代理**：HTTP 客户端以 `trust_env=False` 构造。W0 实证 Windows 注册表代理对
+  `127.0.0.1` 不做豁免（`ProxyEnable=1` + 空 `ProxyOverrides` 时回环流量仍交给代理，代理规则变化
+  即返回 502/0 字节，表现为「端点不存在」的假象）；此约束与 `QED_PROXY` 键退役一致——本地模型
+  流量恒为直连，不提供代理开关。
+- 失败语义：模型服务不可达 → **提交期**探活返回 503 且不创建任务行；任务受理后进到执行期的故障
+  → 页/任务 `failed`；**不自动切换引擎**（不设自动兜底）。
+- 引擎分派：实际引擎 = 请求体 `engine`（可选）优先、缺省回落 `AXIOM_OCR_ENGINE`，由
+  `engines/factory.py` 显式分派；未在 `factory.ENGINE_NAMES` 注册的名称返回 400、非法字面值由
+  schema 返回 422，已登记但未实现的槽位（`paddleocr-vl`、`qwen-vl`）同样返回 400。
+  `af_parse_jobs.engine` 存**解析后的实际引擎名**。
 
 ### PaddleOCR-VL（预留）
 
 - 服务：PaddleOCR-VL-1.6（0.9B，vLLM/Paddle 服务，端口待定），由根仓库 8900 启停托管；
 - 接入方式与 MinerU 同契约（同一适配器接口 + 归一化）；启用时在 8900 注册 `paddleocr` 单元，
-  本仓库新增 `engines/paddleocr_vl.py` 与 `AXIOM_PADDLEOCR_URL` 配置键（届时登记）。
+  本仓库新增 `engines/paddleocr_vl.py` 并在 `factory.IMPLEMENTED_ENGINES` 登记；**当前无
+  `AXIOM_PADDLEOCR_URL` 配置键**（该键已随配置简化退役，见「引擎配置」），启用时按 ADR 流程
+  重新新增并届时登记。在此之前 `AXIOM_OCR_ENGINE=paddleocr-vl` 一律返回 400，不回落 MinerU。
 
 ### qwen-vl（云端 api 档位，预留）
 
@@ -121,6 +165,6 @@ flowchart LR
 ## 验证
 
 - 单元：`config.py` 引擎/地址/超时读取（含向上走查兜底、旧键忽略）；适配器 mock 单测
-  （各引擎输出 → 统一 blocks）；
+  （三段协议 + 信封双兼容 + 直连开关）；`factory.py` 分派单测（未实现/未知即报错，不回落）；
 - 契约：`tests/contract/test_design_documents.py` 守护本文档；
 - 冒烟：真实调用 MinerU 单页/整本成功，产物 `source=mineru`；调用记录落 `qed_llm_calls`。

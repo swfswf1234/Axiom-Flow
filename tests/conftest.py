@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from axiom_flow.infrastructure.config import Settings
+    from axiom_flow.config import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 LAYERS = {"unit", "contract", "integration", "system", "smoke"}

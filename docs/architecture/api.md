@@ -2,8 +2,8 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 持久化 + 异步 parse-jobs + 对照编辑 + 分块预览已实现；8900 透传适配待 REQ-001）
-最后更新：2026-09-17
+实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览已实现；8900 透传适配待 REQ-001）
+最后更新：2026-09-20
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)
@@ -35,7 +35,7 @@
 
 ## 服务信息
 
-- 服务名：Axiom-Flow（FastAPI 标题 Axiom-Flow，version 0.4.0）
+- 服务名：Axiom-Flow（FastAPI 标题 Axiom-Flow，version 0.5.0；与 `axiom_flow.__version__` 同源）
 - 端口：`8902`（`QED_AXIOM_URL` / `AXIOM_PORT` 可覆盖健康探测端口）
 - 前缀：`/api/v1`
 - 启动（仓库根目录）：`python -m uvicorn axiom_flow.api.main:app --host 127.0.0.1 --port 8902`
@@ -97,8 +97,8 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
 af_* 表（af_books / af_parse_jobs / af_pages / af_block_edits）为 Axiom-Flow 私有（qed 库
 af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](database-design.md)。
 
-> **实现状态**：`GET /books`、`GET /books/{id}` 现读文件系统 `book.json`；ARCH-001 建表后改读
-> af_books（**空表回退文件系统**，独立性降级）。其余端点为规划契约，随 ARCH-002~007 落地。
+> **实现状态**：全部端点已实现；`GET /books`、`GET /books/{id}` 读 af_books，**空表回退文件系统
+> `book.json`**（独立性降级）。路径参数 `book_id` 受安全路径段约束（违规 422）。
 
 ### GET /api/v1/books
 
@@ -116,19 +116,24 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 
 ### DELETE /api/v1/books/{book_id}
 
-删除 af_books 行（`?purge=true` 时同时删除 `parsed/` 产物）。**错误：** 404。
+删除 af_books 行与该书 `af_pages` 页行（`?purge=true` 时同时删除 `parsed/` 产物目录）。
+`af_parse_jobs` 历史行保留为审计，不随删除清理。**错误：** 404。
 
 ### POST /api/v1/books/sync
 
 批量同步已验证书目（upsert af_books，幂等，book_id 同源 qt_books）。请求：
 `[{book_id, domain_id, course_id, course_name, knowledge_id, title, part, authors, file_path}]`；
-响应：`{synced: int, updated: int, books: [...]}`。
+响应：`{synced: int, updated: int, books: [...]}`。**入参边界：** `book_id`/`domain_id`/`course_id`
+须为安全路径段（拒绝 `/`、`..`、前导点），`file_path` 须为数据根相对路径（禁前导 `/`，≤512
+字符），违规 422。
 
 ### POST /api/v1/books/{book_id}/ingest
 
 渲染页图 + 生成 book.json（**不调模型**）：源 PDF（`QED_DATA_ROOT/<file_path>` 只读）→
-`parsed/<domain>/<course>/<book_id>/pages/pXXXX.png` + `book.json`（page_count/sha256）。
-响应：`{book_id, page_count, sha256, ingest_status}`。**错误：** 404 书目不存在 / 源 PDF 缺失。
+`parsed/<domain>/<course>/<book_id>/pages/p<NNNN>.png` + `book.json`（page_count/sha256）。
+响应：`{book_id, page_count, sha256, ingest_status}`。**重复 ingest 幂等**：原子替换产物目录
+（旧 blocks/markdown/chunks 一并作废），并回置 `parse_status=pending`、`pages_done=0`、清空该书
+`af_pages` 行（`af_parse_jobs` 与 `af_block_edits` 保留）。**错误：** 404 书目不存在 / 源 PDF 缺失。
 
 ## ③ 解析结果与 PDF 对照
 
@@ -155,7 +160,7 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 
 ### GET /api/v1/books/{book_id}/pages/{page_no}/image
 
-原页高清图（`image/png`，对照左栏），产物 `pages/pXXXX.png`。
+原页高清图（`image/png`，对照左栏），产物 `pages/p<NNNN>.png`。
 
 ### PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit
 
@@ -176,20 +181,27 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 ### POST /api/v1/parse-jobs
 
 提交解析任务。请求：`{book_id, pages?, engine?}`（`pages` 缺省 = 全部页，走**全本解析**；指定
-页 = 逐页页图重解析；`engine` 缺省 `mineru`）。202 返回 `ParseJob`（queued/running/completed/failed），
-任务落 `af_parse_jobs` 并由后台执行。失败页跳过不中断，`progress.error` 记录摘要（截断 200 字符）。
+页 = 逐页页图重解析；`engine` 为 `mineru`/`paddleocr-vl`/`qwen-vl` 之一，**缺省回落
+`AXIOM_OCR_ENGINE`**，未实现的槽位返回 400、非法字面值返回 422，**绝不回落到其他引擎**）。
+202 返回 `ParseJob`（queued/running/completed/failed），任务落 `af_parse_jobs`（`engine` 存**解析后
+的实际引擎名**）并由后台执行。失败页跳过不中断，`progress.error` 记录进行中失败页摘要（≤200
+字符），终态摘要写 `error`（≤500 字符）。**受理前门槛**：书目/产物校验 → 引擎名解析 → 模型服务
+探活（不可用 503，**不创建任务行**）。
 
 ### GET /api/v1/parse-jobs/{job_id}
 
-任务状态与进度（`ParseJob`：id/book_id/pages/engine/status/progress）。
+任务状态与进度（`ParseJob`：id/book_id/pages/engine/status/progress/error）。运行中可见
+`progress.parsed` 递增（节流写入：≥1s 或每 10 页）。
 
 ### 错误语义
 
 | 场景 | 状态码 |
 | --- | --- |
-| 参数非法（页码越界、verdict 非枚举等） | 400 |
+| 参数非法（页码越界、verdict 非枚举、引擎槽位未实现等） | 400 |
 | book / page / job / 产物不存在 | 404（中文 detail，如「书目不存在：{id}」） |
-| 模型服务不可用（MinerU 未起等） | 503（提示经 8900 `/models/{slot}` 启停模型或检查 `QED_OCR_MODEL_URL`（5002）） |
+| 入参 schema 违规（安全路径段、引擎字面值、file_path 形态） | 422 |
+| 模型服务不可用（**提交期探活失败**，MinerU 未起等） | 503（提示经 8900 `/models/{slot}` 启停模型或检查 `QED_OCR_MODEL_URL`（5002））；**不创建任务行** |
+| 模型服务在任务受理后故障 | 202 已受理 → job `failed`（`error` 记原因），已解析页保留 |
 
 8902 离线/5xx 时 8900 返回 503 + `Axiom-Flow 服务不可达：…`（独立性铁律，不影响配置域端点）。
 
@@ -208,8 +220,8 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 
 - 响应结构以 `src/axiom_flow/schemas.py` 为单一事实源；本文件与契约测试
   （`tests/contract/test_api_v1_contract.py`）同步守护。
-- 只读端点（books/pages/manifest/image/health）不依赖模型服务与凭据（独立性降级）；仅提交
-  解析任务时按需初始化引擎适配器。
+- 只读端点（books/pages/manifest/image/chunks/health）不依赖模型服务与凭据（独立性降级）；
+  仅提交解析任务时按需初始化引擎适配器，并只做**提交期探活**（不可用 503，不落任务行）。
 - 错误响应不泄漏堆栈与凭据；模型服务不可达映射为可读中文错误信息。
 - 新增/变更端点：先更新本文件与契约测试，再实现（根仓库 REQ-002 文档治理）。
 

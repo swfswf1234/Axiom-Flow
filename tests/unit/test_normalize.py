@@ -125,6 +125,79 @@ class TestBBox:
         assert page.blocks[0].bbox == (0, 0, 1240, 1754)
 
 
+class TestBBoxCoordinateSpace:
+    """DEFECT-004 / 根仓库 REQ-081：MinerU 3.4.4 `content_list[].bbox` 是逐轴 0–1000 归一化坐标。
+
+    锚点输入取自真机实验 `data/probes/live-bringup-20260920/L3d_coord_space.json`：A4（595x842pt）
+    PDF 内把文本钉在已知点坐标，150 DPI 页图为 1240x1755 像素。
+    """
+
+    ANCHOR_IMAGE = (1240, 1755)
+
+    def test_normalized_1000_scales_per_axis_to_pixels(self):
+        assert scale_bbox(
+            (0, 0, 1000, 1000), page_size=None, image_size=IMAGE_SIZE, space="normalized_1000"
+        ) == (0, 0, *IMAGE_SIZE)
+        assert scale_bbox(
+            (500, 500, 600, 700), page_size=None, image_size=IMAGE_SIZE, space="normalized_1000"
+        ) == (620, 877, 744, 1228)
+
+    def test_normalized_1000_ignores_engine_page_size(self):
+        """PNG 输入的 `pdf_info.page_size` 是 200 DPI 标称点，不得参与缩放。"""
+        mapped = scale_bbox(
+            (500, 500, 600, 700),
+            page_size=(446.0, 631.0),
+            image_size=(1241, 1755),
+            space="normalized_1000",
+        )
+        assert mapped == (620, 878, 745, 1228)
+
+    def test_anchor_lands_on_placed_text(self):
+        """真机锚点：放置在 x=420pt、基线 y=780pt 的文本，其块应落回该文本的像素位置。"""
+        mapped = scale_bbox(
+            (702, 910, 946, 928), page_size=(595.0, 842.0), image_size=self.ANCHOR_IMAGE,
+            space="normalized_1000",
+        )
+        assert abs(mapped[0] - 875) <= 12  # 420pt → 875px
+        assert abs(mapped[1] - 1596) <= 12  # 14pt 字面顶部 → 1596px
+        assert abs(mapped[3] - 1625) <= 12  # 780pt 基线 → 1625px
+        assert mapped[3] < self.ANCHOR_IMAGE[1] - 20, "块贴底边＝旧版点空间过放后被夹取（REQ-081 症状）"
+
+    def test_pixels_space_only_clamps(self):
+        assert scale_bbox((10, 20, 30, 40), page_size=PAGE_SIZE, image_size=IMAGE_SIZE, space="pixels") == (
+            10, 20, 30, 40)
+        assert scale_bbox((-5, -5, 9999, 9999), page_size=PAGE_SIZE, image_size=IMAGE_SIZE, space="pixels")[:2] == (0, 0)
+
+    def test_pdf_points_space_is_default(self):
+        """未声明空间的引擎（预留槽位）仍按 PDF 点 → 像素缩放。"""
+        assert scale_bbox((0, 0, 595, 842), page_size=PAGE_SIZE, image_size=IMAGE_SIZE) == (0, 0, 1240, 1754)
+
+    def test_normalize_page_uses_result_bbox_space(self):
+        """归一化按引擎声明的坐标空间映射；旧版错配会产出贴右缘的 1px 细条块。"""
+        page = normalize_page(
+            PageResult(
+                page=3,
+                blocks=[{"type": "text", "text": "正文", "bbox": [16, 40, 984, 62], "page_idx": 2}],
+                page_size=(446.0, 631.0),
+                bbox_space="normalized_1000",
+            ),
+            source="mineru",
+            image_size=(1241, 1755),
+        )
+        x0, y0, x1, y1 = page.blocks[0].bbox
+        assert (x1 - x0) > 20 and (y1 - y0) > 20
+        assert x1 <= 1241 and y1 <= 1755
+        assert (x0, y0) != (x1 - 1, y1 - 1)
+
+    def test_missing_bbox_is_full_page_without_rescaling(self):
+        page = normalize_page(
+            PageResult(page=1, blocks=[{"type": "text", "text": "无坐标"}], bbox_space="normalized_1000"),
+            source="mineru",
+            image_size=IMAGE_SIZE,
+        )
+        assert page.blocks[0].bbox == (0, 0, *IMAGE_SIZE)
+
+
 class TestMarkdown:
     """页级 Markdown 组装：公式与结构保留，页眉/页脚/页码跳过。"""
 

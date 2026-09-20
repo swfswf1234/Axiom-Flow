@@ -5,6 +5,11 @@
 """
 
 from axiom_flow.orchestrator.jobs import JobRunner
-from axiom_flow.orchestrator.pipeline import ParseOutcome, rebuild_chunks, run_parse_job
+from axiom_flow.orchestrator.pipeline import (
+    MODEL_UNAVAILABLE,
+    ParseOutcome,
+    rebuild_chunks,
+    run_parse_job,
+)
 
-__all__ = ["JobRunner", "ParseOutcome", "rebuild_chunks", "run_parse_job"]
+__all__ = ["MODEL_UNAVAILABLE", "JobRunner", "ParseOutcome", "rebuild_chunks", "run_parse_job"]

@@ -1,7 +1,9 @@
 """解析编排单测：全本/逐页、失败语义、af_* 回写与分块重建（SQLite + 假引擎，不调模型）。
 
 守护面（docs/design/parsing-pipeline.md）：默认全本、指定页逐页、单页失败不中断、
-模型不可用任务失败、产物三件套 + chunks.json + manifest.json、进度回写。
+模型不可用任务失败、产物三件套 + chunks.json + manifest.json、进度回写；
+以及页级持久化不变式（PLAN-003 条文 3）：产物写先于页行提交、整本/异常失败保留已解析页、
+progress 节流写入。
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from axiom_flow.db.models import Base
 from axiom_flow.db.repositories import BookRepository, BookSyncRow, PageRepository, ParseJobRepository, ParseJobRow
 from axiom_flow.engines.base import DocumentResult, EngineError, PageResult
 from axiom_flow.ingest import ingest_book
-from axiom_flow.orchestrator import run_parse_job
+from axiom_flow.orchestrator import pipeline, run_parse_job
 from axiom_flow.schemas import BlocksPage
 
 
@@ -292,3 +294,188 @@ class TestPerPageJob:
 
         assert outcome.failed_pages == [2]
         assert PageRepository(session).get("b05", 2).error == "页图缺失"
+
+
+def _file_env(tmp_path: Path, pages: int = 2):
+    """文件库 + 多连接：读 Session 只看得见已提交行，复现 MySQL 的连接隔离语义。
+
+    内存 SQLite 单连接会同时看见未提交数据，无法守护页级持久化不变式。
+    """
+    data_root = tmp_path / "data"
+    raw_dir = data_root / "raw" / "math-advanced" / "math_analysis"
+    raw_dir.mkdir(parents=True)
+    _make_pdf(raw_dir / "book.pdf", pages=pages)
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'af.db'}", connect_args={"timeout": 5})
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        BookRepository(session).upsert_many(
+            [
+                BookSyncRow(
+                    book_id="b05",
+                    domain_id="math-advanced",
+                    course_id="math_analysis",
+                    title="数学分析原理",
+                    file_path="raw/math-advanced/math_analysis/book.pdf",
+                )
+            ]
+        )
+        session.commit()
+        ingest_book(
+            book_id="b05",
+            source_file="raw/math-advanced/math_analysis/book.pdf",
+            data_root=data_root,
+            domain_id="math-advanced",
+            course_id="math_analysis",
+            title="数学分析原理",
+        )
+        BookRepository(session).update_ingest("b05", page_count=pages, sha256="x" * 64)
+        ParseJobRepository(session).create(ParseJobRow(job_id="job-1", book_id="b05"))
+        session.commit()
+        return engine, session, data_root
+
+
+class _ProbingEngine(FakeEngine):
+    """在每次调用引擎前用独立读连接快照已提交的 parsed 页数。"""
+
+    def __init__(self, engine, *, explode_page: int | None = None, explode: type[Exception] = ValueError):
+        super().__init__()
+        self._engine = engine
+        self.explode_page = explode_page
+        self.explode = explode
+        self.snapshots: list[int] = []
+
+    def _probe(self) -> None:
+        with Session(self._engine) as reader:
+            self.snapshots.append(PageRepository(reader).count_parsed("b05"))
+
+    def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult:
+        self._probe()
+        if self.explode_page is not None and page_no == self.explode_page:
+            raise self.explode(f"第 {page_no} 页内部异常")
+        return super().parse_page(image_bytes, page_no)
+
+    def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult:
+        self._probe()
+        return super().parse_document(pdf_bytes, filename)
+
+
+class TestPerPagePersistence:
+    """条文 3：页级提交与进度落库——运行中可查、异常不吞已解析页。"""
+
+    def test_pages_visible_to_other_connection_during_run(self, tmp_path):
+        """页级提交：第 n 页调用引擎时，前 n-1 页已对独立连接可见。"""
+        engine, session, data_root = _file_env(tmp_path)
+        probe = _ProbingEngine(engine)
+
+        run_parse_job(
+            session=session,
+            engine=probe,
+            job_id="job-1",
+            book_id="b05",
+            pages=[1, 2],
+            data_root=data_root,
+        )
+
+        assert probe.snapshots == [0, 1]
+        with Session(engine) as reader:
+            assert PageRepository(reader).count_parsed("b05") == 2
+
+    def test_progress_written_every_ten_pages(self, tmp_path):
+        engine, session, data_root = _file_env(tmp_path, pages=12)
+        writes: list[int] = []
+        original = ParseJobRepository.update_progress
+
+        def spy(self, job_id, progress):  # noqa: ANN001
+            writes.append(progress["parsed"])
+            return original(self, job_id, progress)
+
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(ParseJobRepository, "update_progress", spy)
+        try:
+            run_parse_job(
+                session=session,
+                engine=FakeEngine(),
+                job_id="job-1",
+                book_id="b05",
+                pages=list(range(1, 13)),
+                data_root=data_root,
+            )
+        finally:
+            monkey.undo()
+
+        assert writes == [10], "12 页快跑（未到 1s 间隔）只在每 10 页节点写一次"
+        with Session(engine) as reader:
+            job = ParseJobRepository(reader).get("job-1")
+        assert job is not None and job.status == "completed"
+        assert job.progress["parsed"] == 12
+
+    def test_non_engine_error_keeps_earlier_pages(self, tmp_path):
+        """A3 回归：引擎抛非 EngineError 时，前序页行与产物必须已落库（不得被回滚吞掉）。"""
+        engine, session, data_root = _file_env(tmp_path)
+        probe = _ProbingEngine(engine, explode_page=2)
+
+        with pytest.raises(ValueError, match="内部异常"):
+            run_parse_job(
+                session=session,
+                engine=probe,
+                job_id="job-1",
+                book_id="b05",
+                pages=[1, 2],
+                data_root=data_root,
+            )
+
+        with Session(engine) as reader:
+            assert PageRepository(reader).get("b05", 1).status == "parsed"
+            assert PageRepository(reader).get("b05", 2) is None
+        assert (_book_dir(data_root) / "pages" / "p0001.blocks.json").is_file()
+
+    def test_whole_book_failure_keeps_parsed_pages(self, tmp_path, monkeypatch):
+        """整本失败（EngineError 中途穿透）时已解析页保留，且 progress 记录已完成页。"""
+        engine, session, data_root = _file_env(tmp_path)
+        original = pipeline._write_page_artifacts
+
+        def boom(book_dir: Path, page: BlocksPage) -> None:
+            if page.page == 2:
+                raise EngineError("落盘失败")
+            original(book_dir, page)
+
+        monkeypatch.setattr(pipeline, "_write_page_artifacts", boom)
+
+        outcome = run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id="job-1",
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+        )
+
+        assert outcome.status == "failed" and "落盘失败" in outcome.error
+        with Session(engine) as reader:
+            assert PageRepository(reader).get("b05", 1).status == "parsed"
+            job = ParseJobRepository(reader).get("job-1")
+            book = BookRepository(reader).get("b05")
+        assert job is not None and job.status == "failed"
+        assert job.progress["parsed"] == 1
+        assert book is not None and book.pages_done == 1
+
+    def test_persist_per_page_off_defers_to_caller(self, tmp_path):
+        """退化开关：persist_per_page=False 时运行中不可见，由调用方统一提交。"""
+        engine, session, data_root = _file_env(tmp_path)
+        probe = _ProbingEngine(engine)
+
+        run_parse_job(
+            session=session,
+            engine=probe,
+            job_id="job-1",
+            book_id="b05",
+            pages=[1, 2],
+            data_root=data_root,
+            persist_per_page=False,
+        )
+
+        assert probe.snapshots == [0, 0]
+        session.commit()
+        with Session(engine) as reader:
+            assert PageRepository(reader).count_parsed("b05") == 2
+

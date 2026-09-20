@@ -4,8 +4,8 @@
 - `book.json`               ← BookMeta
 - `manifest.json`           ← ManifestEntry 列表
 - `chunks.json`             ← ChunkSet（派生、不入库、可重建）
-- `pages/pXXXX.blocks.json` ← BlocksPage（块级结构化，渲染 + 向量化共同基座）
-- `pages/pXXXX.md`          ← 页级 Markdown（`$$...$$` / `$...$` 内嵌公式）
+- `pages/p<NNNN>.blocks.json` ← BlocksPage（块级结构化，渲染 + 向量化共同基座）
+- `pages/p<NNNN>.md`          ← 页级 Markdown（`$$...$$` / `$...$` 内嵌公式）
 
 API 契约模型：BookOut / BookSyncItem / IngestResponse / PageData / EditRecord / ParseJob。
 块类型 10 种；解析来源 source ∈ {mineru, paddleocr-vl, qwen-vl}（后两者预留）。
@@ -15,9 +15,18 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+# ---------- 数据根边界（PLAN-003 条文 7） ----------
+
+# 路径段：首字符限 `\w`（因而拒绝 `/`、`\`、`.` 与 `..`），其余允许 `\w`、`.`、`-`、`_`；
+# 中文段合法（`\w` 在 Unicode 下含汉字），但 Windows 盘符 `D:` 因 `:` 不在字符类内被拒。
+SAFE_SEGMENT_PATTERN = r"^\w[\w.\-]{0,63}$"
+OPTIONAL_SEGMENT_PATTERN = r"^(?:\w[\w.\-]{0,63})?$"
+# 数据根相对路径：逐段套用段规则，段间只允许 `/`。
+RELATIVE_PATH_PATTERN = r"^(?:\w[\w.\-]*(?:/\w[\w.\-]*)*)?$"
 
 # ---------- 枚举 ----------
 
@@ -92,7 +101,7 @@ class ParseStatus(StrEnum):
 
 BBox = Annotated[
     tuple[int, int, int, int],
-    Field(description="页内坐标 [x0, y0, x1, y1]（原页图像素坐标系，pXXXX.png 为基准）"),
+    Field(description="页内坐标 [x0, y0, x1, y1]（原页图像素坐标系，p<NNNN>.png 为基准）"),
 ]
 
 
@@ -170,7 +179,7 @@ class QualityMetrics(BaseModel):
 
 
 class BlocksPage(BaseModel):
-    """pages/pXXXX.blocks.json：页级结构化数据。"""
+    """pages/p<NNNN>.blocks.json：页级结构化数据。"""
 
     page: int = Field(ge=1, description="页码（1 基，对应 p0001.png）")
     image_size: tuple[int, int] = Field(description="原页图像素尺寸 [width, height]（bbox 基准）")
@@ -277,18 +286,22 @@ class BookOut(BaseModel):
 
 
 class BookSyncItem(BaseModel):
-    """POST /books/sync 请求行（同源 qt_books 只读快照）。"""
+    """POST /books/sync 请求行（同源 qt_books 只读快照）。
 
-    book_id: str
-    domain_id: str = ""
-    course_id: str = ""
+    `book_id`/`domain_id`/`course_id` 是数据根路径段，`file_path` 是数据根相对路径，均受
+    条文 7 的边界校验约束（违规 422）；绝对路径与 `..` 一律拒绝。
+    """
+
+    book_id: str = Field(pattern=SAFE_SEGMENT_PATTERN)
+    domain_id: str = Field(default="", pattern=OPTIONAL_SEGMENT_PATTERN)
+    course_id: str = Field(default="", pattern=OPTIONAL_SEGMENT_PATTERN)
     course_name: str = ""
     knowledge_id: str = ""
     title: str = ""
     part: str = ""
     display_title: str = ""
     authors: list[Author] = Field(default_factory=list)
-    file_path: str = ""
+    file_path: str = Field(default="", pattern=RELATIVE_PATH_PATTERN, max_length=512)
 
 
 class SyncResponse(BaseModel):
@@ -357,9 +370,11 @@ class PageData(BaseModel):
 class ParseJobCreate(BaseModel):
     """POST /parse-jobs 请求体。"""
 
-    book_id: str
+    book_id: str = Field(pattern=SAFE_SEGMENT_PATTERN)
     pages: list[int] | None = Field(default=None, description="页范围（1 基）；None = 全部页（全本解析）")
-    engine: str = Field(default="mineru", description="解析引擎（缺省 mineru）")
+    engine: Literal["mineru", "paddleocr-vl", "qwen-vl"] | None = Field(
+        default=None, description="解析引擎；缺省回落 AXIOM_OCR_ENGINE（不自动兜底）"
+    )
 
 
 class ParseJob(BaseModel):

@@ -2,10 +2,10 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（预处理/引擎适配/归一化/分块/编排/落盘全链路已实现；MinerU 真机冒烟待 ARCH-009）
-最后更新：2026-09-17
-关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`（待实现）、`src/axiom_flow/normalize/`（待实现）、`src/axiom_flow/orchestrator/`（待实现）
-关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`（engines/normalize/orchestrator 待对应任务）
+实现状态：Current（预处理/引擎适配/归一化/分块/编排/落盘全链路已实现；2026-09-20 真机小样打通（整本 + 逐页 + 失败注入 + kill 续跑）；**bbox 坐标空间契约已于 2026-09-21 实现并真机复验（DEFECT-004 关闭）**，块类型字面值缺口仍待修（DEFECT-005）；486 页全量与代表书质量验收待 ARCH-009）
+最后更新：2026-09-21
+关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
+关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_engines.py`、`tests/unit/test_normalize.py`、`tests/unit/test_chunking.py`、`tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：`docs/adr/0001-v2-exploration-direction.md`、`docs/adr/0004-model-boundary-and-pipeline-ownership.md`
 
 > 本文档定义解析管线的内部结构：预处理（PDF → 页图）→ 引擎调用 → 后处理（归一化 + 分块）
@@ -78,18 +78,20 @@ flowchart LR
 | 阶段 | 模块 | 内容 |
 | --- | --- | --- |
 | 预处理 | `ingest/` | 源 PDF（数据根相对路径，只读）→ 150 DPI 原页图 + `book.json`（page_count/sha256/source_file）；不调模型 |
-| 调用 | `engines/` | 适配器直连模型服务：默认全本 `POST /file_parse`（PDF），指定 pages 时逐页（页图）；超时 `AXIOM_OCR_TIMEOUT` |
-| 后处理 | `normalize/` | 引擎原始输出 → 统一 blocks（类型映射/bbox 缩放/阅读序）+ 页级 Markdown 组装 + `QualityMetrics` |
+| 调用 | `engines/` | `factory.py` 按「请求体 `engine` → `AXIOM_OCR_ENGINE`」解析出实际引擎名后构造适配器；适配器直连模型服务，默认全本（PDF）、指定 pages 时逐页（页图）；三段式提交/轮询/取结果共享 `AXIOM_OCR_TIMEOUT` 的 `deadline`（协议细节见 [model-integration.md](model-integration.md)） |
+| 后处理 | `normalize/` | 引擎原始输出 → 统一 blocks（类型映射/坐标空间换算/阅读序）+ 页级 Markdown 组装 + `QualityMetrics` |
 | 分块 | `normalize/chunking` | 书级有序 blocks → chunks（规则见下），落 `chunks.json` |
 
 ## 统一格式与产物
 
-产物落 `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`：
+产物落 `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`（真实现状：`domain_id` 为空时
+该层省略，如 `parsed/linear_algebra/linearalgebra-b01/`，与根仓库 `dataset-conventions` 的「空段不建
+目录」一致）：
 
 ```text
 <QED_DATA_ROOT>/
 ├── raw/<domain_id>/<course_id>/<slug>_<sha8>.pdf   # 只读输入（QED-Tracker 写入）
-├── tmp/axiom-flow/<job_id>/                        # 模型调用暂存，任务结束清理
+├── tmp/                                        # 根仓库工作区；**本服务不写数据根 tmp**（见下）
 └── parsed/<domain_id>/<course_id>/<book_id>/
     ├── book.json            # book_id/title/authors/page_count/sha256/source_file/engine/ingested_at
     ├── manifest.json        # 产物清单（路径 + 大小 + SHA-256）
@@ -97,13 +99,23 @@ flowchart LR
     └── pages/
         ├── p0001.png        # 原页图（150 DPI，对照左栏 + bbox 基准）
         ├── p0001.md         # 页级 Markdown（$$...$$ / $...$ 内嵌公式）
-        └── p0001.blocks.json# 统一 blocks（结构化，含 bbox）
+        └── p0001.blocks.json  # 统一 blocks（结构化，含 bbox）
 ```
 
+- 页文件名唯一格式：`p<NNNN>.png` / `p<NNNN>.md` / `p<NNNN>.blocks.json`，`NNNN` = 页码 1 基
+  四位零填充（`p0001`），由 ingest 首建，解析写入与 API 读取沿用同一格式。
 - 写入一律「临时文件 → 校验 → 原子替换」，不留半成品；源 PDF 只读不复制。
+- **不写数据根 `tmp/`（PLAN-003 条文 12）**：引擎提交/轮询/取结果的全部中间产物只存在于内存
+  （HTTP 响应字节 → 解析后的结构），因此 `tmp/axiom-flow/<job_id>/` 恒不应出现；该目录一旦存在即
+  视为缺陷（曾按 v1 习惯把它记作「未实现的暂存目录」，属设计表述错误，2026-09-20 改判）。
 - `book.json` 的 `source_file` 为数据根相对路径（同源 `qt_books.file_path`）；`engine` 为实际
   引擎标识（mineru / paddleocr-vl / qwen-vl）。
 - 人工编辑为覆盖层（`af_block_edits`），不改产物文件；分块为派生数据，重建不影响产物事实源。
+- **数据根边界**：`domain_id`、`course_id`、`book_id` 必须是安全单段（拒绝 `/`、`..`、前导点与
+  空串；`domain_id`/`course_id` 允许空表示未归属），违规在 schema 层返回 422；源 PDF 与全部产物
+  落盘路径必须位于 `QED_DATA_ROOT` 之内（`resolve_source_pdf` 对绝对路径同样受限），写盘前经
+  `ingest/artifacts.ensure_within()` 做纵深防御（符号链接与 `..` 归一化后仍受限）。数据根唯一
+  事实源是 `config.load_settings().data_dir`（`QED_DATA_ROOT`）。
 
 统一 blocks schema（`schemas.py` 单一事实源）：
 
@@ -123,8 +135,22 @@ flowchart LR
 - 块类型 10 种：`heading / paragraph / formula / table / image / list / caption / header / footer /
   page_number`；按类型强制必需字段（heading.text+level、formula.latex、table.html、image.path、
   list.items、其余 text）。
-- `bbox`：原页图像素坐标 `[x0, y0, x1, y1]`（左上原点），基准 `pages/pXXXX.png`；模型坐标系差异
-  由 `normalize/` 按 `image_size` 缩放归一。
+- `bbox`：原页图像素坐标 `[x0, y0, x1, y1]`（左上原点），基准 `pages/p<NNNN>.png`；模型坐标系差异
+  由 `normalize/` 按引擎声明的坐标空间换算归一。
+- **坐标空间契约（2026-09-20 真机锚点实验测定，2026-09-21 实现）**：引擎原始块的 `bbox` 属于哪种
+  坐标空间由 `PageResult.bbox_space` 显式声明（`pdf_points` / `normalized_1000` / `pixels`），
+  `normalize/blocks.scale_bbox` 按声明换算：`normalized_1000` → `px = bbox / 1000 * image_size`（逐轴），
+  `pixels` → 仅夹取，`pdf_points` → 按 `image_size / page_size` 缩放（**唯一以 `page_size` 为基准的空间**）。
+  MinerU 3.4.4 声明为 `normalized_1000`：其 `content_list[].bbox` 是**相对页框、逐轴归一化到 0–1000**
+  的坐标，整本（PDF）与逐页（PNG）两条提交路径同一空间。`middle_json.pdf_info[].page_size` 仅在 PDF
+  输入时是真实 PDF 点尺寸，PNG 输入时是引擎按 200 DPI 折算的标称点（如 1241x1755 页图 → `[446, 631]`），
+  因此**不得用作缩放基准**，在归一化侧仅留档不参与换算；缺失 `bbox` 的块直接铺满页图，不再二次映射。
+  真机端到端复核（合成 A4 五行已知点坐标锚点，整本路径）：5/5 块平均 IoU **0.93**、最大偏移 **7px**，
+  旧实现同一判据下 IoU **0.01** 且两块被夹取到页边（[DEFECT-004](../trackers/completed.md) 关闭证据
+  `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`、`L3d_coord_space.json`）。
+- **引擎类型字面值（同一轮测定）**：`content_list[].type` 真机出现 `text` / `header` / `footer`
+  （非 `page_header`/`page_footer`）；映射表未覆盖的字面值必须**可见丢弃**（计入质量信号），不得
+  静默丢块造成页内 `index` 漂移（[DEFECT-005](../trackers/todo.md)）。
 - `index` 为页内块数组下标（0 基，与块编辑定位一致）；`order` 为阅读顺序。
 
 ## 分块（blocks → chunk）
@@ -145,7 +171,8 @@ flowchart LR
 }
 ```
 
-切分规则（数学文档感知，参数可经 `GET /books/{id}/chunks` 覆盖后重算）：
+切分规则（数学文档感知；`GET /books/{id}/chunks` 带参数时为**实时重算、不落盘**，落盘版本由解析
+收尾重建）：
 
 1. 输入为**书级有序块序列**（页序 + `order`），跨页合并；
 2. `heading` 结束当前 chunk 并作为新 chunk 开头（保留标题上下文）；
@@ -171,11 +198,17 @@ flowchart LR
 
 | 场景 | 行为 |
 | --- | --- |
-| 单页失败（超时/空输出/异常） | 重试 1 次 → 仍失败标记 `failed`，job 不中断，汇总报告列出失败页 |
+| 单页失败（超时/空输出/异常） | 重试 1 次 → 仍失败标记 `af_pages.status=failed`，job 不中断；失败页摘要即时写入 `progress.error`（≤200 字符），终态摘要写 `af_parse_jobs.error`（≤500 字符） |
+| 轮询期瞬时失败（HTTP 异常/非 2xx） | 适配器累计**连续 3 次**才判引擎失败（成功一次即清零计数），全程受同一 `deadline` 约束；不与单页重试互相吞并 |
+| 结果载荷非 JSON | 归一为 `EngineError`；`JSONDecodeError` 等内部异常不得穿透编排层（否则任务回滚会吞掉已解析页行） |
 | 页质量信号不达标 | 记录质量信号并标记；不自动切换引擎（用户裁决不设自动兜底） |
-| 模型服务未启动 | 任务提交前健康检查（`QED_OCR_MODEL_URL`），返回 503 + 提示经 8900 `/models/{slot}` 启停模型 |
-| 电源中断/进程被杀 | af_pages 页状态持久化 → 重启后按状态续跑未完成页（幂等） |
+| 模型服务未启动 | **两段语义**：提交期探活（参数校验后、落库前）失败 → 503 且**不创建 job 行** + 提示经 8900 `/models/{slot}` 启停模型；任务受理后的故障 → job `failed` |
+| 电源中断/进程被杀 | 每页成功/失败即 `session.commit()`，且**产物写先于页行提交**（不变式：有页行必有产物）→ 重启后按 af_pages 续跑「无行 ∪ failed」页 |
 | 模型服务不可达 | API 层错误映射为可读中文错误信息，不泄漏堆栈 |
+
+进度写入节流：`af_parse_jobs.progress` 在「距上次写入 ≥1 秒」或「每处理满 10 页」时覆写一次，
+任务终态必写一次；单页失败节点强制写入（使 `progress.error` 实时可见）。
+`persist_per_page=False` 仅供性能排查退回调用方统一提交，不是静默兜底路径。
 
 质量信号（每页随 blocks.json 落盘，`QualityMetrics`）：空块率、formula 平均置信度、table
 解析成功数、页文本长度与原生文本长度比值（扫描件无原生文本则跳过）。

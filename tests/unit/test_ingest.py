@@ -7,10 +7,8 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from axiom_flow.ingest import book_dir_for, default_data_dir, ingest_book
+from axiom_flow.ingest import book_dir_for, ingest_book, resolve_source_pdf
 from axiom_flow.schemas import BookMeta
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _make_pdf(path: Path, pages: int = 3, text: str = "QED ingest test") -> Path:
@@ -114,23 +112,26 @@ class TestIngestBook:
     def test_book_dir_for_matches_layout(self, tmp_path):
         assert book_dir_for(tmp_path, "d", "c", "b") == tmp_path / "parsed" / "d" / "c" / "b"
 
+    def test_book_dir_for_rejects_traversal_segment(self, tmp_path):
+        """条文 7：book_id 必须是单一路径段（schemas 之外的纵深防御，含数据根内的 `..`）。"""
+        with pytest.raises(ValueError, match="非法 book_id"):
+            book_dir_for(tmp_path / "data", "d", "c", "../../escape")
+        with pytest.raises(ValueError, match="非法 domain_id"):
+            book_dir_for(tmp_path / "data", "d/../../x", "c", "b01")
 
-class TestDefaultDataDir:
-    """数据根默认值：QED_DATA_ROOT 覆盖，未设置时回退仓库 data/。"""
+    def test_resolve_source_pdf_rejects_absolute_path_outside_root(self, tmp_path):
+        outside = tmp_path / "elsewhere" / "book.pdf"
+        outside.parent.mkdir(parents=True)
+        _make_pdf(outside)
 
-    def test_data_root_env_wins(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("QED_DATA_ROOT", str(tmp_path / "dataset-root"))
+        with pytest.raises(ValueError, match="越出数据根"):
+            resolve_source_pdf(tmp_path / "data", str(outside))
 
-        assert default_data_dir() == tmp_path / "dataset-root"
+    def test_resolve_source_pdf_rejects_relative_escape(self, tmp_path):
+        with pytest.raises(ValueError, match="越出数据根"):
+            resolve_source_pdf(tmp_path / "data", "../outside.pdf")
 
-    def test_legacy_flow_var_is_ignored(self, monkeypatch, tmp_path):
-        """AXIOM_FLOW_DATA_DIR 已删除（配置简化）：设置旧键不生效。"""
-        monkeypatch.delenv("QED_DATA_ROOT", raising=False)
-        monkeypatch.setenv("AXIOM_FLOW_DATA_DIR", str(tmp_path / "flow"))
+    def test_resolve_source_pdf_accepts_within_root(self, tmp_path):
+        source_file = _source_pdf(tmp_path)
 
-        assert default_data_dir() == REPO_ROOT / "data"
-
-    def test_falls_back_to_repo_data(self, monkeypatch):
-        monkeypatch.delenv("QED_DATA_ROOT", raising=False)
-
-        assert default_data_dir() == REPO_ROOT / "data"
+        assert resolve_source_pdf(tmp_path / "data", source_file).is_file()

@@ -278,7 +278,11 @@ class TestParseJob:
     def test_create_job(self):
         job = ParseJobCreate(book_id="b05", pages=[1, 2, 3])
         assert job.pages == [1, 2, 3]
-        assert job.engine == "mineru"
+        assert job.engine is None  # 缺省 = 回落 AXIOM_OCR_ENGINE，不在 schema 层写死引擎
+
+    def test_create_job_rejects_unregistered_engine(self):
+        with pytest.raises(ValidationError, match="paddleocr|Input should"):
+            ParseJobCreate(book_id="b05", engine="gpt-4o")
 
     def test_create_job_pages_optional_means_all(self):
         job = ParseJobCreate(book_id="b05")

@@ -1,7 +1,7 @@
 # ADR 索引
 
 状态：Current
-最后更新：2026-09-14
+最后更新：2026-09-20
 
 本目录登记影响长期约束的决定。编号从 0001 重新开始（v2 新纪元，v1 决策已归档至
 `docs/history/v1-20260814/adr/`）。规则见 [ADR 治理](../standards/adr-governance.md)。
@@ -19,5 +19,6 @@
 | [0002](0002-pending-design-location.md) | 待评审设计的目录流转（Draft 设计先入 plans/，确定后落 design/；范本：根仓库 ADR 0011） | Accepted |
 | [0003](0003-standards-governance-alignment.md) | 文档治理体系对齐 QED-Tracker 成熟范本（doc-governance 改名扩写、local-dev、project-status、确认状态） | Accepted |
 | [0004](0004-model-boundary-and-pipeline-ownership.md) | 解析管线归位与模型直连（对齐根仓库 ADR 0014：模型生命周期归 8900，解析管线归 Axiom-Flow） | Accepted |
+| [0005](0005-mysql-integration-test-isolation.md) | MySQL 集成测试的隔离边界（`QED_TEST_MYSQL=1` 显式 opt-in，只用独立 schema `qed_test`，缺开关时 skip） | Draft |
 
-下一个可用编号：0005
+下一个可用编号：0006

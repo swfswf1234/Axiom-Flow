@@ -7,25 +7,35 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
+
+BboxSpace = Literal["pdf_points", "normalized_1000", "pixels"]
+"""原始块 `bbox` 的坐标空间：PDF 点 / 逐轴 0–1000 归一化 / 已是页图像素。"""
 
 
 class EngineError(RuntimeError):
-    """引擎调用失败（服务不可达/超时/解析失败）——API 层映射为 503 或任务失败。"""
+    """引擎调用失败（服务不可达/超时/解析失败）——编排层记为单页失败或任务 `failed`。
+
+    模型服务不可用在 API 层另有两道映射：提交期探活失败 → 503（不落任务行），
+    受理后进到执行期 → job `failed`（`orchestrator/pipeline.py`）。
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class PageResult:
     """引擎页级原始输出（归一化前）。
 
-    `blocks` 为引擎原始结构化条目（如 MinerU content_list 条目）；`page_size` 为 PDF 点坐标
-    下的页面尺寸（bbox 缩放基准），缺省 None 表示 bbox 已按图像像素给出。
+    `blocks` 为引擎原始结构化条目（如 MinerU content_list 条目）；`bbox_space` 声明其坐标空间，
+    由 `normalize/` 按该空间换算到页图像素；`page_size` 为引擎报告的 `pdf_info.page_size`，
+    **仅 `pdf_points` 空间可作缩放基准**（MinerU 在 PNG 输入下回的是按 200 DPI 折算的标称点，
+    与归一化 bbox 组不出自洽映射，见 DEFECT-004）。
     """
 
     page: int
     blocks: list[dict] = field(default_factory=list)
     markdown: str = ""
     page_size: tuple[float, float] | None = None
+    bbox_space: BboxSpace = "pdf_points"
 
 
 @dataclass(frozen=True, slots=True)

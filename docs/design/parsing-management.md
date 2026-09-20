@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：暂定
 实现状态：Current（af_* 四表 + 同步/CRUD/ingest/异步解析/对照编辑/分块端点已实现）
-最后更新：2026-09-17
+最后更新：2026-09-20
 关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`
 关联 ADR：`docs/adr/0004-model-boundary-and-pipeline-ownership.md`、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)
@@ -73,16 +73,20 @@ sequenceDiagram
 
 | 端点 | 语义 |
 | --- | --- |
-| `POST /books/sync` | 幂等 upsert af_books（请求 `[{book_id, domain_id, course_id, course_name, knowledge_id, title, part, authors, file_path}]`） |
+| `POST /books/sync` | 幂等 upsert af_books（请求 `[{book_id, domain_id, course_id, course_name, knowledge_id, title, part, authors, file_path}]`）；`book_id`/`domain_id`/`course_id` 必须是安全路径段、`file_path` 为数据根相对路径（≤512 字符、禁前导 `/`），违规 422 |
 | `GET /books`、`GET /books/{id}` | 书目列表/详情（af_books；空表回退文件系统） |
-| `PATCH /books/{id}`、`DELETE /books/{id}` | 修改（notes）/删除（`?purge=true` 连产物） |
-| `POST /books/{id}/ingest` | 渲染页图 + book.json（不调模型），回写 ingest_status/page_count/sha256 |
+| `PATCH /books/{id}`、`DELETE /books/{id}` | 修改（notes）/删除：删 `af_books` 与该书 `af_pages` 行，`?purge=true` 连产物目录一并删除；`af_parse_jobs` 历史行一律保留为审计 |
+| `POST /books/{id}/ingest` | 渲染页图 + book.json（不调模型），回写 ingest_status/page_count/sha256。**重复 ingest 幂等**：原子替换产物目录（旧 blocks/markdown/chunks 一并作废），并回置 `parse_status=pending`、`pages_done=0` 且删除该书 `af_pages` 行；`af_parse_jobs` 历史与 `af_block_edits` 保留 |
 | `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页） |
 | `GET /books/{id}/pages/{no}` | 单页 blocks+markdown+image_url+已合并 edits |
 | `PUT /books/{id}/pages/{no}/blocks/{index}/edit`、`GET .../edits` | 块编辑 upsert / 页内编辑列表 |
 | `GET /books/{id}/chunks` | 分块预览（读 chunks.json；`?max_chars=&overlap_blocks=` 可实时重算） |
 
-**错误语义**：400 参数非法；404 book/page/job 不存在；503 模型服务不可用。
+**错误语义**：400 参数非法（含引擎槽位未实现）；404 book/page/job 不存在；422 入参 schema 违规
+（安全路径段、引擎字面值）；503 模型服务不可用（仅提交期探活失败，且不创建任务行）。
+
+**引擎选择**：`POST /parse-jobs` 的 `engine` 可选，缺省回落 `AXIOM_OCR_ENGINE`；未实现/未知名称
+一律显式报错，**绝不回落到其他引擎**（见 [model-integration](model-integration.md)）。
 
 **跨项目**：8900 现用 `/review`（ok/bad）需改 `/edit`（四表覆盖层），并补 `/ingest`、`/chunks`
 透传；由本仓库 `REQ-001` 请求根仓库适配，根侧完成后回执。
@@ -90,7 +94,7 @@ sequenceDiagram
 ## 降级与独立性
 
 - 8902 离线 → 8900 返回 503，前端降级显示；8901 离线 → `POST /books/sync` 503（取数失败）；
-- 模型服务离线 → 解析任务 `failed`（error 记原因），只读端点正常；
+- 模型服务离线 → **提交期探活**返回 503 且不创建任务行；**已受理**任务的执行期故障记为 `failed`（error 记原因），只读端点正常；
 - 8900 离线 → 本仓库可经根仓库脚本手动启停模型并独立解析（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
 
 ## 验证

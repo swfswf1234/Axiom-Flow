@@ -43,7 +43,8 @@
 # 测试
 & D:\software\anaconda3\envs\QED_env\python.exe -m pytest tests -q
 
-# 冒烟（需推理服务在线）
+# 真机冒烟（需 MinerU 5002 在线；默认门禁下 skip，须显式开启）
+$env:QED_SMOKE_LIVE = "1"
 & D:\software\anaconda3\envs\QED_env\python.exe -m pytest tests/smoke -q -m smoke
 
 # 静态检查
@@ -51,6 +52,10 @@
 
 # 推理基础设施由根仓库 scripts/image-model/ 托管（见运维指南）
 ```
+
+> 真机冒烟（`tests/smoke/`）只连本机回环上的模型服务，数据根与数据库用 `tmp_path` 内的合成 PDF 与
+> SQLite，不读写真实 `QED_DATA_ROOT`、不写共享 `qed` 库；开启后模型不可达即**失败**，不静默跳过。
+> 该「显式开启」口径与 PLAN-003 条文 10 同批，待 ADR 0005 评审后一并晋升 `standards/testing.md`。
 
 ## 门禁
 

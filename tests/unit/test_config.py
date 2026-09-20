@@ -15,6 +15,7 @@ _ENV_KEYS = (
     "API_KEY",
     "AXIOM_API_KEY",
     "QED_DATA_ROOT",
+    "AXIOM_FLOW_DATA_DIR",
     "AXIOM_OCR_ENGINE",
     "QED_OCR_MODEL_URL",
     "AXIOM_OCR_TIMEOUT",
@@ -156,6 +157,12 @@ class TestDataDir:
         assert load_settings().data_dir == isolated / "dataset-root"
 
     def test_default_is_repo_data(self, isolated):
+        assert load_settings().data_dir == REPO_ROOT / "data"
+
+    def test_retired_flow_var_is_ignored(self, isolated, monkeypatch):
+        """AXIOM_FLOW_DATA_DIR 已删除（配置简化）：设置旧键不生效，数据根只认 QED_DATA_ROOT。"""
+        monkeypatch.setenv("AXIOM_FLOW_DATA_DIR", str(isolated / "flow"))
+
         assert load_settings().data_dir == REPO_ROOT / "data"
 
 

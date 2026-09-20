@@ -1,7 +1,8 @@
 """8902 API v1 路由：对外协议适配，返回结构与 schemas 一致（契约 docs/architecture/api.md）。
 
 实现状态：Current（af_* 持久化 + 异步 parse-jobs + 分块预览；对照编辑为覆盖层合并）。
-只读端点不依赖模型服务与凭据；仅解析任务经引擎适配器直连模型服务（ADR 0004）。
+只读端点不依赖模型服务与凭据；仅解析任务经引擎适配器直连模型服务（ADR 0004），且提交期
+探活（不可用 503，不落任务行）、引擎名按 `AXIOM_OCR_ENGINE`/请求体显式分派（无自动兜底）。
 """
 
 import shutil
@@ -12,9 +13,11 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, sessionmaker
 
+from axiom_flow import __version__ as VERSION
 from axiom_flow.config import Settings, load_settings
 from axiom_flow.db.engine import create_engine_for
 from axiom_flow.db.models import AfBlockEdit, AfBook
@@ -22,15 +25,17 @@ from axiom_flow.db.repositories import (
     BookRepository,
     BookSyncRow,
     EditRepository,
+    PageRepository,
     ParseJobRepository,
     ParseJobRow,
 )
 from axiom_flow.engines.base import ParseEngine
-from axiom_flow.engines.mineru import MinerUEngine
+from axiom_flow.engines.factory import EngineSelectionError, build_engine, resolve_engine_name
 from axiom_flow.ingest import book_dir_for, ingest_book, write_manifest
 from axiom_flow.normalize.chunking import build_chunks, read_chunk_set
-from axiom_flow.orchestrator import JobRunner, rebuild_chunks
+from axiom_flow.orchestrator import MODEL_UNAVAILABLE, JobRunner, rebuild_chunks
 from axiom_flow.schemas import (
+    SAFE_SEGMENT_PATTERN,
     Block,
     BlocksPage,
     BookMeta,
@@ -47,10 +52,12 @@ from axiom_flow.schemas import (
     PageData,
     ParseJob,
     ParseJobCreate,
+    ParseStatus,
     SyncResponse,
 )
 
-VERSION = "0.5.0"
+# 路径参数中的 book_id 必须是安全路径段（防目录穿越，与 schemas 请求体同一约束）。
+SafeBookId = Annotated[str, PathParam(pattern=SAFE_SEGMENT_PATTERN)]
 
 
 def _book_out(book: AfBook) -> BookOut:
@@ -90,14 +97,30 @@ def _edit_record(edit: AfBlockEdit) -> EditRecord:
     )
 
 
+def _probe_model_service(engine: ParseEngine) -> None:
+    """提交期探活：模型服务不可用 → 503 且不创建任务行（受理后故障才记 job `failed`）。"""
+    try:
+        healthy = engine.health()
+    finally:
+        close = getattr(engine, "close", None)
+        if callable(close):
+            close()
+    if not healthy:
+        raise HTTPException(status_code=503, detail=MODEL_UNAVAILABLE)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
     session_factory: sessionmaker[Session] | None = None,
-    engine_factory: Callable[[], ParseEngine] | None = None,
+    engine_factory: Callable[[str], ParseEngine] | None = None,
     background_jobs: bool = True,
 ) -> FastAPI:
-    """应用工厂：数据根/数据库/引擎在创建时装配；测试可注入 sqlite 会话与假引擎。"""
+    """应用工厂：数据根/数据库/引擎在创建时装配；测试可注入 sqlite 会话与假引擎。
+
+    `engine_factory(name)` 以**已解析的引擎名**构造适配器（`engines/factory.build_engine`），
+    名字解析发生在提交期：未实现或未知引擎直接 400/422，不回落 MinerU（ADR 0004）。
+    """
     settings = settings or load_settings()
     data_root = Path(settings.data_dir)
 
@@ -105,9 +128,7 @@ def create_app(
     if session_factory is None:
         db_engine = create_engine_for(settings)
         session_factory = sessionmaker(bind=db_engine, future=True)
-    make_engine = engine_factory or (
-        lambda: MinerUEngine(settings.ocr_model_url, timeout=settings.ocr_timeout)
-    )
+    make_engine = engine_factory or (lambda name: build_engine(name, settings))
     runner = JobRunner(
         session_factory=session_factory,
         engine_factory=make_engine,
@@ -204,7 +225,7 @@ def create_app(
         return [_book_out(row) for row in rows] if rows else _books_from_filesystem()
 
     @app.get("/api/v1/books/{book_id}", response_model=BookOut)
-    def get_book(book_id: str, session: SessionDep) -> BookOut:
+    def get_book(book_id: SafeBookId, session: SessionDep) -> BookOut:
         """单书目元数据。"""
         book = BookRepository(session).get(book_id)
         if book is not None:
@@ -215,7 +236,7 @@ def create_app(
         raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
 
     @app.patch("/api/v1/books/{book_id}", response_model=BookOut)
-    def update_book(book_id: str, payload: BookUpdate, session: SessionDep) -> BookOut:
+    def update_book(book_id: SafeBookId, payload: BookUpdate, session: SessionDep) -> BookOut:
         """修改书目（Axiom-Flow 自有字段，如 notes）。"""
         repo = BookRepository(session)
         if not repo.update_notes(book_id, payload.notes):
@@ -225,13 +246,17 @@ def create_app(
         return _book_out(book)
 
     @app.delete("/api/v1/books/{book_id}")
-    def delete_book(book_id: str, session: SessionDep, purge: bool = False) -> dict:
-        """删除 af_books 行；`?purge=true` 同时删除 `parsed/` 产物。"""
+    def delete_book(book_id: SafeBookId, session: SessionDep, purge: bool = False) -> dict:
+        """删除 af_books 行与 af_pages 页行；`?purge=true` 同时删除 `parsed/` 产物。
+
+        af_parse_jobs 历史行保留为审计线索（不随书目删除，条文 9）。
+        """
         repo = BookRepository(session)
         book = repo.get(book_id)
         if book is None:
             raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
         book_dir = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
+        PageRepository(session).reset_for_book(book_id)
         repo.delete(book_id)
         if purge and book_dir.is_dir():
             shutil.rmtree(book_dir)
@@ -265,8 +290,12 @@ def create_app(
         )
 
     @app.post("/api/v1/books/{book_id}/ingest", response_model=IngestResponse)
-    def ingest(book_id: str, session: SessionDep) -> IngestResponse:
-        """渲染页图 + book.json / manifest.json（不调模型），回写 ingest 进度。"""
+    def ingest(book_id: SafeBookId, session: SessionDep) -> IngestResponse:
+        """渲染页图 + book.json / manifest.json（不调模型），回写 ingest 进度。
+
+        重复 ingest 会原子替换产物目录（旧页 blocks/markdown/chunks 一并作废），故解析状态
+        回置为 `pending`、`pages_done=0`，并清空 af_pages 页行（条文 8）；历史任务行保留。
+        """
         repo = BookRepository(session)
         book = repo.get(book_id)
         if book is None:
@@ -286,18 +315,20 @@ def create_app(
             code = 404 if "源 PDF 不存在" in str(exc) else 400
             raise HTTPException(status_code=code, detail=str(exc)) from exc
         repo.update_ingest(book_id, page_count=result.page_count, sha256=result.sha256)
+        repo.update_parse(book_id, parse_status=ParseStatus.PENDING, pages_done=0)
+        PageRepository(session).reset_for_book(book_id)
         return IngestResponse(book_id=book_id, page_count=result.page_count, sha256=result.sha256)
 
     # ---------- ③ 解析结果与 PDF 对照 ----------
 
     @app.get("/api/v1/books/{book_id}/manifest", response_model=list[ManifestEntry])
-    def get_manifest(book_id: str, session: SessionDep) -> list[ManifestEntry]:
+    def get_manifest(book_id: SafeBookId, session: SessionDep) -> list[ManifestEntry]:
         """产物清单：文件路径 + 大小 + SHA-256（防篡改/增量）。"""
         book_dir = _require_book_dir(session, book_id)
         return write_manifest(book_dir)
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}", response_model=PageData)
-    def get_page(book_id: str, page_no: int, session: SessionDep) -> PageData:
+    def get_page(book_id: SafeBookId, page_no: int, session: SessionDep) -> PageData:
         """单页完整数据：结构化 blocks + 页级 markdown + 原页图 URL + 已合并人工编辑。"""
         if page_no < 1:
             raise HTTPException(status_code=400, detail=f"页码非法：{page_no}")
@@ -313,7 +344,7 @@ def create_app(
         )
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}/image")
-    def get_page_image(book_id: str, page_no: int, session: SessionDep) -> FileResponse:
+    def get_page_image(book_id: SafeBookId, page_no: int, session: SessionDep) -> FileResponse:
         """原页高清图（对照左栏）。"""
         book_dir = _require_book_dir(session, book_id)
         image_path = book_dir / "pages" / f"p{page_no:04d}.png"
@@ -326,7 +357,7 @@ def create_app(
         response_model=EditRecord,
     )
     def edit_block(
-        book_id: str, page_no: int, index: int, payload: EditRequest, session: SessionDep
+        book_id: SafeBookId, page_no: int, index: int, payload: EditRequest, session: SessionDep
     ) -> EditRecord:
         """块编辑 upsert（落 af_block_edits，同块重复编辑覆盖更新）。"""
         book_dir = _require_book_dir(session, book_id)
@@ -347,14 +378,14 @@ def create_app(
         return _edit_record(edit)
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}/edits", response_model=list[EditRecord])
-    def list_edits(book_id: str, page_no: int, session: SessionDep) -> list[EditRecord]:
+    def list_edits(book_id: SafeBookId, page_no: int, session: SessionDep) -> list[EditRecord]:
         """页内编辑列表（对照视图回显）。"""
         _require_book_dir(session, book_id)
         return [_edit_record(edit) for edit in EditRepository(session).list_for_page(book_id, page_no)]
 
     @app.get("/api/v1/books/{book_id}/chunks", response_model=ChunkSet)
     def get_chunks(
-        book_id: str,
+        book_id: SafeBookId,
         session: SessionDep,
         max_chars: Annotated[int | None, Query(ge=1)] = None,
         overlap_blocks: Annotated[int | None, Query(ge=0)] = None,
@@ -380,13 +411,22 @@ def create_app(
 
     @app.post("/api/v1/parse-jobs", response_model=ParseJob, status_code=status.HTTP_202_ACCEPTED)
     def create_parse_job(payload: ParseJobCreate, session: SessionDep) -> ParseJob:
-        """提交解析任务：pages 缺省 = 全本解析；指定页 = 逐页重解析。202 受理后后台执行。"""
+        """提交解析任务：pages 缺省 = 全本解析；指定页 = 逐页重解析。202 受理后后台执行。
+
+        受理前两道门槛（条文 5/6）：引擎名解析（未实现 400、未知 422，不回落 MinerU）与
+        模型服务探活（不可用 503）；两者都不创建任务行。受理后的服务故障才记为 job `failed`。
+        """
         book = BookRepository(session).get(payload.book_id)
         if book is None:
             raise HTTPException(status_code=404, detail=f"书目不存在：{payload.book_id}")
         book_dir = book_dir_for(data_root, book.domain_id, book.course_id, payload.book_id)
         if not (book_dir / "book.json").is_file():
             raise HTTPException(status_code=404, detail=f"尚未 ingest：{payload.book_id}")
+        try:
+            engine_name = resolve_engine_name(payload.engine, settings.ocr_engine)
+        except EngineSelectionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _probe_model_service(make_engine(engine_name))
         total = len(payload.pages) if payload.pages else (book.page_count or 0)
         job_id = uuid.uuid4().hex[:12]
         job = ParseJobRepository(session).create(
@@ -394,13 +434,13 @@ def create_app(
                 job_id=job_id,
                 book_id=payload.book_id,
                 pages=payload.pages,
-                engine=payload.engine,
+                engine=engine_name,
                 status=JobStatus.QUEUED,
                 progress={"parsed": 0, "total": total},
             )
         )
         session.commit()  # 先落库，后台线程才能读到任务行
-        runner.submit(job_id=job_id, book_id=payload.book_id, pages=payload.pages)
+        runner.submit(job_id=job_id, book_id=payload.book_id, pages=payload.pages, engine=engine_name)
         return ParseJob(
             id=job.job_id,
             book_id=job.book_id,

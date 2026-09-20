@@ -4,12 +4,17 @@
 - 模型服务不可用（提交前探活失败）→ 任务 `failed`，不中断其他任务；
 - 单页失败（重试 1 次仍失败）→ 该页 `failed`，任务继续，汇总报告列出失败页；
 - 整本解析失败（引擎异常）→ 任务 `failed`，已解析页保留（可重跑）。
+
+持久化不变式（PLAN-003 条文 3）：**产物写先于页行提交**，故「有页行必有产物」；每页成功/失败即
+提交，使非 `EngineError` 异常穿透后台线程时前序页不被回滚吞掉；`progress` 按「距上次写入 ≥1s
+或每 10 页」节流，终态必写一次。`persist_per_page=False` 仅供性能排查，退回调用方统一提交。
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,6 +26,7 @@ from axiom_flow.engines.base import DocumentResult, EngineError, PageResult, Par
 from axiom_flow.ingest import (
     atomic_write_bytes,
     book_dir_for,
+    ensure_within,
     png_size,
     read_book_meta,
     resolve_source_pdf,
@@ -36,6 +42,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DPI = 150
 PAGE_ATTEMPTS = 2  # 首次 + 重试 1 次
+PROGRESS_MIN_INTERVAL_SECONDS = 1.0  # progress 写入的最小时间间隔
+PROGRESS_PAGE_INTERVAL = 10  # 或每处理这么多页写一次
+
+# 模型服务不可用的统一措辞：提交期 503 与执行期 job failed 共用（两段语义，同一文案）。
+MODEL_UNAVAILABLE = "模型服务不可用：请经 8900 /models/{slot} 启停模型后重试"
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,11 +89,12 @@ def _image_size(book_dir: Path, page_no: int, geometry, dpi: int) -> tuple[int, 
 
 
 def _store_images(book_dir: Path, images: dict[str, bytes]) -> None:
-    """文档内嵌图片落盘到 `pages/<相对路径>`（拒绝目录穿越）。"""
-    pages_root = (book_dir / "pages").resolve()
+    """文档内嵌图片落盘到 `pages/<相对路径>`（拒绝目录穿越，与 ingest 同一道数据根闸）。"""
+    pages_root = book_dir / "pages"
     for relative, payload in images.items():
-        target = (book_dir / "pages" / relative).resolve()
-        if not target.is_relative_to(pages_root):
+        try:
+            target = ensure_within(pages_root, pages_root / relative)
+        except ValueError:
             logger.warning("跳过越界图片路径：%s", relative)
             continue
         atomic_write_bytes(target, payload)
@@ -117,9 +129,29 @@ def rebuild_chunks(book_dir: Path, book_id: str, params: ChunkParams | None = No
     return chunk_set
 
 
-def _fail(session: Session, job_id: str, book_id: str, message: str, pages_done: int = 0) -> ParseOutcome:
-    ParseJobRepository(session).mark_finished(job_id, status=JobStatus.FAILED, error=message)
+def _fail(
+    session: Session,
+    job_id: str,
+    book_id: str,
+    message: str,
+    pages_done: int = 0,
+    progress: dict[str, object] | None = None,
+    *,
+    persist: bool = True,
+) -> ParseOutcome:
+    """终态 failed：先提交已累计页行，再写 progress 与终态。
+
+    先提交的意义：终态写入若失败或被外层回滚，也不能带走已解析页的行（条文 3）。
+    """
+    if persist:
+        session.commit()
+    jobs = ParseJobRepository(session)
+    if progress is not None:
+        jobs.update_progress(job_id, progress)
+    jobs.mark_finished(job_id, status=JobStatus.FAILED, error=message)
     BookRepository(session).update_parse(book_id, parse_status=ParseStatus.FAILED, pages_done=pages_done)
+    if persist:
+        session.commit()
     return ParseOutcome(job_id=job_id, status=JobStatus.FAILED, parsed=pages_done, total=0, error=message)
 
 
@@ -132,6 +164,7 @@ def run_parse_job(
     pages: list[int] | None,
     data_root: Path | str,
     dpi: int = DEFAULT_DPI,
+    persist_per_page: bool = True,
 ) -> ParseOutcome:
     """执行一次解析任务（同步；由 `orchestrator.jobs.JobRunner` 在后台线程调用）。"""
     books = BookRepository(session)
@@ -140,18 +173,34 @@ def run_parse_job(
 
     book = books.get(book_id)
     if book is None:
-        return _fail(session, job_id, book_id, f"书目不存在：{book_id}")
+        return _fail(session, job_id, book_id, f"书目不存在：{book_id}", persist=persist_per_page)
     book_dir = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
     try:
         meta = read_book_meta(book_dir)
     except (OSError, ValueError):
-        return _fail(session, job_id, book_id, f"尚未 ingest 或产物缺失：{book_id}", book.pages_done)
+        return _fail(
+            session,
+            job_id,
+            book_id,
+            f"尚未 ingest 或产物缺失：{book_id}",
+            book.pages_done,
+            persist=persist_per_page,
+        )
 
     if not engine.health():
-        return _fail(session, job_id, book_id, "模型服务不可用：请经 8900 /models/{slot} 启停模型后重试", book.pages_done)
+        return _fail(
+            session,
+            job_id,
+            book_id,
+            MODEL_UNAVAILABLE,
+            book.pages_done,
+            persist=persist_per_page,
+        )
 
     jobs.mark_running(job_id)
     books.update_parse(book_id, parse_status=ParseStatus.PARSING, pages_done=book.pages_done)
+    if persist_per_page:
+        session.commit()
 
     source_pdf = resolve_source_pdf(data_root, book.file_path or meta.source_file)
     geometry = _pdf_geometry(source_pdf)
@@ -160,6 +209,29 @@ def run_parse_job(
     parsed = 0
     failed: list[int] = []
     progress: dict[str, object] = {"parsed": 0, "total": total, "error": ""}
+    last_progress_at = time.monotonic()
+
+    def _commit() -> None:
+        if persist_per_page:
+            session.commit()
+
+    def _flush_progress(*, force: bool = False) -> None:
+        """progress 节流：≥1s 或每 10 页覆写一次；force 用于需要立即可见的失败节点。"""
+        nonlocal last_progress_at
+        if not force:
+            within_interval = time.monotonic() - last_progress_at < PROGRESS_MIN_INTERVAL_SECONDS
+            if within_interval and parsed % PROGRESS_PAGE_INTERVAL:
+                return
+        jobs.update_progress(job_id, progress)
+        last_progress_at = time.monotonic()
+        _commit()
+
+    def _mark_failed(page_no: int, error: str) -> None:
+        failed.append(page_no)
+        page_repo.upsert(book_id, page_no, status="failed", error=error)
+        progress["error"] = f"失败页：{','.join(str(no) for no in failed)}"[:200]
+        _commit()
+        _flush_progress(force=True)
 
     def _handle(page_no: int, result: PageResult) -> None:
         nonlocal parsed
@@ -171,7 +243,7 @@ def run_parse_job(
             image_size=image_size,
             native_text_length=native_text_length,
         )
-        _write_page_artifacts(book_dir, page)
+        _write_page_artifacts(book_dir, page)  # 产物写先于页行提交：有页行必有产物
         page_repo.upsert(
             book_id,
             page_no,
@@ -181,6 +253,8 @@ def run_parse_job(
         )
         parsed += 1
         progress["parsed"] = parsed
+        _commit()
+        _flush_progress()
 
     try:
         if pages is None:
@@ -190,29 +264,32 @@ def run_parse_job(
             for page_no in target_pages:
                 result = by_page.get(page_no)
                 if result is None:
-                    failed.append(page_no)
-                    page_repo.upsert(book_id, page_no, status="failed", error="引擎未返回该页")
+                    _mark_failed(page_no, "引擎未返回该页")
                     continue
                 _handle(page_no, result)
         else:
             for page_no in target_pages:
                 image_path = book_dir / "pages" / f"p{page_no:04d}.png"
                 if not image_path.is_file():
-                    failed.append(page_no)
-                    page_repo.upsert(book_id, page_no, status="failed", error="页图缺失")
+                    _mark_failed(page_no, "页图缺失")
                     continue
                 try:
                     result = _parse_page_with_retry(engine, image_path, page_no)
                 except EngineError as exc:
-                    failed.append(page_no)
-                    page_repo.upsert(book_id, page_no, status="failed", error=str(exc))
+                    _mark_failed(page_no, str(exc))
                     continue
                 _handle(page_no, result)
     except EngineError as exc:
-        return _fail(session, job_id, book_id, str(exc)[:500], page_repo.count_parsed(book_id))
+        return _fail(
+            session,
+            job_id,
+            book_id,
+            str(exc)[:500],
+            page_repo.count_parsed(book_id),
+            progress,
+            persist=persist_per_page,
+        )
 
-    if failed:
-        progress["error"] = f"失败页：{','.join(str(no) for no in failed)}"[:200]
     rebuild_chunks(book_dir, book_id)
     write_manifest(book_dir)
 
@@ -225,6 +302,7 @@ def run_parse_job(
         error=str(progress["error"]),
         progress=progress,
     )
+    _commit()  # 终态与 progress 收尾必写：不依赖调用方提交
     return ParseOutcome(
         job_id=job_id,
         status=JobStatus.COMPLETED if parsed else JobStatus.FAILED,

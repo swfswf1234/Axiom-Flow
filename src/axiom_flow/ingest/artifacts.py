@@ -9,15 +9,45 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 
-from axiom_flow.schemas import BookMeta, ManifestEntry
+from axiom_flow.schemas import SAFE_SEGMENT_PATTERN, BookMeta, ManifestEntry
+
+_SEGMENT_RE = re.compile(SAFE_SEGMENT_PATTERN)
+
+
+def ensure_safe_segment(value: str, kind: str, *, allow_empty: bool = False) -> str:
+    """单一路径段校验：schemas 层 422 之外的纵深防御（禁分隔符、`..`、隐藏段）。"""
+    if allow_empty and not value:
+        return value
+    if not _SEGMENT_RE.match(value):
+        raise ValueError(f"非法 {kind}：{value!r}（须为数据根内的单一路径段）")
+    return value
+
+
+def ensure_within(data_root: Path | str, target: Path | str) -> Path:
+    """校验 `target` 落在数据根之内，返回解析后的绝对路径（条文 7 的纵深防御）。
+
+    schemas 层已用段规则拒绝大部分越界入参；此处是写盘前的最后一道闸：符号链接、
+    `..` 归一化后的结果同样受限。
+    """
+    root = Path(data_root).resolve()
+    resolved = Path(target).resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"路径越出数据根：{resolved}（数据根 {root}）")
+    return resolved
 
 
 def book_dir_for(data_root: Path | str, domain_id: str, course_id: str, book_id: str) -> Path:
-    """产物目录：`<data_root>/parsed/<domain_id>/<course_id>/<book_id>/`。"""
-    return Path(data_root) / "parsed" / domain_id / course_id / book_id
+    """产物目录：`<data_root>/parsed/<domain_id>/<course_id>/<book_id>/`（越界即报错）。"""
+    ensure_safe_segment(domain_id, "domain_id", allow_empty=True)
+    ensure_safe_segment(course_id, "course_id", allow_empty=True)
+    ensure_safe_segment(book_id, "book_id")
+    book_dir = Path(data_root) / "parsed" / domain_id / course_id / book_id
+    ensure_within(data_root, book_dir)
+    return book_dir
 
 
 def sha256_file(path: Path) -> str:

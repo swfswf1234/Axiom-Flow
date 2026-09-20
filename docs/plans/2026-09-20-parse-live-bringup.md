@@ -1,0 +1,758 @@
+# 解析真机打通：设计偏差核对与契约修正（parse-live-bringup）
+
+状态：In Progress
+任务类型：B
+最后更新：2026-09-21
+关联 ADR：[ADR 0002](../adr/0002-pending-design-location.md)（待评审设计先入 plans/）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（引擎由配置选择、不设自动兜底）、[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（MySQL 集成测试隔离边界）
+关联设计：[model-integration.md](../design/model-integration.md)、[parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)
+关联 Tracker：docs/trackers/todo.md（PLAN-003、ARCH-001/003/004/005/016、REQ-001、REQ-075、REQ-080、REQ-081、DEFECT-001/002/003 与本轮新登 DEFECT-004/005/006/007/008）
+归档判定：Retain（契约条文晋升 design/architecture、实现收口后，计划壳归档 `docs/history/plans/2026-09/`）
+
+> **2026-09-20 收尾范围（用户裁决）**：本计划的执行面收窄为「**解析真机打通（小样止）** + **数据库
+> 存储收口** + **QED_DATA_ROOT 收口**」三块，详见 [收尾执行设计](#收尾执行设计真机打通--数据库与数据根收口2026-09-20-裁决后重排)。
+> 产物按版本划分（REQ-080）已由 [PLAN-004](2026-09-20-req080-parse-version-layout.md) 立项并**挂起**
+> 在本部分之后，本计划不做版本布局与 DDL。
+
+## 背景：三方对表暴露的问题比单个 404 更大
+
+af_* 四表与 `QED_DATA_ROOT/parsed/` 布局已于 2026-09-20 真机验证并关闭（ARCH-013/014/015 入
+`completed.md`）。链路上唯一未通的是**解析本身**：真机任务 `queued → running → failed`，根仓库
+REQ-075 实证原因是 `engines/mineru.py` 轮询 `GET /get_task_results/{task_id}`，而 MinerU 3.4.4
+容器没有该路由。
+
+把**设计文档**、**代码**、**真机事实**三方对表后，暴露出三类断裂：
+
+1. **设计过期**：`model-integration.md:85-86` 与 `parsing-pipeline.md:81` 承诺的是同步
+   `/file_parse`；代码实现的是异步提交 + 轮询；真机需要的是第三种异步协议
+   （`/tasks/{task_id}` 状态 + `/tasks/{task_id}/result` 结果），且**响应形状在两个仓库里都没有
+   留档**（根仓库唯一成功证据字段是 `md_content`，来自 `local-model-management.md:219-221`）。
+2. **代码违约**：三条已核实的设计承诺在代码里落空——提交前 503 探活零实现（B1）、进度与页状态
+   不落库（C1）、`AXIOM_OCR_ENGINE` 从不分派（D1，违反 ADR 0004 级承诺）。
+3. **设计缺口**：轮询失败语义、error 双载体截断分工、`af_pages.status=pending` 的表示方式、
+   ingest 幂等对产物与页表的处置、book_id 与 file_path 的数据根边界，设计文档均未成文。
+
+因此本轮**先做设计**：本计划作为待评审设计载体（ADR 0002），承载偏差台账、契约条文草案与
+W0~W8 工作项；实现完成后统一晋升 `docs/design/` 与 `docs/architecture/`。REQ-080（产物按解析
+版本划分）不属本计划，拆为 PLAN-004。
+
+## 用户裁决（2026-09-20）
+
+1. 新建本计划（PLAN-003）取代 PLAN-002 Step 3 的承载位置；PLAN-002 Step 3 表保留但降级为历史索引。
+2. MySQL 双 Session 集成测试**先立 ADR 0005**（隔离边界变更，按 `testing.md:53`），评审通过后再
+   动 `docs/standards/testing.md` 与测试代码。
+3. 探测实验授权，并在单页样本之外**加跑 5 页含公式/表格小样**；预算放宽到 ≤25 请求、≤3 次提交、
+   ≤20 分钟。
+4. REQ-080（`versions/<job_id>/` + 生效版本指针 + af_parse_jobs 新列迁移）拆 PLAN-004 后置，
+   本计划不做任何 DDL 迁移。
+
+## 目标与成功标准
+
+**目标**：消除「设计—代码—真机」三方偏差，在真机上把 PDF 到统一产物（页图 + blocks + markdown +
+chunks + manifest）的解析链路打通，并把过程中确立的契约成文，作为晋升 design/architecture 的
+输入。
+
+**成功标准**：
+
+1. S1 端点契约以**留档证据**为准：MinerU 3.4.4 的提交、状态、结果三个端点与响应关键字段，全部
+   有 `/openapi.json` 或真实响应留档（sha256）支撑，写入本计划 W0 冻结清单。
+2. S2 真机整本解析成功：`linearalgebra-b01` 5 页小样在 MinerU 5002 上 `parsed` 终态，产物 blocks
+   与 markdown 归一化质量可抽查（块类型、坐标、页序正确）。
+3. S3 进度与页状态真落库：任务运行中 `GET /api/v1/parse-jobs/{id}` 可见 `progress.parsed` 递增；
+   整本失败时已解析页的 `af_pages` 行保留；kill 服务后重启按 `af_pages` 续跑未完成页。
+4. S4 设计违约清零：提交期 503、引擎显式分派（未配置槽位即报错、绝不回落）、book_id 与 file_path
+   数据根边界、ingest 重做后状态回置，四者有测试覆盖。
+5. S5 隔离不破：默认门禁不连公网、不连运行库；MySQL 侧只有 `QED_TEST_MYSQL=1` 显式 opt-in 才跑，
+   且硬校验目标 schema 为 `qed_test`。
+6. S6 文档自洽：F1~F6 三处状态口径矛盾、ADR 0004 正文 8002 残留、死引用与空目录清理完成；
+   `tests/contract/` 文档守护全绿。
+7. S7 门禁全绿且台账一致：`pytest tests -q`（基线 245 passed 之上）+ `ruff check src tests scripts`，
+   PLAN-003 行状态与本文件 `状态：` 字段逐字一致。
+
+## 范围与非目标
+
+**范围内**：`engines/mineru.py`（三段化与错误语义）、`engines/factory.py`（新增）、
+`orchestrator/pipeline.py` 与 `jobs.py`（页级持久化与进度落库）、`api/main.py`（提交期探活、引擎
+分派接线、ingest/purge 状态回置）、`db/repositories.py`（`reset_for_book`）、`schemas.py`（入参
+校验收紧）、`ingest/importer.py` 与 `artifacts.py`（数据根边界）、`config.py` 与
+`ingest/importer.py` 数据根推导收口、`tests/`（单元/契约/集成/冒烟四层补齐）、
+`scripts/tmp/probe_mineru_api.py`、`docs/plans`、`docs/adr`、`docs/standards/testing.md`、
+`docs/trackers/`，以及偏差台账涉及的 `docs/design/` 与 `docs/architecture/` 条文修订（晋升动作在
+W7，`architecture/` 两文档按大修改路径由本计划承载）。
+
+**非目标**：不修改 QED-Engine 根仓库与 QED-Tracker（只读）；不实现 paddleocr-vl / qwen-vl 引擎
+本体（只补分派与显式报错）；不引入任何自动兜底或静默降级；不做 REQ-080 版本布局与
+`af_parse_jobs` DDL（PLAN-004）；不做 Rudin 全量验收（ARCH-009）；不做 `release` 合并回 `main`
+与打标签；不新增远端 CI。
+
+## 前置条件
+
+1. MinerU 3.4.4 容器可由根仓库 8900 启停，`http://127.0.0.1:5002/health` 可达（本仓库只连接，
+   不接管启停）。
+2. `qed` 库中 af_* 四表已建（`alembic_version = 20260917_0001`，2026-09-20 真机确认）。
+3. ADR 0005 经用户评审通过，方可编写任何连真实 MySQL 的测试（W3 前置）。
+4. `QED_DATA_ROOT` 下存在 `linearalgebra-b01` 已 ingest 书籍，用作失败页回归对照（其第 3 页为
+   真机已知的 failed 页）。
+
+## 偏差台账（核对基准）
+
+判定口径：**代码违约** = 设计已成文、代码未遵守；**设计过期** = 设计描述的接口/事实已不成立；
+**设计缺口** = 行为需要规则但无处成文；**代码异味** = 功能正确但存在重复事实源或死代码。
+行号为本轮逐一验证过的实际位置（2026-09-20，提交 `a5d2e96` 之后）。
+
+### A 组：引擎调用面（DEFECT-002）
+
+| # | 设计说什么 | 代码做什么 | 判定 | 处置 |
+| --- | --- | --- | --- | --- |
+| A1 | `model-integration.md:85-86`「`POST /file_parse`（multipart，**同步**）」；`parsing-pipeline.md:81` 同述 | `mineru.py:142-171` 提交后取顶层 `task_id` 并轮询（`:160` `data.state`） | 设计过期 + 代码需重定向 | W0 探测定契约 → W1 三段化 → 晋升 MI |
+| A2 | 轮询失败语义零成文（`parsing-pipeline.md:174` 只定义单页重试 1 次） | `mineru.py:161-164` 一次 HTTP 异常即 `EngineError`，经 `pipeline.py:211-212` 整本 failed | 设计缺口 | 成文「瞬时失败阈值 3、deadline 前不中断」 |
+| A3 | `pipeline.py:6` docstring「整本失败 → 已解析页保留（可重跑）」 | `mineru.py:165` `result.json()` 无 try，`JSONDecodeError` 穿透 `except EngineError`，`jobs.py:62-66` 回滚吞掉全部页行 | **代码违约** | 非 JSON 归一 `EngineError` + 页级 commit 双保险 |
+| A4 | 响应形状无条文 | `mineru.py:39-100` 读 `data.state`、`data.err_msg`、`content_list`、`markdown`、`middle_json.pdf_info`、`images` | 设计缺口（最高优先） | W0 以 `/openapi.json` + 留档哈希为准；未探明项显式登记 |
+| A5 | 设计未提任何请求表单字段（`model-integration.md:85-86` 只写「multipart」） | openapi 实测：`return_content_list`、`return_middle_json`、`return_images` **默认 false**，`return_md` 默认 true；现有代码不发送这些字段 | **新发现违约风险**（W0 探测出，台账外新增） | 适配器显式发送产物形态开关；成文「只设形态开关、不设解析调参字段」边界（条文 1b） |
+| A6 | 设计未提连接形态；PLAN-002 裁决已删除 `QED_PROXY` 配置键，语义上本地模型流量不经代理 | `mineru.py:124` `httpx.Client(timeout=...)` 默认 `trust_env=True` → 读 Windows 注册表代理（实测 `getproxies() = http://127.0.0.1:7890`，且 `proxy_bypass("http://127.0.0.1:5002") = 0` 不豁免）→ 本地 5002 流量被系统代理劫持，代理在线时 502/0 字节/约 2s，直连时 200 | **代码缺陷（环境陷阱）**，W0 探测中实证 | 引擎客户端以 `trust_env=False` 构造（直连回环），W1 内实现并加单测；条文 11 |
+
+### B 组：健康检查与错误边界（DEFECT-003 部分）
+
+| # | 设计说什么 | 代码做什么 | 判定 | 处置 |
+| --- | --- | --- | --- | --- |
+| B1 | `parsing-pipeline.md:176`「提交前健康检查返回 503」；`api.md:192` 错误表列 503；`api.md:211-212` 只读端点不依赖模型服务 | `api/main.py` 全文无 503；`create_parse_job`（`:381-411`）不探活；`health()` 唯一生产调用在 `pipeline.py:150`；`engines/base.py:14` 注释虚称已有映射 | **代码违约** | W5 提交期探活 503；注释与实现对齐 |
+| B2 | `parsing-pipeline.md:176` 提交期 503 与 `parsing-management.md:93` 执行期 failed 的边界未划分 | 两段都无实现，语义无法验收 | 设计缺口 | 成文两段并存：受理前 503 且不落 job 行，受理后 job `failed` |
+
+### C 组：持久化与进度（DEFECT-001）
+
+| # | 设计说什么 | 代码做什么 | 判定 | 处置 |
+| --- | --- | --- | --- | --- |
+| C1 | `database-design.md:124/137-139` 进度自持与 `progress` 结构；`parsing-pipeline.md:177/190` 断点续跑与 kill 恢复验收 | `db/repositories.py` 只 flush（11 处），`update_progress`（`:196`）**生产零调用**，唯一成功路径 commit 在 `orchestrator/jobs.py:60` | **代码违约** | W2 页级 commit + 节流 `update_progress`；W3 真实 DB 测试 |
+| C2 | `api.md:180` `progress.error` 截 200 与 `database-design.md:139` `error` 截 500 的分工未定义 | `pipeline.py:212` 用 `[:500]`、`:215` 用 `[:200]`、`repositories.py:216` 用 `[:500]` | 设计缺口 | 成文：`job.error` 为终态摘要 ≤500，`progress.error` 为进行中失败页摘要 ≤200 |
+| C3 | `database-design.md:154` `af_pages.status` 三值 pending/parsed/failed | 代码只写 parsed/failed，pending 行从不预建 | 设计缺口（小） | 成文「无行即 pending；续跑＝无行或 failed 页重跑」 |
+
+### D 组：引擎分派（DEFECT-003，违反 ADR 0004 级承诺）
+
+| # | 设计说什么 | 代码做什么 | 判定 | 处置 |
+| --- | --- | --- | --- | --- |
+| D1 | `adr/0004:31-32`「引擎由配置选择、换模型只改配置」；`api.md:178-179` `engine?` 可覆盖；`parsing-pipeline.md:175` 与 `model-integration.md:87-88` 不设自动兜底 | `settings.ocr_engine` 唯一读取点在 `main.py:283`（只写 book.json 元数据）；引擎硬编码在 `main.py:108-110`；`payload.engine`（`schemas.py:362` 裸 str）只入库不回读 | **代码违约（违 ADR 级承诺）** | W4 新增 `engines/factory.py` 显式分派 + 未实现/未知即报错；`schemas.py:362` 收紧为 Literal |
+| D2 | `model-integration.md:48` 说 `AXIOM_PADDLEOCR_URL` 已移除，`:94` 又说启用时新增该键 | 文档自相矛盾，无代码影响 | 设计过期（自相矛盾） | W7 统一措辞 |
+
+### E 组：数据边界与幂等（DEFECT-003 部分、REQ-080 邻接）
+
+| # | 设计说什么 | 代码做什么 | 判定 | 处置 |
+| --- | --- | --- | --- | --- |
+| E1 | `parsing-management.md:98`「ingest 幂等」；`parsing-pipeline.md:103`「原子替换不留半成品」 | `ingest/importer.py:114-116` 直接 `rmtree(book_dir)`（含 blocks/md/chunks），`main.py:288` 不回置 `parse_status`、`pages_done`，不清 `af_pages` | 设计缺口 | W6 回置 `parse_status=pending, pages_done=0` + 新增 `PageRepository.reset_for_book` |
+| E2 | 未成文 | `main.py:234-238` `?purge=true` 删目录与 af_books 行，不删 af_pages | 设计缺口 | W6 成文并实现（af_parse_jobs 历史行保留为审计） |
+| E3 | — | `config.py:27-29` 与 `importer.py:32-37` 两套数据根推导**当前同值**（实测均为仓库根 `data/`），但 `default_data_dir()` 不走 config 的「env 优先 → 自身 `.env` → 父 `.env`」次序，且只被 `tests/unit/test_ingest.py` 引用 | 代码异味（重复事实源） | W7 删 `default_data_dir`，测试改测 `load_settings` |
+| E4 | `parsing-pipeline.md:87-101` 隐含 book_id 是安全路径段，无成文边界 | `book_id` 任意 str 进入 `book_dir_for`（`main.py:141/234/387`）与 glob（`:144`）且无 `is_relative_to`；`BookSyncItem`（`schemas.py:279-291`）全裸 str；`resolve_source_pdf`（`importer.py:50-53`）绝对路径原样使用、不限数据根；对照 `pipeline.py:82-87` 图片落盘**有**防护 | 设计缺口 + 防护不对称 | W6 schemas pattern（422）+ `artifacts.ensure_within()` 纵深防御 |
+
+### F 组：文档与残留自相矛盾
+
+| # | 现象 | 判定 | 处置 |
+| --- | --- | --- | --- |
+| F1 | `parsing-pipeline.md:148`「覆盖后重算」与 `api.md:172`「实时重算、不落盘」表述不一（实现按后者，合规） | 设计措辞漂移 | W7 统一为「端点实时重算、`chunks.json` 由解析落盘」 |
+| F2 | 实现状态口径三处矛盾：`parsing-pipeline.md:5/7`、`parsing-management.md:5` 称 Current，`api.md:100-101` 称「其余端点为规划契约」，`database-design.md:5` 与 `:33-36/193` 自相矛盾 | 设计过期 | W7 统一为「af_* 四表与读取端点已真机验证，解析执行面为部分验证」 |
+| F3 | `adr/0004:26` 正文仍写 MinerU 8002（`:29-30` 已有勘误） | 设计过期 | W7 正文内联修正并保留勘误记录 |
+| F4 | 页文件命名占位在设计里出现两种写法 | 设计过期 | W7 以 `artifacts.py` 实际格式为唯一事实源 |
+| F5 | `src/axiom_flow/__init__.py:7` 仍列已删除的 `fallback/`；`tests/conftest.py:16` 引用不存在的 `axiom_flow.infrastructure.config`；`tests/integration`、`tests/smoke`、`tests/support` 等 5 个目录为空 | 残留 | W7 清理；W3/W8 顺带把 `tests/support`、`tests/integration`、`tests/smoke` 用真实测试填充 |
+| F6 | `scripts/tmp/smoke-api.sh` 使用旧轮询路径 | 残留 | 随 W1 同步 |
+
+## 契约条文草案（晋升输入）
+
+以下条文为本轮新确立或修正的契约，先在本计划成文（ADR 0002），实现与真机验证通过后由 W7 晋升到
+对应设计/架构文档。
+
+1. **引擎调用三段化（→ `design/model-integration.md`）**：适配器对内固定为
+   `_submit` → `_wait_done` → `_fetch_result` 三段；端点与载荷按 W0 端点终版表成文（MinerU 3.4.4：
+   `POST /tasks` 202 取顶层 `task_id`；`GET /tasks/{id}` 顶层 `status`；`GET /tasks/{id}/result`
+   202＝未就绪继续轮询、200＝取 `results[<file_stem>]`）。单页重试次数（1 次）与轮询瞬时失败容忍
+   （连续 3 次）分列，互不吞并；轮询必须受 `deadline`（`AXIOM_OCR_TIMEOUT`）约束。
+1b. **只设产物形态开关，不设解析调参（→ `design/model-integration.md`）**：请求必须显式发送
+   `return_content_list=true`、`return_middle_json=true`（openapi 默认 false，否则 blocks 与页尺寸
+   恒缺失），并按需 `return_md=true`；**不发送** `backend`、`effort`、`parse_method`、`lang_list`、
+   `formula_enable`、`table_enable`、`image_analysis`、`server_url`，让容器环境配置生效（模型调参
+   归 8900，ADR 0004）。不请求 `return_images`（页图由本仓库 ingest 自产）。
+2. **响应解析防御式双兼容（→ `design/model-integration.md`）**：结果先取
+   `results[<file_stem>]`（单文件提交时按唯一键回落），正文字段接受 `md_content` 与 `markdown`
+   任一来源，块结构取 `content_list`、页尺寸取 `middle_json.pdf_info[*].page_size`，且三者均须兼容
+   「JSON 字符串」与「已解析对象」两种载体；状态取值兼容顶层 `status` 与旧式 `data.state`；
+   非 JSON 或非 2xx 一律归一为 `EngineError`，`JSONDecodeError` 等内部异常不得穿透到编排层。
+3. **失败隔离与持久化不变式（→ `design/parsing-pipeline.md`）**：单页失败只标该页
+   `af_pages.status=failed`；整本失败时此前已成功页的行与产物必须保留（**产物写先于页行提交**，
+   保证「有页行必有产物」）；`progress` 按「距上次写入 ≥1s 或每 10 页」节流，任务终态必写一次。
+4. **错误双载体分工（→ `architecture/api.md` 与 `architecture/database-design.md`）**：
+   `af_parse_jobs.error` 为终态摘要（≤500 字符），`af_parse_jobs.progress.error` 为进行中失败页
+   摘要（≤200 字符）；两者可同时存在，终态后 `error` 为准。
+5. **健康检查两段语义（→ `architecture/api.md`）**：`POST /parse-jobs` 在参数校验后、落库前探活，
+   模型服务不可用返回 **503 且不创建 job 行**；任务受理后的模型服务故障记为 job `failed`。只读
+   产物端点（books/pages/manifest/chunks/get）不依赖模型服务。
+6. **引擎分派（→ `design/model-integration.md`）**：解析实际引擎 = 请求体 `engine`（可选）优先，
+   缺省回落 `AXIOM_OCR_ENGINE`；未在 `engines/factory.py` 注册的引擎名返回 400、非法字面值由
+   schema 返回 422；**任何情况下不得回落到其他引擎**（不设自动兜底）。`af_parse_jobs.engine` 存
+   解析后实际使用的引擎名。
+7. **数据根边界（→ `design/parsing-pipeline.md`）**：`domain_id`、`course_id`、`book_id` 必须匹配
+   安全路径段 pattern（拒绝 `/`、`..`、前导点、空串），违规返回 422；源 PDF 与页图落盘路径必须
+   位于 `QED_DATA_ROOT` 之内（`resolve_source_pdf` 对绝对路径同样受限）；落盘前经
+   `artifacts.ensure_within()` 做纵深防御校验。
+8. **ingest 幂等与删除语义（→ `design/parsing-management.md`）**：重复 ingest 原子替换产物目录后
+   必须回置 `parse_status=pending`、`pages_done=0` 并删除该书 `af_pages` 行；`af_parse_jobs` 历史
+   行保留为审计。`DELETE /books/{id}?purge=true` 删产物目录、`af_pages` 与 `af_books` 行，保留
+   `af_parse_jobs`。
+9. **`af_pages.status` 表示法（→ `architecture/database-design.md`）**：设计三值中 `pending` 以
+   「无行」表示，不预建占位行；续跑集合 = 无行页 ∪ `failed` 页。
+10. **测试隔离例外（→ `standards/testing.md`，经 ADR 0005）**：集成层允许在 `QED_TEST_MYSQL=1`
+    显式 opt-in 下使用同实例独立 schema `qed_test`，硬校验 `db_name`，缺 opt-in 时 skip 而非 fail。
+11. **本地模型服务直连，不经系统代理（→ `design/model-integration.md`）**：引擎 HTTP 客户端必须以
+    `trust_env=False` 构造。W0 实证：Windows 注册表代理（`127.0.0.1:7890`）对
+    `http://127.0.0.1:5002` **不做豁免**（`proxy_bypass` 返回 0），默认 `trust_env=True` 会把回环
+    流量交给代理，代理规则变化时返回 502/0 字节，表现为「端点不存在」的假象。此边界与 PLAN-002
+    删除 `QED_PROXY` 配置键的裁决一致：本地模型流量恒为直连。
+
+## 工作项
+
+### W0 C 类冻结探测（先冻结，后动手）
+
+外部模型服务实验：假设、样本、内容哈希、预算、采纳门槛先冻结（AGENTS.md「事实来源与决策」与
+`docs/standards/doc-governance.md` 要求）。
+
+| 要素 | 冻结内容 |
+| --- | --- |
+| 假设 H1 | 提交 `POST /file_parse`（multipart 字段名 `files`）响应**顶层**含 `task_id` |
+| 假设 H2 | 状态端点为 `GET /tasks/{task_id}`，进度字段为 `data.state`，字面值含排队/运行/完成/失败四态 |
+| 假设 H3 | 结果端点为 `GET /tasks/{task_id}/result` |
+| 假设 H4 | 结果体含 `content_list`，且正文字段存在于 `markdown` / `md_content` 至少其一 |
+| 样本 S-a | 合成 1 页 PNG 内容 PDF（走逐页路径），生成规则固定、SHA-256 留档 |
+| 样本 S-b | 合成 5 页含公式/表格/页眉 PDF（走全本路径），生成规则固定、SHA-256 留档 |
+| 样本 S-c | `linearalgebra-b01` 第 3 页（真机已知 failed）作为失败页回归对照，不重新生成 |
+| 预算 | ≤25 个 HTTP 请求、≤3 次任务提交、≤20 分钟挂钟 |
+| 门槛 M1 | `GET /openapi.json` 返回 200，路由清单留档为第一证据源 |
+| 门槛 M2 | 观测到 ≥2 个不同状态字面值（证明状态机可映射，而非只见过一态） |
+| 门槛 M3 | `/tasks/{id}/result` 响应全部顶层字段与关键嵌套字段留档 |
+| 门槛 M4 | 至少一个正文字段可直接喂进 `mineru.py:39-100` 现有解析面（不改解析器即可出块） |
+
+产出：`scripts/tmp/probe_mineru_api.py` + `data/probes/mineru-3.4.4-<日期>/`（逐份响应原文 +
+SHA-256 清单；`data/` 已在 `.gitignore` 内，不新建 docs 子目录）。
+
+失败处置：任一门槛不满足 → 在本计划登记「未探明」条目，W1 只改端点路径与错误语义，结果解析层
+保持防御式双兼容（条文 2），不猜测字段形状。
+
+#### W0 探测结论（2026-09-20 已冻结，留档 `data/probes/mineru-3.4.4-20260920/`）
+
+门槛判定：**M1/M2/M3/M4 全部 PASS**（`summary.md`，逐次往返含 sha256）。实耗 26 请求（其中 12 次
+为系统代理 502 空转，见 A6）、2 次提交、约 18 分钟——**请求数超出冻结的 ≤25**，超出的 1 次用于
+补测终态字面值 `completed`，如实登记于此。
+
+冻结假设核对（不推翻冻结清单，只登记结果）：**H1 部分成立**（顶层 `task_id` 成立，但提交端点是
+`/tasks` 且返回 **202**，不是 `/file_parse` 200）；**H2 不成立**（状态端点 `/tasks/{id}` 存在，但
+状态字段是顶层 `status`，不是 `data.state`）；**H3 成立**（`/tasks/{id}/result`，但未就绪时返回 202
+而非 404）；**H4 部分成立**（`content_list` 存在但为 JSON 字符串；正文键是 `md_content`，
+`markdown` 不存在；外层多一层 `results[<file_stem>]`）。
+
+端点终版表（服务版本 `3.4.4`，`protocol_version 2`，路由清单仅 5 条）：
+
+| 段 | 端点 | 请求 | 响应 |
+| --- | --- | --- | --- |
+| 提交 | `POST /tasks` | multipart，字段名 `files`（数组），可带表单开关 | **202** + `{task_id, status:"pending", backend, file_names, created_at, started_at, completed_at, error, status_url, result_url, queued_ahead, message}` |
+| 状态 | `GET /tasks/{task_id}` | 路径参数 | **200** + 同上载荷，`status` 为状态字段 |
+| 结果（未就绪） | `GET /tasks/{task_id}/result` | 路径参数 | **202** + 同上载荷 + `message:"Task result is not ready yet"`（**不是 404，也不是错误**） |
+| 结果（就绪） | `GET /tasks/{task_id}/result` | 路径参数 | **200** + `{backend, version, results: {"<file_stem>": {md_content, content_list, middle_json}}}` |
+| 探活 | `GET /health` | — | 200 + `{status,version,protocol_version,queued_tasks,processing_tasks,completed_tasks,failed_tasks,max_concurrent_requests,...}` |
+| legacy | `GET /get_task_results/{task_id}` | — | **404** `{"detail":"Not Found"}` ← DEFECT-002 根因，已留档 |
+
+状态机字面值（实测）：`pending → processing → completed`；**`failed` 未观测到**（记入未探明）。
+`error` 是顶层字段（终态时为文本），不是状态值。
+
+响应信封与现有代码的三处不符（A1/A4 的具体化）：
+
+1. 载荷**顶层即状态对象**，现有代码读 `data.state` / `data.err_msg` → 恒为空；
+2. 结果按 **`results[<file_stem>]`** 分组（文件名去扩展名），现有代码无此层；
+3. 正文字段名为 **`md_content`**（`markdown` 不存在），现有代码读 `data.get("markdown")` → 恒空；
+   `content_list` 与 `middle_json` 为 **JSON 字符串**（现有 `_load_json_field` 已兼容，保留）。
+
+表单字段实测（openapi `Body_submit_parse_task_tasks_post`）：`return_md` 默认 **true**，
+`return_content_list`、`return_middle_json`、`return_images`、`return_model_output`、
+`response_format_zip`、`return_original_file`、`client_side_output_generation` 默认 **false**；
+解析调参字段为 `backend`（默认 `hybrid-engine`）、`effort`、`parse_method`、`lang_list`、
+`formula_enable`、`table_enable`、`image_analysis`、`server_url`；分页字段 `start_page_id`（默认 0）
+与 `end_page_id`（默认 99999）存在（逐页路径的潜在优化，本轮不改语义）。
+
+`content_list` 实测条目：`{type, text, text_level, bbox:[x0,y0,x1,y1], page_idx}`，`page_idx` 0 基、
+5 页样本得 `page_idx ∈ {0..4}`；块类型观测到 `text`、`header`；`middle_json.pdf_info[*].page_size`
+= `[595, 842]`（与 `mineru.py:50-59` 的读取路径一致，可复用）。
+
+未探明（显式登记，W1 按防御式双兼容处理，W8 真机冒烟时补证）：
+
+- `failed` 终态字面值与 `error` 文本形状（本轮无失败样本可造）。
+- 真实教材页的 `interline_equation` / `table` 块（合成样本是纯文本 PDF，公式未被识别为公式块）。
+- 486 页整本的 result 体积与 `results` 分组行为（合成样本仅 1/5 页；W8 用 `linearalgebra-b01`
+  的 5 页区间补证，若形状再变则**追加**冻结清单，不推翻本表）。
+- `return_images=true` 时的 `images` 载荷形态（本仓库页图由自有 ingest 产生，**不请求该开关**）。
+
+结论对 A1 的裁定：设计文档的「同步 `/file_parse`」在本版本**不成立**（`/file_parse` 仍在路由表内，
+但异步 `/tasks` 才是 202 + 轮询语义）；`/file_parse` 是否等价同步**不在本轮采用**，本仓库统一走
+`/tasks` 三段。
+
+
+### W1 引擎适配修正（DEFECT-002）
+
+| # | 工作项 | 产出 |
+| --- | --- | --- |
+| 1.1 | `mineru.py` 三段化：`_submit`（`POST /tasks`，接受 202）/ `_wait_done`（`GET /tasks/{id}`，终态 `completed`）/ `_fetch_result`（`GET /tasks/{id}/result`，**202＝未就绪继续等**、200＝取 `results[<file_stem>]`） | 消除 `get_task_results` 死路径与 `data.state` 误读 |
+| 1.2 | 请求表单只送产物形态开关 `return_content_list` / `return_middle_json` / `return_md`，不送解析调参字段 | 修 A5（默认 false 导致 blocks 恒空） |
+| 1.3 | 响应解析按条文 2 双兼容重写：`results` 分组、`md_content`、JSON 字符串/对象两态、状态顶层 `status` | 修 A1/A4 的三处信封不符 |
+| 1.4 | 轮询瞬时失败容忍：连续 3 次 HTTP 层失败才判失败，deadline 前继续轮询 | 单次抖动不再整本 failed |
+| 1.5 | 结果侧异常归一：非 2xx 与非 JSON → `EngineError`（附可诊断摘要，含 `error` 字段文本） | 修 A3 的一半（穿透源） |
+| 1.6 | `httpx.Client(trust_env=False)` 直连回环（条文 11） | 修 A6（系统代理劫持） |
+| 1.7 | `scripts/tmp/smoke-api.sh` 端点同步（F6） | 脚本与新协议一致 |
+
+TDD 红灯：提交返回 202 且载荷顶层 `status:"pending"` 时能取到 `task_id`；`/result` 先 202 后 200 时
+不失败且解析出页；轮询中途 500 一次后转 `completed` 不得失败、连续 3 次 500 必须失败；`completed`
+后 200 响应非 JSON 必须得 `EngineError` 而非 `JSONDecodeError`；`md_content` 与 `content_list`
+（字符串态）能产出页级 blocks；构造客户端时断言 `trust_env=False`。
+
+#### W1 完成登记（2026-09-20）
+
+1.1~1.7 全部落地（`engines/mineru.py` 重写、`tests/unit/test_engines.py` 按新契约重写 23 例、
+`scripts/tmp/smoke-api.sh` 端点同步）。先红后绿：新契约测试在旧实现上 17 failed，改写后全绿。
+
+实现要点与条文的对应：
+
+| 条文 | 落点 |
+| --- | --- |
+| 1 三段化 | `_submit`（`POST /tasks`，接受 200/202）/ `_wait_done`（`GET /tasks/{id}`）/ `_fetch_result`（`GET /tasks/{id}/result`，202 继续等）；三段共享同一 `deadline`（提交后起算，`AXIOM_OCR_TIMEOUT`） |
+| 1 轮询与单页重试分列 | 轮询瞬时失败阈值 `_TRANSIENT_FAILURE_LIMIT = 3`（传输层异常与非 2xx 合并计数，成功一次即清零）；单页重试 1 次仍在 `pipeline.py`，未改动 |
+| 1b 只设形态开关 | `_OUTPUT_FLAGS = {return_md, return_content_list, return_middle_json}`；测试断言 multipart 内不含 `backend`/`effort`/`parse_method`/`lang_list`/`formula_enable`/`table_enable` |
+| 2 双兼容 | `_status_of`（顶层 `status` ∪ `data.state`）、`_result_payload`（`results[<stem>]`，单文件时按唯一键回落）、`_markdown_of`（`md_content` ∪ `markdown`）、`_load_json_field` 保留（字符串/对象两态）；`_json_object` 把非 JSON 与非对象响应归一为 `EngineError`，`JSONDecodeError` 不再穿透（A3） |
+| 11 直连 | `httpx.Client(timeout=…, trust_env=False)`，并有 `TestDirectConnection` 守护 |
+
+未做（按台账归属后续工作项）：`base.py:14` 的 503 映射注释（W5）、`/file_parse` 同步语义文档修订
+（W7）。`failed` 终态与整本 result 形状仍属
+W0 未探明项，本次仅按防御式双兼容覆盖，真机证据随 W8 补。
+
+新增风险登记（W0 未覆盖，W8 必测）：W0 的 S-a 样本是**一页 PDF**，而 `parse_page` 真机提交的是
+**PNG 页图**（`filename=p0001.png`），该形态未被探测过。若容器拒收图片输入，症状是逐页重解析路径
+失败而全本路径正常 → W8 冒烟必须先跑单页再跑 5 页，并把该形状追加进冻结清单（不推翻既有结论）。
+
+### W2 页级持久化与进度落库（DEFECT-001）
+
+| # | 工作项 | 产出 |
+| --- | --- | --- |
+| 2.1 | `pipeline.py` 每页成功/失败后 `session.commit()`，产物写先于提交 | 「有页行必有产物」不变式 |
+| 2.2 | `update_progress` 按 ≥1s 或每 10 页节流调用，收尾必写一次 | 实时进度查询成立 |
+| 2.3 | `_fail` 路径先提交已累计页与 progress，再写终态 | 整本失败保留已解析页 |
+| 2.4 | `persist_per_page` 参数保留（默认 True） | 性能异常时可退化的显式开关，不是静默兜底 |
+
+TDD 红灯：引擎抛非 `EngineError` 异常时，前序页 `af_pages` 行必须已存活（在**文件 SQLite** 上以
+独立读连接断言；内存 SQLite 单连接会共享未提交数据，守护不了本不变式）。
+
+#### W2 完成登记（2026-09-20）
+
+2.1~2.4 全部落地（`orchestrator/pipeline.py`）。红灯计划的一处修正：原写「内存 SQLite」，实测
+`sqlite+pysqlite:///:memory:` 每连接是独立库、共享连接时又看得见未提交行，两个方向都无法复现
+MySQL 的连接隔离，故改用**文件库 + 独立读 `Session`**（`tests/unit/test_orchestrator.py::_file_env`）。
+
+| # | 实现 | 守护测试 |
+| --- | --- | --- |
+| 2.1 | `_handle`：`_write_page_artifacts` → `page_repo.upsert` → `_commit()`；`_mark_failed` 同构 | `test_pages_visible_to_other_connection_during_run`（引擎在第 n 页被调用前，读连接已见 n-1 页 `parsed`） |
+| 2.2 | `_flush_progress(force)`：`≥1s` 或 `parsed % 10 == 0` 才覆写 `progress`；`mark_finished` 后 `_commit()` 保证终态收尾必写 | `test_progress_written_every_ten_pages`（12 页快跑循环内恰好 1 次写入，`parsed==10`；终态 `progress.parsed==12`） |
+| 2.3 | `_fail` 前置 `session.commit()`（已解析页不被终态写入牵连），并写入进行中 `progress` | `test_non_engine_error_keeps_earlier_pages`（A3：第 2 页抛 `ValueError` → 第 1 页行与产物仍存活）、`test_whole_book_failure_keeps_parsed_pages` |
+| 2.4 | `run_parse_job(..., persist_per_page: bool = True)`，False 时全量退回调用方提交 | `test_persist_per_page_off_defers_to_caller` |
+
+失败页摘要（条文 4 的 `progress.error`）改为**随失败即时更新并 force 写入**，取代原先只在收尾拼装；
+`≤200` 截断不变。门禁：`261 passed`、`ruff` 全绿。真机侧证据（运行中 `GET /parse-jobs/{id}` 递增、
+kill 续跑）仍待 W8；DEFECT-001 按计划于 W3 关闭。
+
+### W3 真实 MySQL 集成测试（依赖 ADR 0005 评审通过）
+
+| # | 工作项 | 产出 |
+| --- | --- | --- |
+| 3.1 | `docs/adr/0005-mysql-integration-test-isolation.md` 立项与登记 | 隔离边界变更的合法依据 |
+| 3.2 | `tests/support/mysql.py`：`prepare_mysql_settings` + `isolated_mysql_store`（自建自删 `qed_test`、硬校验 `db_name`） | 兑现 `tests/conftest.py:56-70` 既有夹具引用 |
+| 3.3 | `tests/integration/test_parse_persistence.py`：双 `sessionmaker` 断言页级可见与 `progress.parsed` 单调增 | 补上「共享 Session 掩盖未提交」的测试盲区 |
+| 3.4 | `docs/standards/testing.md` 两处联动（分层表 integration 行、编写约定例外句） | 标准与实现一致 |
+
+验证：默认门禁下该用例 skip 且整体绿；`QED_TEST_MYSQL=1` 下真跑绿。
+
+### W4 引擎显式分派（DEFECT-003，修 D1）
+
+| # | 工作项 | 产出 |
+| --- | --- | --- |
+| 4.1 | 新增 `engines/factory.py`：`ENGINE_NAMES` 与 `model-integration.md:40` 三值同源，`build_engine(name, settings)` | 分派入口唯一 |
+| 4.2 | `main.py` 去掉硬编码 `MinerUEngine`；`payload.engine` 优先、缺省回落 `settings.ocr_engine` | 配置真正生效 |
+| 4.3 | 未实现引擎（paddleocr-vl、qwen-vl）→ 提交期 400；非法字面 → 422（`schemas.py:362` 收 `Literal`） | 显式报错，**绝不回落 mineru** |
+| 4.4 | `JobRunner.submit(..., engine=...)` 显式传参；`af_parse_jobs.engine` 存解析后实际引擎名 | 任务行与真实执行一致 |
+
+TDD 红灯：`AXIOM_OCR_ENGINE=paddleocr-vl` 时提交必须 400 而非静默用 MinerU；未设
+`AXIOM_OCR_ENGINE` 时默认 mineru 仍可用。
+
+### W5 提交期探活 503（修 B1、B2）
+
+| # | 工作项 | 产出 |
+| --- | --- | --- |
+| 5.1 | `POST /parse-jobs` 在 `main.py:385-389` 校验之后、`:392` 落库之前调用 `engine.health()` | 不可用时 503 |
+| 5.2 | 503 文案复用 `pipeline.py:151` 的模型服务不可用措辞；不创建 job 行 | 两段语义分离成文（条文 5） |
+| 5.3 | `engines/base.py:14` 注释与实现对齐 | 消除虚称 |
+| 5.4 | 契约用例：假引擎 `health() → False` 时 `POST /parse-jobs` 得 503，且全部只读端点仍 200 | 守护「只读不依赖模型」 |
+
+### W6 数据边界与 ingest/purge 幂等（修 E1、E2、E4）
+
+| # | 工作项 | 产出 |
+| --- | --- | --- |
+| 6.1 | `BookSyncItem` 的 `book_id`/`domain_id`/`course_id` 加安全段 pattern，`file_path` 加 `max_length=512` 且禁前导 `/` | 越界入参 422 |
+| 6.2 | `artifacts.ensure_within(root, target)` 并在 `book_dir_for`、`resolve_source_pdf`、产物读写路径统一使用（绝对路径亦限数据根） | 纵深防御（条文 7） |
+| 6.3 | 重复 ingest 后回置 `parse_status=pending, pages_done=0`；新增 `PageRepository.reset_for_book` | 幂等语义成立（条文 8） |
+| 6.4 | `?purge=true` 追加删 `af_pages`，保留 `af_parse_jobs` | 删除语义成文 |
+
+契约用例：ingest → 解析 → 再 ingest 后，`parse_status=pending`、`pages_done=0`、旧 job 行仍在、
+`GET /books/{id}/pages/3` 返回 404。
+
+#### W4~W6 完成登记（2026-09-20）
+
+先红后绿：新增用例在旧实现上 `25 failed / 24 passed`（`test_api_v1_contract.py` +
+`test_ingest.py`，含 `JobRunner.submit()` 缺 `engine` 实参的 `TypeError`），实现落地后全绿；
+门禁 285 passed + ruff 全绿。
+
+| # | 实现 | 守护测试 |
+| --- | --- | --- |
+| 4.1 | 新增 `engines/factory.py`：`ENGINE_NAMES`（三槽位，与 `model-integration.md` 同源）/`IMPLEMENTED_ENGINES`、`resolve_engine_name`、`build_engine(name, settings)`、`EngineSelectionError` | `tests/unit/test_engine_factory.py`（8 例：优先级/回落/未实现/未知/空值/槽位清单） |
+| 4.2 | `api/main.py` 去掉硬编码 `MinerUEngine`，`engine_factory` 改为 `Callable[[str], ParseEngine]`，缺省装配 `build_engine(name, settings)` | `test_omitted_engine_uses_configured_default`、`test_payload_engine_wins_over_config` |
+| 4.3 | 未实现槽位 → 400（文案含「尚未实现」）；非法字面 → 422（`ParseJobCreate.engine` 收 `Literal`，缺省 `None` 表示回落配置） | `test_unimplemented_config_engine_returns_400_not_silent_mineru`（并断言**零 job 行**）、`test_unimplemented_payload_engine_returns_400`、`test_unknown_engine_literal_returns_422`、`test_create_job_rejects_unregistered_engine` |
+| 4.4 | `JobRunner.submit(..., engine=<已解析名>)`，`af_parse_jobs.engine` 存实际执行引擎名 | 同 4.2（读回 job 行 `engine == "mineru"`） |
+| 5.1/5.2 | 提交期门槛顺序固定：书目/产物校验 → 引擎名解析 → `_probe_model_service()` → 才落 job 行；503 文案与执行期共用 `pipeline.MODEL_UNAVAILABLE` 常量 | `test_model_down_returns_503_and_creates_no_job_row`、`test_read_only_endpoints_unaffected_by_model_down`（只读端点 + 页图仍 200，`pages/1` 因未解析 404） |
+| 5.3 | `engines/base.py` `EngineError` docstring 改写为「执行期 → 单页失败/任务 failed；提交期探活另有 503 两道映射」，消除虚称 | 代码审查项，由 5.1/5.2 用例间接守护 |
+| 6.1 | `schemas.py` 新增 `SAFE_SEGMENT_PATTERN`/`OPTIONAL_SEGMENT_PATTERN`/`RELATIVE_PATH_PATTERN`（pydantic-core 不支持 look-around，故以 `\w` 起始字符类天然排除 `.`/`/`，并显式 `^…$` 锚定）；`BookSyncItem` 三 ID + `file_path`（`max_length=512`、禁前导 `/`）套用 | `test_sync_rejects_unsafe_path_segments`（`../evil`、`a/b`、`.hidden`、`/etc/passwd` 一律 422） |
+| 6.2 | `ingest/artifacts.py`：`ensure_safe_segment()`（单段校验）+ `ensure_within()`（数据根闸），`book_dir_for` 双闸（`..` 即使在数据根内也拒绝）、`resolve_source_pdf` 绝对路径同样受限；`orchestrator/pipeline._store_images` 改用同一 `ensure_within`（消除重复实现）；路径参数 `book_id` 收 `SafeBookId` | `test_book_dir_for_rejects_traversal_segment`、`test_resolve_source_pdf_rejects_absolute_path_outside_root`、`test_resolve_source_pdf_rejects_relative_escape`、`test_resolve_source_pdf_accepts_within_root`、`test_parse_job_rejects_unsafe_book_id` |
+| 6.3 | `ingest` 端点在 `update_ingest` 后回置 `parse_status=pending, pages_done=0` + `PageRepository.reset_for_book`（批量删页行）；`af_block_edits` **不清**（人工判定是用户资产，块下标重映射归 REQ-080 版本划分一并处理） | `test_reingest_resets_parse_state_and_keeps_job_history`（旧 job 行仍可查、`af_pages` 空、页产物 404） |
+| 6.4 | `DELETE /books/{id}` 无论是否 `purge` 都删 `af_pages`（无 af_books 行时页行即孤儿），`purge` 只额外删产物目录；`af_parse_jobs` 保留为审计 | `test_purge_deletes_page_rows`（af_pages 空 + job 行 1 条） |
+
+计划外但同批落地（避免两处事实源）：`orchestrator/__init__.py` 导出 `MODEL_UNAVAILABLE`；
+`engines/__init__.py` 模块清单补 `factory`。`default_data_dir` 仍保留（删除属 7.3）。
+
+### W7 文档自洽与死引用清理（F1~F5 + 条文晋升准备）
+
+| # | 工作项 | 产出 |
+| --- | --- | --- |
+| 7.1 | F2 三处状态口径统一；F3 ADR 0004 正文 8002 内联修正；F1/F4 措辞统一 | 文档内部一致 |
+| 7.2 | D2 `AXIOM_PADDLEOCR_URL` 自相矛盾统一为「当前无该键，启用 paddleocr-vl 时按 ADR 流程新增」 | 消除矛盾 |
+| 7.3 | 删 `importer.default_data_dir`，`tests/unit/test_ingest.py` 改测 `load_settings`（E3） | 数据根单一事实源 |
+| 7.4 | 清 `__init__.py:7` 的 `fallback/` 残留、`conftest.py:16` 死引用、空目录（F5） | 无死引用 |
+| 7.5 | 本计划条文 1~11 晋升 `design/model-integration.md`、`design/parsing-pipeline.md`、`design/parsing-management.md`、`architecture/api.md`、`architecture/database-design.md`（`architecture/` 两文档属大修改，由本计划 + todo 承载，与代码分开 commit） | 待评审设计转正（ADR 0002） |
+
+#### W7 完成登记（2026-09-20）
+
+| # | 落地 | 证据 / 守护 |
+| --- | --- | --- |
+| 7.1a | F2 状态口径统一：`database-design.md` 表清单四行由「**规划**（ARCH-002/003/007）」改为「**已实现**（真机已建表）」并标注各自收尾位置；「规划边界 / ARCH-001 / 根仓库 REQ-027 回执」旧表述改为「实现边界（迁移 `20260917_0001` 建表）+ 后续 DDL（REQ-080 拆 PLAN-004）」；`api.md` 无残留「规划契约」表述 | `test_architecture_documents.py` 绿 |
+| 7.1b | F3：`adr/0004:26` 正文 `MinerU 8002` → `5002`，原 `:29-30` 勘误记录保留不动 | `test_adr_governance.py` 绿 |
+| 7.1c | F4：页文件名占位统一为 `p<NNNN>`（`NNNN` = 页码 1 基四位零填充），并在 `parsing-pipeline.md` 产物树后成文为唯一格式；`api.md`、`operations.md`、`schemas.py`、`importer.py` 文档串同步 | 全库 `pXXXX` 零残留 |
+| 7.2 | D2：`model-integration.md` 统一为「当前无 `AXIOM_PADDLEOCR_URL` 键，启用 paddleocr-vl 时按 ADR 流程新增」 | 文档内自洽 |
+| 7.3 | E3：删 `ingest/importer.default_data_dir`（连带未用 `os` 导入与包导出），`tests/unit/test_ingest.py` 删除 `TestDefaultDataDir`，数据根改由 `tests/unit/test_config.py`（`AXIOM_FLOW_DATA_DIR` 键 + 退役键忽略用例）承载 | 基线 285 → **283 passed**（净减 2 例即被删的重复事实源用例），`ruff check` 全绿 |
+| 7.4 | F5：`src/axiom_flow/__init__.py` 重写为当前模块清单 + 退役清单（不再列 `fallback/`）；`tests/conftest.py` 死引用改为 `axiom_flow.config.Settings`；`find -type d -empty` 现为 0（`tests/integration`、`tests/smoke`、`tests/support` 仅剩 `__pycache__`，由 W3/W8 用真实测试填充） | 无死引用 |
+| 7.5 | 条文 1、1b、2、6、11 → `model-integration.md`（三段协议表 + 产物形态开关 + 双兼容解析 + 直连 `trust_env=False` + `factory.py` 分派）；3、7 → `parsing-pipeline.md`（错误处理表 + 节流段 + 数据根边界）；8 → `parsing-management.md`（ingest/DELETE 行）；4、5 → `api.md`（进度语义 + 错误表 503/failed 分段 + 只读端点不依赖模型）；4、9 → `database-design.md`（新增「任务表语义」「页表语义」） | 逐条 grep 命中，见本轮 7.5 校验 |
+| 7.5-例外 | **条文 10（`standards/testing.md` 隔离例外）本轮不晋升**：用户裁决要求 ADR 0005 评审通过后方可改 `standards/`，而 ADR 0005 仍为 Draft → W3 与条文 10 一并挂起 | `docs/standards/testing.md` 未改动（git status 无该项） |
+
+W7 期间发现并登记（不在本轮静默修复）：
+
+1. `parsing-pipeline.md` 产物树声明的 `tmp/axiom-flow/<job_id>/` 暂存目录**代码未实现**（引擎暂存
+   不落数据根）。已在该树行内标注「未实现：当前不落数据根」，是否实现随 REQ-080 产物版本划分
+   （PLAN-004）一并裁决。
+2. `af_parse_jobs.engine` 列的 DDL 默认值 `'mineru'` 在 W4 后成为死默认值（写入路径恒显式传解析后
+   引擎名）。清理需改列 → 属 DDL，本轮无迁移，随 PLAN-004 的 `af_parse_jobs` 变更一并处理。
+3. 仓库根 `app/`（v1 遗留，未跟踪、仅含 `__pycache__/*.pyc`、无源文件）删除命令被自动模式分类器
+   阻止，**保留待用户授权**；不影响门禁与包结构（`src/axiom_flow` 为唯一包）。
+
+### W8 真机冒烟与跨项目回执
+
+| # | 工作项 | 产出 |
+| --- | --- | --- |
+| 8.1 | `tests/smoke/` 首个用例（单页 + 5 页全本），默认跳过策略与 W3 同精神 | **2026-09-21 完成**：`tests/smoke/test_live_mineru_chain.py`（`QED_SMOKE_LIVE=1` 开启；默认门禁 `2 skipped`），真机 `2 passed in 7.08s`，5002 `completed_tasks` 48→50 证明确有提交 |
+| 8.2 | 运行中 `GET /api/v1/parse-jobs/{id}` 进度递增留证；整本失败时页行保留取证 | S3 证据（**L4/L5 已达成**，见「收尾执行登记」） |
+| 8.3 | kill 服务后重启，按 `af_pages` 续跑未完成页 | `parsing-pipeline.md:190` 验收 #5（**L6 已达成**） |
+| 8.4 | REQ-075（MinerU 直连配置同步）端点面回执稿；REQ-001 复核材料 | **2026-09-21 完成**：见「跨项目回执稿（W8-g）」一节 |
+
+## 台账联动
+
+| 任务 | 联动 |
+| --- | --- |
+| DEFECT-002 | W1 起转 In Progress；W8 冒烟绿后关闭。**2026-09-20 真机证据齐**（L2 第 3 页 + L3 整本 + L7 读取面）。**2026-09-21 关闭**：8.1 冒烟用例固化并真机 `2 passed`，判据（关闭条件修订「DEFECT-002 关闭 = L2 + L3」）全达成，行已原子移入 `completed.md` |
+| DEFECT-001 | W2/W3 关闭；同步回改 `project-status.md`「断点续跑基础」措辞。**2026-09-20 用户裁决：不随本轮真机证据关闭**（L4/L5/L6 已证，但 D5/W3-b 双 Session 回归网仍受 ADR 0005 评审阻塞） |
+| DEFECT-003 | W4/W5/W6 覆盖其全部子项，W6 后关闭（**2026-09-20 已关闭**，见 `completed.md`） |
+| DEFECT-004 | 本轮新登（bbox 归一化 0–1000 被误当 PDF 点，含 PNG 路径 `page_size` 错配）；前置 ARCH-005/006 联调，需先补契约条文再按 TDD 修。**2026-09-21 关闭**：契约条文晋升两份 Accepted 设计 + 9 例单测先红后绿 + 真机端到端锚点复验（IoU 0.9314 / 偏移 ≤7px）+ 冒烟对齐判据（反转即红），详「三轮开工登记」，行已原子移入 `completed.md` |
+| DEFECT-005 | 本轮新登（`header`/`footer` 字面值未入 `_TYPE_MAP`，块被静默丢弃 + 下标漂移）；修复需成文「未知类型如何处理」（丢弃需可见计数，不静默）。**2026-09-21 现状**：仍是 ARCH-005/006 与 ARCH-009 的唯一归一化前置（坐标空间面已随 DEFECT-004 解除） |
+| DEFECT-006 | 本轮新登（`pages` 无上界/存在性校验 + `completed` 掩盖部分失败 + 书级 `parse_status` 语义混用），属契约裁决项 |
+| DEFECT-007 | 本轮新登（被中断任务永久 `running`，无 reaper/心跳），修复选项需 ADR 级裁决 |
+| ARCH-003 / ARCH-016 | W8 真机冒烟绿后关闭。**2026-09-21 复核后仍开放**：8.1 已绿，但本行判据被本轮新缺陷接续——ARCH-003 剩 DEFECT-006/007 语义成文与修复（需用户裁决/ADR），ARCH-016 剩 **DEFECT-005**（DEFECT-004 已于 2026-09-21 关闭）与代表书类型分布取证（ARCH-009） |
+| REQ-075 | 端点面随 W8 回执后关闭。**2026-09-21 关闭**：配置面（Step 1/2-A + G5 三段走查）与端点面（DEFECT-002 真机证据 + 冒烟用例）两项齐备，回执稿见「跨项目回执稿（W8-g）」；按协作标准，根仓库自读本表登记 |
+| REQ-001 | 复核材料随 W8 就绪后发出回执 |
+| REQ-080 | 维持 Open，指向 PLAN-004（本计划不动 DDL、不改产物布局）。**2026-09-21**：坐标空间前置解除，版本目录内块坐标可信；回执随 PLAN-004 收口发出 |
+| REQ-081 | 2026-09-21 接收（QED-Engine 报告前端叠框失真）→ 判定与 DEFECT-004 同一缺陷，随其关闭发出回执（见「跨项目回执稿（REQ-081）」）；本方 todo 行保持 In Progress，等根仓库 §13 复测。受害页真机重解析属 D 类，待用户批准 |
+| PLAN-002 | Step 3 表加注「由 PLAN-003 承接，本表仅作历史索引」，关闭条件改为标准 6/7 由 PLAN-003 关闭即判达成、标准 8 随 W8 |
+| ARCH-004 | chunks 在 W2 后随页级持久化成立；`chunks.json` 归属版本目录的约定随 REQ-080 在 PLAN-004 处理 |
+
+## 验证与验收
+
+- **每步 TDD 先红后绿**，红灯用例写进对应 W 工作项并在提交信息中引用 DEFECT/台账 ID。
+- **隔离铁律不破**：探测与冒烟只用临时目录与合成样本；默认测试不写 `qed` 业务库（W3 只写
+  `qed_test`）；`tests/conftest.py:43-53` 回环守卫保持不动；TLS 校验默认开启。
+- **单元/契约**：`D:/software/anaconda3/envs/QED_env/python.exe -m pytest tests -q`（基线 245
+  passed 之上只增不减）+ `-m ruff check src tests scripts`。
+- **文档门禁**：按触发项跑 `tests/contract/test_design_documents.py`、
+  `test_architecture_documents.py`、`test_code_document_mapping.py`、`test_plan_governance.py`、
+  `test_tracker_governance.py`、`test_test_suite_governance.py`。注意 todo 的 PLAN 行状态须与本
+  文件 `状态：` 逐字一致，且每个表格行必须物理单行。
+- **真机验收**：S2（5 页小样 `parsed`）、S3（运行中进度递增 + 失败保留页 + kill 续跑）、
+  S4（四组违约各有测试覆盖）。
+- **MySQL 侧**：默认 `pytest tests -q` 下 integration/smoke skip 且全绿；
+  `QED_TEST_MYSQL=1 pytest tests/integration -q` 真跑绿。
+
+## 回滚
+
+- 本轮**无 alembic 迁移**（REQ-080 已拆出），全部代码改动可 `git revert` 逐 commit 回滚。
+- W1/W2 若真机失败：引擎侧回退到「只改端点路径、不改错误语义与持久化」的最小集，页级 commit 由
+  `persist_per_page=False` 退回原 flush-only 语义（显式开关，非静默降级）。
+- W3 若 `qed_test` schema 建立失败：删除 `tests/support/mysql.py` 与集成用例，ADR 0005 转
+  Superseded，DEFECT-001 退回 Open 并记录阻塞证据。
+- `architecture/` 两文档改动属大修改路径，由本计划 + todo 承载，且与代码**分开 commit**，文档回滚
+  不影响代码。
+- 探测留档在 `data/probes/`（gitignore 内），回滚只需删目录。**副作用登记**：`data/` 整体被忽略 →
+  留档不进版本库，结论文本必须写入本计划正文（已执行）；是否豁免 `data/probes/` 待用户裁决。
+
+## 收尾执行设计（真机打通 + 数据库与数据根收口，2026-09-20 裁决后重排）
+
+### 本部分的三个收口面
+
+| 面 | 收口判据（一句话） | 明确不含 |
+| --- | --- | --- |
+| C1 解析真机打通 | 单页（PNG 提交形状）+ 5 页合成全本 + 真书单页回归三条链路真机成立；运行中可见 `progress.parsed` 递增；kill 重启按 `af_pages` 续跑 | 486 页整本、KaTeX ≥90% 抽查与代表书验收（ARCH-009）、批量 12 本（D 类） |
+| C2 数据库存储收口 | `af_*` 四表的写入面（sync/ingest/job 行/progress/页行/edit）与读取面（9 个只读端点）在真机 MySQL 上逐项取证；W3 双 Session 测试给出可重复的提交边界证明 | 版本列与主键迁移（PLAN-004）、共享 `qed_*` 读写、`qed_test` 之外的库 |
+| C3 QED_DATA_ROOT 收口 | `parsed/`（含 domain 省略层级现状）、`raw/` 只读、`tmp/` 恒不存在、`data/` 定位、`.env` 三段走查，全部有成文判据与取证 | 存量迁移、旧产物清理、`versions/` 布局（PLAN-004） |
+
+### 用户裁决（2026-09-20，本轮三项）
+
+1. **W3 保留（路 B）**：先评审 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)
+   （Draft → Accepted），接受后才写真 MySQL 双 Session 测试并联动 `standards/testing.md`。
+   真机 MySQL 不替代它（真机是手工一次性证据，测试是回归网）。
+2. **真机小样止**：单页 + 5 页 + 真书单页回归；全量 486 页与质量抽查归 ARCH-009。
+3. **`tmp/axiom-flow/<job_id>/` 改判**：不是「设计有文、代码未实现」，而是**设计表述错误**——
+   引擎中间产物只在内存，不写数据根。按条文 12 修正表述，零代码（撤销 PLAN-003「W7 完成登记」发现 1）。
+
+### 条文 12（新增契约，随 W8-f 晋升 `design/parsing-pipeline.md`）
+
+模型调用**不向数据根写中间产物**：请求载荷（PDF 字节 / 页图字节）与响应信封只在进程内存流转；
+文档内嵌图片按 `pages/<相对路径>` 作为**终态产物**落盘。因此 `<data_root>/tmp/axiom-flow/`
+**恒不应存在**，存在即缺陷（比根侧 `storage-conventions.md:30-31`「tmp 不保留终态文件」更强：
+不产生）。`parsing-pipeline.md` 产物树中的该行为错误表述，W8-f 一并改判。
+
+### C1 真机取证清单（每条都要留档，不许口头通过）
+
+| # | 动作 | 期望 | 证据落档 | 失败首查 |
+| --- | --- | --- | --- | --- |
+| L1 | 双探活：`GET 5002/health` 与 `GET 8902/api/v1/health`（8902 经 `scripts/axiom_flow_service.py start --wait`） | 均 200 | `data/probes/live-bringup-20260920/health.json` | 5002 不通 → 根仓库 `scripts/image-model/` 启停（本仓库只连接）；8902 不通 → `logs/qed-axiom-serve.log` |
+| L2 | 单页：对已 ingest 的真书提交 `pages:[3]`（linearalgebra-b01 已知 failed 页，DEFECT-002 的 404 根因回归对照） | 202 受理 → 终态 `completed`；`af_pages(book,3)=parsed`；`pages/p0003.blocks.json` 与 `p0003.md` 存在且 blocks 非空 | 响应 + SQL 输出留档 | 404 类 → 端点终版表（条文 1）；PNG 提交形状属 A4 未探明项，现场补齐并追加冻结记录 |
+| L3 | 5 页合成小样（W0 样本，含公式/表格/页眉）走全本路径（`pages` 缺省） | `parse_document` 一次上传成功并按页分发；5 页产物齐；`chunks.json` 与 `manifest.json` 重算生成 | 样本 SHA-256 + 结果留档 | 页数缺/页序乱 → 结果解析面（条文 2 双兼容）与 `content_list` 页号改写 |
+| L4 | 运行中观测：执行期间对 `GET /api/v1/parse-jobs/{id}` 连续采样 ≥3 次 | `progress.parsed` 单调不减且至少前进一次；`status=running`；`progress.error` ≤200 字符 | 逐份采样留档 | 恒 0 → 节流条件（≥1s 或每 10 页）或 `update_progress` 未提交，由 W3-b 双 Session 测试精确定位 |
+| L5 | 失败注入：把 `QED_OCR_MODEL_URL` 指向不通端口并重启，提交单页任务 | 任务 `failed`，`error` ≤500 摘要；**此前已解析页的页行与产物保留**（条文 3） | SQL + 目录清单留档 | 页行丢失 → `jobs.py` 异常回滚吞行（A3 回归） |
+| L6 | kill 续跑：跑到一半 `stop`（含 `stopped (forced)`）→ 重启 → 同书重提同一页集 | 已完成页不重复解析（以 `parsed_at` 与文件 mtime 为据），未完成页补齐；「无行 ∪ failed」成立 | 前后 SQL 快照留档 | 全部重跑 → 续跑集合判定（条文 9）或页行未提交（条文 3） |
+| L7 | 只读端点全面：`books`、`books/{id}`、`pages/{no}`、`pages/{no}/image`、`manifest`、`chunks`、`parse-jobs/{id}` | 全 200、结构与 `schemas.py` 一致；`image_url` 字面量仍为 `/api/v1/books/{id}/pages/{no}/image`（根仓库 8900 依赖此不变量） | 响应留档 | 5xx → `api/main.py` 读取路径；404 → 条文 9 的 pending 表示法 |
+| L8 | 提交期门槛复验：在 L5 的断连状态下提交任务 | `POST /parse-jobs` 返 503 且**不创建 job 行**；全部只读端点仍 200 | 留档 | 落了 job 行 → 探活位置在落库之后（违条文 5） |
+
+### C2 数据库存储取证清单
+
+| # | 项 | 判据 |
+| --- | --- | --- |
+| D1 | 写入面逐端点 | sync 幂等（重复 sync 行数不增）；ingest 回写 `ingest_status/page_count/sha256`；`af_parse_jobs.engine` = 解析后实际引擎名；`progress` 覆写生效；页行 upsert（parsed/failed）；edit 同键覆盖 |
+| D2 | 真机 MySQL 方言 | JSON 列（`progress`/`quality`/`authors`/`corrected_bbox`）读写往返一致；`error`（500）与 `progress.error`（200）截断在真库不报错；DATETIME 全为 UTC（`utc_now`） |
+| D3 | 删除与审计 | `DELETE /books/{id}`（含 `?purge=true`）后 `af_parse_jobs` 历史行保留、`af_pages` 与产物目录删净（版本化前的现行语义，不动） |
+| D4 | 凭据与库边界 | 只读共享 `qed_*`、只写 `af_*`；`QED_DB_PASSWORD` 不出现在任何响应、日志或异常文本（grep 取证） |
+| D5 | 提交边界回归网 | W3-b 双 Session 测试在 `QED_TEST_MYSQL=1` 下真跑绿（默认门禁 skip） |
+
+### W3 设计（路 B：先评审，后实施）
+
+1. **前置门槛**：ADR 0005 由 Draft → Accepted（用户评审）。未接受前**不动** `docs/standards/testing.md`，
+   **不写**任何触库测试。
+2. `tests/support/mysql.py`：兑现 `conftest.py` 既有夹具引用；读 `QED_DB_*` 构造 `qed_test` DSN；
+   连上后**硬校验** `db_name == "qed_test"`，不符直接 `pytest.exit`（不是 skip——防止误连运行库）；
+   fixture 自建 schema → `alembic upgrade head` → 用例结束 `DROP SCHEMA`；缺 `QED_TEST_MYSQL=1` 时整体 skip。
+3. `tests/integration/test_parse_persistence.py`：两个独立 `sessionmaker`（写/读）+ fake engine，
+   断言 ①写 session 未 commit 时读 session 看不到页行 ②每页 commit 后读 session 立即可见 ③
+   `progress.parsed` 采样序列单调不减 ④`_fail` 路径下前序页行存活（A3 回归）。
+4. `standards/testing.md` 两处联动（仅在 ADR 接受后）：分层表 integration 行补「mock 必跑 /
+   真 MySQL 需 `QED_TEST_MYSQL=1` 显式 opt-in、默认 skip」；编写约定 `:42-43` 补 ADR 0005 例外句。
+5. 门禁不变：默认 `pytest tests -q` 仍不连库、不连网（`conftest.py` 回环守卫不动）。
+
+### C3 数据根收口清单（全部零代码：判定 + 取证 + 文档口径）
+
+| # | 项 | 现状 | 收口动作 |
+| --- | --- | --- | --- |
+| G1 | `parsed/<domain>/<course>/<book>/` | 真机为 `parsed/linear_algebra/linearalgebra-b01/`（domain 为空 → 省略层级，符合根侧约定） | `parsing-pipeline.md` 成文「domain 空则省略层级」；取证真实目录树 |
+| G2 | `raw/` 只读 | `resolve_source_pdf` 限数据根、不复制 | L2 前后各取一次源 PDF 的 sha256 与 mtime，证明未被改写 |
+| G3 | `tmp/axiom-flow/` | 代码不写它 | 按条文 12 改判 + 真机跑完断言该目录不存在（存在即缺陷） |
+| G4 | `data/` | 仓库内 gitignore，现仅存 `data/probes/` 留档 | `operations.md` 把「过渡期工作目录（落点迁移后退役）」改为「探针与合成样本留档区，不作数据根候选」 |
+| G5 | 配置链路 | `env > 仓库 .env > 根 .env` 三段走查 | 真机记录三键（`QED_DATA_ROOT`/`QED_DB_*`/`QED_OCR_MODEL_URL`）实际生效来源；一致即收口 |
+| G6 | 死默认值 `af_parse_jobs.engine='mineru'` | 属 DDL | 明确移交 PLAN-004，本部分不动表结构 |
+
+### 工作项重排（取代上文 W3 / W8 的粗粒度划分）
+
+| # | 内容 | 产出 | 依赖 |
+| --- | --- | --- | --- |
+| W3-a | ADR 0005 提交评审（Draft → Accepted / Rejected） | 评审结论；若否决则 W3 取消，D5 判据并入 L4/L6 真机证据，并在 `completed.md` 显式登记「无 MySQL 级回归网」这一代价 | 用户 |
+| W3-b | `tests/support/mysql.py` + `tests/integration/test_parse_persistence.py` | 默认门禁 skip 绿；`QED_TEST_MYSQL=1` 真跑绿 | W3-a |
+| W3-c | `standards/testing.md` 两处联动 + 条文 10 晋升 | 标准与测试实现一致 | W3-a、W3-b |
+| W8-a | 真机前置：5002 在线 + 8902 起 + 目标书已 sync/ingest | L1 证据 | 用户给窗口 |
+| W8-b | L2 真书单页（含未探明的 PNG 提交形状） | DEFECT-002 关闭证据之一 | W8-a |
+| W8-c | L3 五页合成全本 | 整本路径真机成立 | W8-b |
+| W8-d | L4 运行中进度 + L8 提交期 503 复验 | DEFECT-001 关闭证据之一 | W8-c |
+| W8-e | L5 失败注入 + L6 kill 续跑 + L7 只读端点全面 | 条文 3/5/9 真机成立 | W8-d |
+| W8-f | C2（D1~D4）+ C3（G1~G5）取证；条文 12 与 G4 口径晋升文档 | 数据根与 DB 收口报告 | W8-e |
+| W8-g | REQ-075 端点面回执稿 + REQ-001 复核材料 + PLAN-004 解冻条件写明 | 跨项目收口 | W8-f |
+
+### 关闭条件修订（覆盖下文「关闭与归档」中的旧表述）
+
+- C1：L1~L8 全绿（小样止即算打通）；A4 未探明项由 L2 现场补齐并追加到 W0 冻结清单（日期化登记，
+  不推翻既有结论）。
+- C2：D1~D4 取证齐；D5 随 W3-a 结论二选一（接受 → 测试绿；否决 → 判据并入真机证据 + 代价登记）。
+- C3：G1~G5 有成文口径与取证，G6 明确移交 PLAN-004。
+- 台账：DEFECT-001 关闭 = W3（按 W3-a 结论）+ L4 + L5 + L6；DEFECT-002 关闭 = L2 + L3；
+  ARCH-003 / ARCH-016 随之关闭；REQ-075 端点面回执发出后关闭；REQ-001 复核材料随 W8-g 就绪。
+- **不属于**本部分：全量 486 页与代表书质量验收（ARCH-009，保持 Open）、版本布局（PLAN-004）。
+
+## 收尾执行登记（2026-09-20 真机取证结果）
+
+留档目录 `data/probes/live-bringup-20260920/`（`data/` 在 `.gitignore` 内，故本正文是结论事实源；
+逐条判据与原始响应见该目录 `summary.md`）。取证脚本在 `scripts/tmp/`（只读取证：真机 HTTP + 仓库内
+临时数据根与 SQLite，未把业务数据写入共享 `qed` 库以外的库，也未向真实数据根写文件）。
+
+### C1 真机取证清单结果
+
+| # | 结论 | 关键证据 |
+| --- | --- | --- |
+| L1 | PASS（5002 healthy / 8902 ok 双探活） | `summary.md` 首段 |
+| L2 | **PASS**（真书 `linearalgebra-b01` 第 3 页 job `2a87818fdb7f` completed，页行 `parsed`，blocks 非空）——DEFECT-002 的 404 根因回归对照成立 | `L2_submit.json`、`L2_poll*.json`、`L2_page3.json` |
+| L3 | **PASS**（5 页合成小样走 `pages=null` 整本路径：`parse_document` 一次上传、5/5 `parsed`、18 个产物文件 + `chunks.json`(2 块) + `manifest.json`(17 项)）；数据根与库改用仓库内临时根（写真实数据根被工作区边界拦截，属正确行为） | `L3_report.json` |
+| L4 | **PASS**（两批任务运行中 `progress.parsed` 单调不减并前进：0→1→2→3、9→16；终态与产物文件数一致） | `L4_polls.txt`、`L4b_polls.txt` |
+| L5 | **PASS**（`pages=[40,999]`：第 40 页 `parsed`、第 999 页 `failed 页图缺失`，任务继续收尾，`error` 摘要「失败页：999」） | `L5_polls.txt` |
+| L6 | **PASS**（跑到中途 `stop` 后重启：真机 MySQL 已解析 21 页行与产物保留；按「无行 ∪ failed」提交补齐集 `def52f2987d2` → 16/16 completed；`parsed_at` 证明前序页未重跑） | `L6_db_after_kill.txt`、`L6_resume_polls.txt`、`L6_final_state.txt` |
+| L7 | **PASS**（9 个只读端点全可用、`image_url` 字面量不变量成立、未解析页 404） | `L7_read_endpoints.txt` |
+| L8 | **PASS**（模型 URL 不可达 → 503 中文提示 + `af_parse_jobs` 行数不变；临时实例已回收） | `L8_503.json`、`L8_no_row_evidence.txt` |
+
+### 真机新发现（本轮取证暴露、原计划未覆盖）
+
+| # | 发现 | 判据/证据 | 处置 |
+| --- | --- | --- | --- |
+| N1 | `job.status=completed` **掩盖部分失败**（有失败页仍 `completed`） | `L5_polls.txt` | 成文缺口：需裁决「部分成功」表达（新增状态字面值 or 只看 `error`/页行），登记 [DEFECT-006](../trackers/todo.md) |
+| N2 | 被中断任务**永久停留 `running`**（kill 后 `5f43593a12cc` 仍 `running parsed 14/30`），无 reaper/心跳超时；续跑实际只依赖 `af_pages`，与 job 行无关 | `L9_final_jobs.txt` | 同上：语义需成文 + 修复选项（启动期把遗留 `running` 归 `failed` or 心跳列），登记 [DEFECT-007](../trackers/todo.md) |
+| N3 | `pages` **无上界/存在性校验**：486 页书接受 `pages=[40,999]`，并在真机 `af_pages` 写出幽灵行（第 999 页 `failed`） | `L5_submit.json` + `L6_final_state.txt` | 校验缺口，登记 [DEFECT-006](../trackers/todo.md)；幽灵行清理属 D 类运行库写操作，**待用户批准**（不自行删） |
+| N4 | 书级 `parse_status` 与「本轮任务完成」共用一个字段：整本任务下正确（L3 `completed 5/5`），逐页子集任务把它置 `failed`（真书 38/486） | `L9_book_state.txt`、`L3_report.json` | 语义需成文（`parse_status` = 全书覆盖 or 最近任务结果？），并入 N1 裁决 |
+| N5 | **`content_list[].bbox` 是逐轴 0–1000 归一化坐标，不是 PDF 点**（锚点实验：放置 y=780pt → 实测 910；归一化预期 926；x=500pt → 实测 836，预期 840） | `L3d_coord_space.json` | 阻断对照与块编辑 → 登记 [DEFECT-004](../trackers/todo.md) |
+| N6 | 逐页（PNG）路径叠加坐标系错配：PNG 输入的 `middle_json.pdf_info[0].page_size=[446,631]`（像素按 200DPI 折算的标称点），与归一化 bbox 组不出自洽映射 → 真书第 3 页产物出现 `x0=1240,x1=1241` 的 1px 宽块与贴边钳制 | `L3c_page0003.json`、`L7_page3_bbox.txt` | 并入 DEFECT-004 修复范围 |
+| N7 | 真机类型字面值是 `header`/`footer`，`_TYPE_MAP` 只有 `page_header`/`page_footer` → 页眉页脚块被 `block_from_raw` 静默丢弃（样本第 1 页 8 项 → 7 块） | `L3d_coord_space.json`、`L3b_raw_bbox.json` | 登记 [DEFECT-005](../trackers/todo.md)；连带块 `index` 下标漂移风险（与 PLAN-004 ③ 相关） |
+| N8 | `title`/`equation`/`table` 等语义类型在合成小样上**不出现**（40 项只有 `text`/`header`），类型映射整体可用性未在真机取证 | `L3b_raw_bbox.json` | 不据此判定可用；真实分布取证归 ARCH-009（代表书） |
+| N9 | L3/L5/L6 的整本与失败注入证据必须在**版本布局前**取，PLAN-004 的 L10 前提措辞（「解析从未真机成功」）已被本轮证伪 | 本节 | 已回改 PLAN-004 与 `project-status.md` 措辞 |
+| N10 | 2026-09-21 只读配置走查发现：根 `.env:20` 的 `QED_OCR_MODEL_URL` 行带**行内 `#` 注释**，而 `config._env_file_values` 只跳过整行注释、不剥离行内注释 → 本仓库 `.env` 若缺该键，生效值会连注释一起读入并成为坏 URL（当前因本仓库 `.env:17` 优先生效而未触发） | `data/probes/live-bringup-20260920/D4_G5_config_credential.txt`（逐键三层来源表） | 登记 [DEFECT-008](../trackers/todo.md)（B 类一行修复 + 用例）；根仓库 `.env` 属只读范围，**不由本仓库改动** |
+
+### 收尾二轮（2026-09-21：冒烟固化 + C2/C3 可自查残留）
+
+| # | 项 | 结论 | 证据 |
+| --- | --- | --- | --- |
+| 8.1 | `tests/smoke/` 真机冒烟固化 | **PASS**：`test_smoke_single_page_png_shape`（逐页 PNG 提交形状 + 归一化产出 + bbox 落在页图像素内）与 `test_smoke_full_document_five_pages`（`pages=None` 整本 → 5/5 `parsed`、job `completed`、`progress {5,5}`、`af_pages` 5 行、`p000N.md/.blocks.json` + `chunks.json` + `manifest.json` 齐套、数据根 `tmp/` 不存在） | 本机 `QED_SMOKE_LIVE=1 pytest tests/smoke -q` → `2 passed in 7.08s`；默认门禁 `-rs` → `2 skipped`；5002 `/health` `completed_tasks` 48 → 50 |
+| D4 | 凭据与库边界 | **PASS**：`repr(Settings)` 不含密码（`db_password` 声明 `repr=False`）；`logs/*.log` 命中 0；五个只读端点响应命中 0；ORM 层与迁移只出现 `af_*` 四表、无裸 DML | `data/probes/live-bringup-20260920/D4_G5_config_credential.txt`（脚本 `scripts/tmp/live_check_config_credentials.py`，全程只读、密码仅以遮蔽标记与命中计数出现） |
+| G5 | 配置三段生效来源 | **PASS**：`QED_DATA_ROOT`/`QED_DB_*`/`QED_OCR_MODEL_URL`/`AXIOM_*` 逐键走查——真实环境变量均未设，生效层一律为**本仓库 `.env`**，与根 `.env` 值一致（`data_dir=D:\coding\QED-Engine\dataset`、`db_name=qed`、`ocr_model_url=http://127.0.0.1:5002`）；同时暴露行内注释解析缺口 → N10 | 同上 |
+| D3 | 删除与审计（`DELETE /books/{id}?purge=true` 后 `af_parse_jobs` 保留、`af_pages` 与产物删净） | **未做**：属真机共享库写 + 产物目录删除（D 类），需用户单独批准；本轮不对 `linearalgebra-b01` 做删除演练 | 待收尾三轮（可用合成探针书，仍属共享库写） |
+
+### 三轮开工登记（2026-09-21：DEFECT-004 坐标空间修复）
+
+变更定级：B 类确定性实现（缺陷修复，契约已于 2026-09-20 晋升 Accepted 设计）；TDD 先红后绿。
+
+| 步骤 | 内容 | 结论 |
+| --- | --- | --- |
+| 契约成文 | `parsing-pipeline.md`「坐标空间契约」条 + `model-integration.md`「原始块坐标空间与类型字面值」条：`PageResult.bbox_space ∈ {pdf_points, normalized_1000, pixels}`，**只有 `pdf_points` 空间允许以 `page_size` 为缩放基准**；`page_size` 在 PNG 输入下只留档不换算；缺 `bbox` 的块直接铺满页图不再二次映射 | 完成（含 code-map 备注与 DesignRef 同步） |
+| 先红 | `tests/unit/test_normalize.py::TestBBoxCoordinateSpace`（逐轴 `bbox/1000*image_size`、忽略引擎 `page_size`、真机锚点落位、`pixels` 只夹取、`pdf_points` 为默认、`normalize_page` 按声明分派、缺 bbox 铺满页）+ `tests/unit/test_engines.py::TestBBoxSpaceDeclaration`（整本与逐页两条路径均声明 `normalized_1000`） | 首轮 `8 failed, 43 passed`（红成立） |
+| 实现 | `engines/base.py` 新增 `BboxSpace` 与 `PageResult.bbox_space`；`engines/mineru.py` 以 `_BBOX_SPACE="normalized_1000"` 常量声明（含 WHY 注释）并贯穿两条提交路径；`normalize/blocks.py` 的 `scale_bbox`/`block_from_raw`/`normalize_page` 按空间分派 | 全绿 |
+| 真机端到端复验 | `scripts/tmp/live_verify_bbox_fix.py`：合成 A4（595x842pt）内把 5 行文本钉在已知点坐标 → 真实 5002 + 真实 `run_parse_job`（整本路径、SQLite + 仓库内探针数据根）→ 读 `p0001.blocks.json` 与 PDF 原生矩形（点 × dpi/72）逐块比对 | **PASS**：`job=completed 1/1`、`af_pages` 1 行 `parsed`、5/5 块 **平均 IoU 0.9314 / 最大绝对偏移 7px**；同一判据下旧实现复算 **IoU 0.0114**，且 ECHO/DELTA 两块被夹取到 `x1=1240`（页图右缘）——与根仓库 REQ-081 报告的 `x1=1241` 症状同源。留档 `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json` |
+| 回归网固化 | `tests/smoke/test_live_mineru_chain.py` 增「标题块与 PDF 原生文字矩形 IoU ≥ 0.5」对齐判据（逐页 PNG 路径 + 整本路径 5 页逐页） | 修复后 `2 passed in 11.88s`；把 `_BBOX_SPACE` 反转为 `pdf_points` 即 `2 failed`（IoU 0.000 / 0.157，`parsed=[267,206,1240,267]`）→ 判据可独立检出坐标空间错配，非恒真 |
+| 门禁 | `pytest tests -q` → **292 passed, 2 skipped**（基线 283 → +9）；`pytest tests/contract -q` → 82 passed；`ruff check src tests` 全绿 | 达成 |
+
+**未做项（需用户批准，不自行执行）**：`linearalgebra-b01` 受害页的真机重解析（写真实 `dataset/parsed/` + 共享
+`qed`，D 类）。既有落盘产物是修复前的错误坐标，换算修复不回溯历史产物 → REQ-081 的根侧 §13 复测需在重解析后才有意义。
+
+### 跨项目回执稿（W8-g，2026-09-21）
+
+按[跨项目协作流程](../standards/cross-project-collaboration.md)，回执只落本仓库 todo/计划，根仓库自读登记，
+本仓库不写根仓库文件。
+
+**REQ-075 —— MinerU 直连配置同步 + 新异步 API 端点对齐（回执 QED-Engine，本方关闭）**
+
+- 配置面：`QED_OCR_MODEL_URL` 为唯一模型地址键（`QED_MINERU_URL`、`AXIOM_PADDLEOCR_URL` 已删除且无别名），
+  生效端口 5002；三段走查证明本仓库 `.env` 与根 `.env` 值一致（G5）。
+- 端点面（MinerU 3.4.4 实测）：`POST /tasks`（multipart 字段 `files`，202，任务号在**顶层** `task_id`）→
+  `GET /tasks/{task_id}`（状态取**顶层** `status`：`pending→processing→completed`）→
+  `GET /tasks/{task_id}/result`（202＝未就绪、200＝载荷 `results[<file_stem>]`，键 `md_content` /
+  `content_list` / `middle_json`）。必须显式 `return_content_list=true`、`return_middle_json=true`；
+  legacy `/file_parse` 与 `/get_task_results/{task_id}` 在 3.4.4 均 404。
+- 证据：W0 冻结表（`data/probes/mineru-3.4.4-20260920/`）、真机 L2/L3/L7、`tests/smoke/test_live_mineru_chain.py`。
+- 需根仓库注意（不要求根侧改动）：根 `.env:20` 的值后带行内 `#` 注释，本仓库解析器不剥离行内注释，
+  该写法只在本仓库 `.env` 缺键时才会暴露；本方以 DEFECT-008 自行修复解析器。
+
+**REQ-001 —— 8900 数据域适配 af_* 新契约（复核材料，本方仍开放等待根仓库回执）**
+
+- 端点面事实源：[api.md](../architecture/api.md)；真机只读面 L7 九端点全可用，`image_url` 字面量不变量成立，
+  未解析页返回 404。
+- 根仓库 2026-09-20「联调最小打通轮」自修的四处断裂（review→edit 门面、sync `file_path`、parse-jobs
+  `engine`/`id`/`progress`、`page_no`/`image_url` 补写）与本仓库契约一致，`tests/contract/test_api_v1_contract.py`
+  全绿可作对照。
+- 本方延后项：① ~~块坐标在 DEFECT-004 修复前不可用于叠框~~ **2026-09-21 已解除**（见下节 REQ-081 回执）；
+  ② REQ-080/PLAN-004 版本布局落地后 `versions/<job_id>` 与生效指针需再回执一次。
+
+**REQ-081 —— MinerU 解析块 bbox 坐标失真（回执 QED-Engine，本方已修复，待根侧 §13 复测）**
+
+根仓库 2026-09-20 的请求与本方 DEFECT-004 是**同一缺陷的两个视角**（根侧看前端叠框，本方看适配层定因），
+根侧怀疑的两条路径均成立。回答根仓库提出的判定问题：
+
+- **`content_list[].bbox` 的实际坐标空间**：相对页框、**逐轴归一化到 0–1000**（既不是 PDF 点也不是页图像素），
+  且整本（PDF）与逐页（PNG）两条提交路径同一空间。锚点法实证：A4（595x842pt）内把文本钉在已知点坐标，
+  放置 `y=780pt` → 引擎回 `910`（点空间应约 780，归一化预期 926）；`x=500pt` → 回 `836`（归一化预期 840）。
+- **`middle_json.pdf_info[].page_size` 与 bbox 是否错配**：成立。PDF 输入时它是真实 PDF 点，**PNG 输入时它是
+  引擎按 200 DPI 折算的标称点**（1241x1755 页图 → `[446, 631]`，与页图像素比约 1:2.78）。旧实现把归一化值
+  当点、再按 `image_size/page_size` 缩放，等效 x 轴过放 **1.68 倍**、y 轴 **1.19 倍** → 超出页图的分量被
+  夹取，因此贵方观察到「全部段落块 `x1` 恒等于 1241（图像右缘精确值）」与 1–3px 病态窄块——**这是夹取
+  残留，不是引擎返回的真实宽度**。
+- **修复后的契约（对贵方接口零变化）**：`bbox` 语义不变仍是 `pages/p<NNNN>.png` 的页图像素 `[x0,y0,x1,y1]`，
+  只是换算不再依赖引擎回传的 `page_size`；适配器改为显式声明坐标空间（`PageResult.bbox_space`），归一化按
+  空间分派。前端叠框代码无需改动。
+- **复验证据**：真机端到端锚点复验 5/5 块平均 IoU **0.9314**、最大偏移 **7px**（旧实现同一判据 0.0114 且两块
+  贴边夹取）；`tests/smoke/test_live_mineru_chain.py` 已把「块与 PDF 原生文字对齐（IoU ≥ 0.5）」固化为判据，
+  反转坐标空间即红。留档 `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`。
+- **待办与限制（请贵方注意）**：① 修复不回溯历史产物——贵方 §13 复测前需对 `linearalgebra-b01` 受害页
+  **重新解析**（本方侧属 D 类真机写，待用户批准；批准前本方不自行重跑，若贵方急需可协调时间窗）；
+  ② 块**类型**映射仍有独立缺陷（DEFECT-005：真机 `header`/`footer` 字面值未覆盖 → 该两类块被丢弃，
+  页内块数与 `index` 会少一项），贵方按 `index` 定位的对照视图在两项判据上请与本方同步核对；
+  ③ 本方 `bbox` 与真实文字仍有约 7px 的系统性左偏（引擎自身检测框特性，非坐标空间问题），叠框建议保留
+  少量外扩容差。
+
+### 收口面判定（本轮）
+
+- **C1 真机打通**：L1~L8 **全绿（小样止）** → 关闭条件达成；新缺陷 N1~N7 属「打通后暴露的设计缺口」，
+  不撤销 C1 结论，但 DEFECT-004/005 必须前置于 ARCH-005/006（对照与块编辑）联调。
+- **C2 数据库收口**：D1（写入面：页行 upsert / `progress` 覆写 / `af_parse_jobs.engine` 实际引擎名 /
+  ingest 回写）与 D2（JSON 列与 DATETIME 在真 MySQL 往返）随 L2~L6 取证成立；**D4 于 2026-09-21 取证成立**
+  （凭据不外泄 + 只有 `af_*` 四表可触达）。**仅剩 D3**（删除与审计，真机共享库写 + 产物删除，待用户批准）
+  与 **D5/W3-b/W3-c**（受 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)
+  评审阻塞）——按用户裁决「DEFECT-001 不落库（不关闭）」，本计划不因 L4/L5/L6 通过而关闭 DEFECT-001。
+- **C3 数据根收口**：G2（`raw/` 只读，L2 前后 sha256 一致）与 G3（`tmp/axiom-flow/` 恒不存在，条文 12）
+  成立；G1/G3/G4 口径已于 2026-09-20 晋升成文（`parsing-pipeline.md`：domain 空则省略层级 + 不写数据根
+  `tmp/`；`operations.md`：`data/` 重定义为探针留档区且不作数据根候选）；**G5 于 2026-09-21 三段走查成立**
+  （生效层=本仓库 `.env`，三键值与根 `.env` 一致）。G6 维持移交 PLAN-004 → **C3 全部达成，本收口面关闭**。
+- **W8 收口**：8.1/8.2/8.3/8.4 **全部完成**（8.1 冒烟用例真机绿；8.4 与 W8-g 回执稿见上节）。
+  PLAN-003 剩余仅为**外部与裁决依赖**：D3（删除演练需批准）、D5/W3（ADR 0005 评审）、REQ-001（等根仓库回执）、
+  以及本轮新登 DEFECT-004~008 的修复。
+- **三轮开工后（2026-09-21，DEFECT-004）**：C1 的归一化正确性前置解除一半——坐标空间已修复并真机复验，
+  ARCH-005/006 的叠框与 `corrected_bbox` 不再被坐标失真阻塞（仍被 DEFECT-005 的 `index` 漂移阻塞）。
+  本计划关闭依赖不变：D3（需批准）、D5/W3（ADR 0005）、REQ-001/REQ-081（等根仓库回执）、DEFECT-005/006/007/008。
+
+## 关闭与归档
+
+- **口径优先级**：实际关闭判据以上节「关闭条件修订（2026-09-20 裁决后重排）」为准；S1~S7 中涉及
+  整本/代表性的判据按「小样止」（单页 + 5 页 + 真书单页回归）解释，全量与质量验收归 ARCH-009。
+
+- **关闭条件**：S1~S7 全部达成，DEFECT-001/002/003 关闭，ARCH-003/016 关闭，REQ-075 与 REQ-001
+  回执发出，条文 1~11 晋升 design/architecture 且契约守护全绿。REQ-080 与 Rudin 验收（ARCH-009）
+  **不属本计划关闭条件**。
+- **归档判定 Retain**：W0 冻结清单与留档哈希、偏差台账、契约条文（晋升前的推导依据）需保留，
+  故计划壳归档 `docs/history/plans/2026-09/`，不删除。
+- 收尾动作：todo 关闭任务原子迁移 `completed.md`；`project-status.md` 现状与断点续跑措辞按事实
+  刷新；`code-map.md` 补 `engines/factory.py`、`tests/support/`、`tests/integration/` 模块行。

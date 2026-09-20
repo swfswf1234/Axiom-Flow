@@ -2,7 +2,8 @@
 
 设计事实源：`docs/design/parsing-pipeline.md`（错误处理与质量验收）。
 - `background=True`（服务默认）：串行后台执行，避免并发压垮本地模型服务；
-- `background=False`（测试）：同步内联执行。
+- `background=False`（测试）：同步内联执行；
+- 引擎按任务行上已解析的引擎名构造（`engine_factory(name)`），不在执行期改选引擎。
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ class JobRunner:
         self,
         *,
         session_factory: sessionmaker[Session],
-        engine_factory: Callable[[], ParseEngine],
+        engine_factory: Callable[[str], ParseEngine],
         data_root: Path | str,
         background: bool = True,
     ) -> None:
@@ -38,15 +39,15 @@ class JobRunner:
         self._data_root = Path(data_root)
         self._executor: Executor | None = ThreadPoolExecutor(max_workers=1) if background else None
 
-    def submit(self, *, job_id: str, book_id: str, pages: list[int] | None) -> None:
-        """提交任务：后台模式立即返回，内联模式同步执行。"""
+    def submit(self, *, job_id: str, book_id: str, pages: list[int] | None, engine: str) -> None:
+        """提交任务：后台模式立即返回，内联模式同步执行。`engine` 为已解析的引擎名。"""
         if self._executor is None:
-            self._run(job_id, book_id, pages)
+            self._run(job_id, book_id, pages, engine)
             return
-        self._executor.submit(self._run, job_id, book_id, pages)
+        self._executor.submit(self._run, job_id, book_id, pages, engine)
 
-    def _run(self, job_id: str, book_id: str, pages: list[int] | None) -> None:
-        engine = self._engine_factory()
+    def _run(self, job_id: str, book_id: str, pages: list[int] | None, engine_name: str) -> None:
+        engine = self._engine_factory(engine_name)
         try:
             with self._session_factory() as session:
                 outcome: ParseOutcome = run_parse_job(

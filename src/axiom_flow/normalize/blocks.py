@@ -1,14 +1,14 @@
-"""引擎原始输出 → 统一 blocks（类型映射、bbox 缩放、阅读序）+ 页级 Markdown。
+"""引擎原始输出 → 统一 blocks（类型映射、bbox 坐标空间换算、阅读序）+ 页级 Markdown。
 
 设计事实源：`docs/design/parsing-pipeline.md`。MinerU `content_list` 条目在适配层消化：
-类型映射、坐标缩放（PDF 点 → 页图像素）、图片路径规范为 book 目录相对路径。
+类型映射、坐标换算（引擎声明的 `bbox_space` → 页图像素）、图片路径规范为 book 目录相对路径。
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from axiom_flow.engines.base import PageResult
+from axiom_flow.engines.base import BboxSpace, PageResult
 from axiom_flow.schemas import Block, BlocksPage, BlockType, QualityMetrics
 
 # MinerU content_list 类型 → 统一块类型
@@ -58,22 +58,34 @@ def scale_bbox(
     *,
     page_size: tuple[float, float] | None,
     image_size: tuple[int, int],
+    space: BboxSpace = "pdf_points",
 ) -> tuple[int, int, int, int]:
-    """PDF 点坐标 → 页图像素坐标（按 page_size/image_size 缩放），并夹取到页内、保底 1px。"""
-    if page_size and page_size[0] > 0 and page_size[1] > 0:
-        scale_x = image_size[0] / page_size[0]
-        scale_y = image_size[1] / page_size[1]
-        bbox = (
-            int(round(bbox[0] * scale_x)),
-            int(round(bbox[1] * scale_y)),
-            int(round(bbox[2] * scale_x)),
-            int(round(bbox[3] * scale_y)),
-        )
+    """引擎原始坐标 → 页图像素坐标，并夹取到页内、保底 1px。
+
+    `space` 由引擎适配器声明（真机测定见 `docs/design/parsing-pipeline.md`）：
+    `normalized_1000` 逐轴按 `image_size/1000` 映射（MinerU 3.4.4 两条提交路径共用，此时
+    `page_size` 不参与缩放）；`pdf_points` 按 `image_size/page_size` 映射；`pixels` 只夹取。
+    """
+    if space == "normalized_1000":
+        bbox = _multiply(bbox, image_size[0] / 1000.0, image_size[1] / 1000.0)
+    elif space == "pdf_points" and page_size and page_size[0] > 0 and page_size[1] > 0:
+        bbox = _multiply(bbox, image_size[0] / page_size[0], image_size[1] / page_size[1])
     x0 = max(0, min(bbox[0], image_size[0] - 1))
     y0 = max(0, min(bbox[1], image_size[1] - 1))
     x1 = max(x0 + 1, min(bbox[2], image_size[0]))
     y1 = max(y0 + 1, min(bbox[3], image_size[1]))
     return (x0, y0, x1, y1)
+
+
+def _multiply(
+    bbox: tuple[int, int, int, int], scale_x: float, scale_y: float
+) -> tuple[int, int, int, int]:
+    return (
+        int(round(bbox[0] * scale_x)),
+        int(round(bbox[1] * scale_y)),
+        int(round(bbox[2] * scale_x)),
+        int(round(bbox[3] * scale_y)),
+    )
 
 
 def _image_path(raw: dict[str, Any]) -> str:
@@ -98,6 +110,7 @@ def block_from_raw(
     index: int,
     page_size: tuple[float, float] | None,
     image_size: tuple[int, int],
+    space: BboxSpace = "pdf_points",
 ) -> Block | None:
     """单条引擎原始块 → 统一 Block；无法归一的条目返回 None（跳过，不阻断整页）。"""
     block_type = _TYPE_MAP.get(str(raw.get("type", "")).lower())
@@ -105,8 +118,10 @@ def block_from_raw(
         return None
     bbox = _bbox_tuple(raw.get("bbox"))
     if bbox is None:
+        # 引擎未给坐标：整页占位已是像素，不再走缩放（避免二次映射）
         bbox = (0, 0, image_size[0], image_size[1])
-    bbox = scale_bbox(bbox, page_size=page_size, image_size=image_size)
+    else:
+        bbox = scale_bbox(bbox, page_size=page_size, image_size=image_size, space=space)
 
     text = _as_text(raw.get("text"))
     confidence = raw.get("confidence")
@@ -215,7 +230,13 @@ def normalize_page(
     """
     blocks: list[Block] = []
     for raw in result.blocks:
-        block = block_from_raw(raw, index=len(blocks), page_size=result.page_size, image_size=image_size)
+        block = block_from_raw(
+            raw,
+            index=len(blocks),
+            page_size=result.page_size,
+            image_size=image_size,
+            space=result.bbox_space,
+        )
         if block is not None:
             blocks.append(block)
     if not blocks and result.markdown.strip():

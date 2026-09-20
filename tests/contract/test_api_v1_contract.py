@@ -11,13 +11,14 @@ from pathlib import Path
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from axiom_flow.api.main import create_app
 from axiom_flow.config import load_settings
-from axiom_flow.db.models import Base
+from axiom_flow.db.models import AfPage, AfParseJob, Base
+from axiom_flow.db.repositories import ParseJobRepository
 from axiom_flow.engines.base import DocumentResult, PageResult
 
 
@@ -26,8 +27,15 @@ class FakeEngine:
 
     name = "mineru"
 
+    def __init__(self, *, healthy: bool = True) -> None:
+        self.healthy = healthy
+        self.closed = False
+
     def health(self) -> bool:
-        return True
+        return self.healthy
+
+    def close(self) -> None:
+        self.closed = True
 
     def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult:
         return DocumentResult(
@@ -69,15 +77,14 @@ def _make_pdf(path: Path, pages: int = 2) -> Path:
     return path
 
 
-@pytest.fixture()
-def client(tmp_path, monkeypatch) -> TestClient:
-    """隔离数据根 + SQLite 内存库 + 假引擎；数据根含一册源 PDF（raw/ 布局）。"""
+def _build(tmp_path, monkeypatch, *, ocr_engine: str | None = None, engine_factory=None):
+    """隔离数据根 + SQLite 内存库 + 假引擎；返回 (client, session_factory)。"""
     monkeypatch.chdir(tmp_path)
     data_root = tmp_path / "data"
     raw_dir = data_root / "raw" / "math-advanced" / "math_analysis"
     raw_dir.mkdir(parents=True)
     _make_pdf(raw_dir / "book.pdf", pages=2)
-    settings = load_settings(data_dir=data_root)
+    settings = load_settings(data_dir=data_root, ocr_engine=ocr_engine)
     db_engine = create_engine(
         "sqlite+pysqlite://",
         connect_args={"check_same_thread": False},
@@ -88,11 +95,17 @@ def client(tmp_path, monkeypatch) -> TestClient:
     app = create_app(
         settings,
         session_factory=session_factory,
-        engine_factory=lambda: FakeEngine(),
+        engine_factory=engine_factory or (lambda name: FakeEngine()),
         background_jobs=False,
     )
-    with TestClient(app) as test_client:
-        yield test_client
+    return TestClient(app), session_factory
+
+
+@pytest.fixture()
+def client(tmp_path, monkeypatch) -> TestClient:
+    test_client, _ = _build(tmp_path, monkeypatch)
+    with test_client as live:
+        yield live
 
 
 def _sync_book(client: TestClient, book_id: str = "mathanalysis-b05") -> None:
@@ -376,3 +389,147 @@ def test_manifest_json_is_readable_on_disk(client, tmp_path):
     payload = json.loads((book_dir / "chunks.json").read_text(encoding="utf-8"))
     assert payload["book_id"] == "mathanalysis-b05"
     assert payload["chunks"][0]["block_refs"]
+
+
+class TestEngineDispatch:
+    """W4：引擎槽位显式分派——配置真正生效，且绝不静默回落到 MinerU（条文 6）。"""
+
+    def test_omitted_engine_uses_configured_default(self, tmp_path, monkeypatch):
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            created = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+            assert created.status_code == 202, created.text
+            assert created.json()["engine"] == "mineru"
+            with session_factory() as session:
+                job = ParseJobRepository(session).get(created.json()["id"])
+            assert job is not None and job.engine == "mineru"
+
+    def test_payload_engine_wins_over_config(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch, ocr_engine="mineru")
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            created = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "engine": "mineru"}
+            )
+            assert created.status_code == 202, created.text
+            assert created.json()["engine"] == "mineru"
+
+    def test_unimplemented_config_engine_returns_400_not_silent_mineru(self, tmp_path, monkeypatch):
+        """D1 回归：`AXIOM_OCR_ENGINE=paddleocr-vl` 必须显式报错，不得回落到 MinerU。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch, ocr_engine="paddleocr-vl")
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            created = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+            assert created.status_code == 400, created.text
+            assert "尚未实现" in created.json()["detail"]
+            with session_factory() as session:
+                assert session.scalars(select(AfParseJob)).all() == []
+
+    def test_unimplemented_payload_engine_returns_400(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            created = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "engine": "qwen-vl"}
+            )
+            assert created.status_code == 400, created.text
+
+    def test_unknown_engine_literal_returns_422(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            created = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "engine": "gpt-4o"}
+            )
+            assert created.status_code == 422, created.text
+
+
+class TestSubmitTimeHealthProbe:
+    """W5：提交期探活 503（受理前）与执行期 failed（受理后）两段并存（条文 5）。"""
+
+    def test_model_down_returns_503_and_creates_no_job_row(self, tmp_path, monkeypatch):
+        test_client, session_factory = _build(
+            tmp_path, monkeypatch, engine_factory=lambda name: FakeEngine(healthy=False)
+        )
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            created = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+            assert created.status_code == 503, created.text
+            assert "模型服务不可用" in created.json()["detail"]
+            with session_factory() as session:
+                assert session.scalars(select(AfParseJob)).all() == []
+
+    def test_read_only_endpoints_unaffected_by_model_down(self, tmp_path, monkeypatch):
+        test_client, _ = _build(
+            tmp_path, monkeypatch, engine_factory=lambda name: FakeEngine(healthy=False)
+        )
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            assert client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).status_code == 503
+            assert client.get("/api/v1/health").status_code == 200
+            assert client.get("/api/v1/books").status_code == 200
+            assert client.get("/api/v1/books/mathanalysis-b05").status_code == 200
+            assert client.get("/api/v1/books/mathanalysis-b05/manifest").status_code == 200
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1/image").status_code == 200
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 404
+
+
+class TestDataBoundary:
+    """W6：安全路径段与数据根边界（条文 7）。"""
+
+    def test_sync_rejects_unsafe_path_segments(self, client):
+        for payload in (
+            {"book_id": "../evil", "title": "穿越"},
+            {"book_id": "ok-1", "domain_id": "a/b", "title": "穿越"},
+            {"book_id": ".hidden", "title": "隐藏段"},
+            {"book_id": "ok-2", "file_path": "/etc/passwd"},
+        ):
+            response = client.post("/api/v1/books/sync", json=[payload])
+            assert response.status_code == 422, payload
+
+    def test_parse_job_rejects_unsafe_book_id(self, client):
+        response = client.post("/api/v1/parse-jobs", json={"book_id": "../evil"})
+        assert response.status_code == 422, response.text
+
+
+class TestIngestIdempotency:
+    """W6：重复 ingest 回置解析状态并清页行；purge 删页行留任务行（条文 8）。"""
+
+    def test_reingest_resets_parse_state_and_keeps_job_history(self, tmp_path, monkeypatch):
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            created = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+            job_id = created.json()["id"]
+            assert created.json()["status"] == "completed"
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 200
+
+            _ingest(client)  # 重复 ingest：产物目录原子替换
+
+            book = client.get("/api/v1/books/mathanalysis-b05").json()
+            assert book["parse_status"] == "pending"
+            assert book["pages_done"] == 0
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 404
+            assert client.get(f"/api/v1/parse-jobs/{job_id}").status_code == 200
+            with session_factory() as session:
+                assert session.scalars(select(AfPage).where(AfPage.book_id == "mathanalysis-b05")).all() == []
+
+    def test_purge_deletes_page_rows(self, tmp_path, monkeypatch):
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            assert client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).status_code == 202
+            assert client.delete("/api/v1/books/mathanalysis-b05?purge=true").status_code == 200
+            with session_factory() as session:
+                assert session.scalars(select(AfPage)).all() == []
+                assert len(session.scalars(select(AfParseJob)).all()) == 1

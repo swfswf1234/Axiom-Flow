@@ -14,10 +14,10 @@ api / ingest / engines / normalize / orchestrator / db / schemas / config；**PL
 | 路径 | 职责 | 状态 | 设计 | 测试 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | `src/axiom_flow/api/` | 对外 `/api/v1` 路由，只做协议适配 | **Current** | `docs/architecture/api.md` | `tests/contract/test_api_v1_contract.py` | sync/CRUD/ingest/parse-jobs（异步）/pages/manifest/edit/chunks 已实现 |
-| `src/axiom_flow/ingest/` | 预处理：PDF 导入、页图渲染、book.json/manifest（原子落盘） | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_ingest.py` | 产物落 `QED_DATA_ROOT/parsed/`；`artifacts.py` 提供原子写入与 PNG 尺寸 |
-| `src/axiom_flow/orchestrator/` | 解析编排：全本/逐页、失败语义、分块重建、af_* 回写 | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_orchestrator.py` | `jobs.py` 后台单 worker；`pipeline.py` 主流程 |
-| `src/axiom_flow/engines/` | 引擎适配器：MinerU 落地；paddleocr-vl / qwen-vl 预留 | **Current** | `docs/design/model-integration.md` | `tests/unit/test_engines.py` | 直连 `QED_OCR_MODEL_URL`；不暴露调参 |
-| `src/axiom_flow/normalize/` | 后处理：统一 blocks + Markdown + 质量信号 + 分块 | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_normalize.py`、`test_chunking.py` | `blocks.py` / `chunking.py` |
+| `src/axiom_flow/ingest/` | 预处理：PDF 导入、页图渲染、book.json/manifest（原子落盘） | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_ingest.py` | 产物落 `QED_DATA_ROOT/parsed/`；`artifacts.py` 提供原子写入、PNG 尺寸与数据根边界闸（`ensure_safe_segment`/`ensure_within`） |
+| `src/axiom_flow/orchestrator/` | 解析编排：全本/逐页、失败语义、分块重建、af_* 回写 | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_orchestrator.py`、`tests/smoke/test_live_mineru_chain.py` | `jobs.py` 后台单 worker；`pipeline.py` 主流程（页级 commit + progress 节流） |
+| `src/axiom_flow/engines/` | 引擎适配器：MinerU 落地 + `factory.py` 显式分派（未实现/未知即报错，不自动兜底）；paddleocr-vl / qwen-vl 预留 | **Current** | `docs/design/model-integration.md` | `tests/unit/test_engines.py`、`test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py` | 直连 `QED_OCR_MODEL_URL`；不暴露调参；`PageResult.bbox_space` 声明原始块坐标空间 |
+| `src/axiom_flow/normalize/` | 后处理：统一 blocks + Markdown + 质量信号 + 分块 | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_normalize.py`、`test_chunking.py` | `blocks.py` / `chunking.py`；`scale_bbox` 按 `bbox_space` 换算到页图像素 |
 | `src/axiom_flow/db/` | af_* 四表 ORM/仓储 | **Current** | `docs/design/parsing-management.md` | `tests/unit/test_db.py` | engine/models/repositories |
 | `src/axiom_flow/migrations/` | Alembic 迁移（af_* 四表一次建全） | **Current** | `docs/architecture/database-design.md` | `tests/unit/test_db_migrations.py` | 升级/降级/重复执行；`alembic.ini` 为入口 |
 | `src/axiom_flow/schemas.py` | 统一格式 Pydantic 模型（blocks/page/book/job/edit/chunk） | **Current** | `docs/design/parsing-pipeline.md` | `tests/unit/test_schemas.py` | 内外契约单一事实源 |

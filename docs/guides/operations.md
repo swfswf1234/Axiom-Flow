@@ -48,10 +48,10 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/` | 每本书解析产物：`book.json`、`pages/pXXXX.png|.md|.blocks.json`、`chunks.json`、`manifest.json`（PLAN-002 落地） |
+| `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/` | 每本书解析产物：`book.json`、`pages/p<NNNN>.png|.md|.blocks.json`、`chunks.json`、`manifest.json`（PLAN-002 落地） |
 | `<QED_DATA_ROOT>/raw/<domain_id>/<course_id>/*.pdf` | 源书库（只读，QED-Tracker 写入；如 `math-advanced/math_analysis/`） |
-| `<QED_DATA_ROOT>/tmp/axiom-flow/<job_id>/` | 模型调用暂存（任务结束清理） |
-| `data/` | 过渡期工作目录（落点迁移后退役） |
+| `<QED_DATA_ROOT>/tmp/` | **本服务不写**：引擎中间产物只在内存（PLAN-003 条文 12），`tmp/axiom-flow/<job_id>/` 一旦存在即缺陷 |
+| `data/` | 仓库内探针与合成样本留档区（`data/probes/`，`.gitignore` 内不入版本库）；**不作数据根候选**，真实数据根唯一事实源是 `QED_DATA_ROOT` |
 
 产物只落 Windows 本地；WSL 不读写 Windows 文件系统（MinerU 容器不挂载 Windows 盘）。
 
