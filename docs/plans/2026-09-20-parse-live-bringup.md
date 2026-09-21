@@ -5,7 +5,7 @@
 最后更新：2026-09-21
 关联 ADR：[ADR 0002](../adr/0002-pending-design-location.md)（待评审设计先入 plans/）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（引擎由配置选择、不设自动兜底）、[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（MySQL 集成测试隔离边界）
 关联设计：[model-integration.md](../design/model-integration.md)、[parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)
-关联 Tracker：docs/trackers/todo.md（PLAN-003、ARCH-001/003/004/005/006/009/016/017、REQ-001、REQ-075、REQ-080、REQ-081、REQ-083、REQ-084、REQ-085、DEFECT-001/002/003 与本轮新登 DEFECT-004/005/006/007/008）
+关联 Tracker：docs/trackers/todo.md（PLAN-003、ARCH-001/003/004/005/006/009/016/017、REQ-001、REQ-075、REQ-080、REQ-081、REQ-083、REQ-084、REQ-085、REQ-036/057/074/086、DEFECT-001/002/003 与本轮新登 DEFECT-004/005/006/007/008）
 归档判定：Retain（契约条文晋升 design/architecture、实现收口后，计划壳归档 `docs/history/plans/2026-09/`）
 
 > **2026-09-20 收尾范围（用户裁决）**：本计划的执行面收窄为「**解析真机打通（小样止）** + **数据库
@@ -977,6 +977,60 @@ REQ-080 回执承接完毕；REQ-001 行保持开放，等根侧读取本节并�
 - 本方侧状态：**已闭环**——ARCH-017 单一占用闸门落地（同一时刻只有一个解析打 MinerU，等待期保持
   `queued` 且 `started_at` 为空）并在排他窗口重跑成功。但容器生命周期权在 8900，本方无法自证根侧不重启，
   故 REQ-085 保持开放直到根侧登记/确认。
+
+## 承载 REQ-036 / REQ-057 / REQ-074（2026-09-21 跨项目欠账回收）与 REQ-075 点名
+
+**目的**：根仓库台账里有四条**等的是我方动作**、但我方从未承接或从未点名的入站项。本轮全部按
+A 类（文档/回执，零代码）收口：先核对事实，再在本节写结论，回执由根仓库自读登记。
+
+**关闭条件**：本节四条结论成文 + todo/completed 同步 + 门禁全绿（本方侧即告完成；根侧读取后关闭其台账行）。
+
+| # | 根侧行（关闭条件原文） | 我方实况与结论 | 回执要点 |
+| --- | --- | --- | --- |
+| X1 | **REQ-036**（高，「对方承接回执后关闭」；它同时卡住根侧 REQ-034 前置解除与 C 组第一阶段联调） | ① V2-003 越界产物**已于 2026-08-20 审阅并自行提交**（`importer.py` + 8 测试，81 passed + ruff clean，见 completed 该行），此后 ingest 已推进到真机 486 页 E2E（ARCH-015 关闭）；② V2-004 orchestrator / V2-005 MinerU 接入 / V2-007 API v1 **全部交付**：`orchestrator/pipeline.py`（全本+逐页+页级持久化+断点续跑+单一占用闸门）、`engines/mineru.py`（3.4.4 `/tasks`→`/tasks/{id}`→`/tasks/{id}/result` + `model_load()`）、15 条 `/api/v1/*` 路由 + `tests/contract/test_api_v1_contract.py`，契约事实源 [api.md](../architecture/api.md)；③ 8902 真机只读面 L7 九端点全可用，根侧 2026-09-20「联调最小打通轮」的四处自修与我方契约一致 | **正式承接并回执**：三项子请求均由本仓库实施完毕，根侧可据此解除 REQ-034 的「等 8902 API 建立」前置。风险声明：本仓库不感知 8900 侧改造，联调结论以根侧实测为准 |
+| X2 | **REQ-057**（中，「Axiom-Flow 需完成文档审阅后回执关闭」；根侧记我方「已建文档但未审阅」） | 本仓库 [ADR 0002](../adr/0002-pending-design-location.md)（待评审设计先入 `plans/`，确定后晋升 `design/`）**状态 = Accepted，2026-08-23**，由 `tests/contract/test_adr_governance.py` 守护；且一直在实际执行：本计划「契约条文草案（晋升输入）」与 PLAN-004 条文 V1~V10 即该 ADR 的产物，晋升动作发生在 W7 / PLAN-004 P7 | 根侧台账「未审阅」一行**已过时**：审阅与接受均已完成 3 周，无需本仓库改动，请根侧改记「已审阅」并关闭 REQ-057 |
+| X3 | **REQ-074**（中，「对方回执后关闭」——Agent 标准体系对齐根 REQ-071 口径） | 本仓库走的是 [ADR 0003](../adr/0003-standards-governance-alignment.md) 的**同源不同名**路线（范本取自 QED-Tracker 成熟版 + 根仓库治理对齐）：根 `code-document-traceability.md` ≡ `standards/doc-governance.md`「代码与文档追溯」节 + `code-map.md` **逐模块登记职责/状态/设计/测试** + `test_code_document_mapping.py` 双向守护；根 `code-standards.md` ≡ `AGENTS.md`「变更分级与边界」「中文与注释」+ `guides/development.md` 六步 + `standards/testing.md` 分层与隔离铁律 + **ruff 门禁**（机器可判定，比条文更硬）；根 `storage-conventions.md` ≡ `design/parsing-pipeline.md` 条文 12（本组件不产生数据根中间产物，比「任务结束清理 tmp」更严）+ `operations.md` 数据根口径 + 测试只用 `tmp_path` | 回执「**等价覆盖，不新增同义文件**」。三条**明确差异**一并声明：① 根 `storage-conventions.md:62`「改数据根/三区/tmp/原子落盘规则需先立 ADR」本仓库**不作为 ADR 触发条件**（2026-09-20 用户裁决：该条只约束根仓库），改走本仓库「变更分级」大修改路径（todo + `plans/` 计划 + architecture/design 同步）；② **唯一实质不等价处（本轮实测）**：本仓库 `src/` 26 个 Python 模块**未普遍**采用根侧推荐的「模块职责 / 设计关联（DesignRef） / 实现状态」文件头（实测仅 `ingest/importer.py` 与 `ingest/__init__.py`，测试侧 12/29 份带「模块职责」行），追溯事实源集中在 code-map。是否补齐 26 份文件头属**新增代码规范执行**，本轮不做，留给用户裁决（见下「REQ-074 遗留裁决项」）；③ 若根侧坚持三仓库文件同名镜像，那属本仓库 `standards/` 实质规则变更，**必须先新增 ADR** 才能落地 |
+| X4 | **REQ-075**（高，「对方回执后关闭」；根侧 2026-09-21 复核仍写「待对方回执」） | 本仓库**已关闭**（completed 2026-09-21 行），回执正文就在本计划「跨项目回执稿（W8-g，2026-09-21）」的 REQ-075 段：唯一键 `QED_OCR_MODEL_URL` / 生效端口 5002、无旧键别名；MinerU 3.4.4 三段端点与 `return_content_list`/`return_middle_json` 必开；legacy `/file_parse` 与 `/get_task_results/{id}` 在 3.4.4 均 404 | 本批回执**点名**根侧读取该段并关闭 REQ-075；连带 **ARCH-020-E 的「前置阻塞 REQ-075」可解除**（其证据列仍记「HTTP 404」属修复前旧状态） |
+
+**本方侧终态**：X1~X4 无遗留动作，全部转为「等根仓库读取并关闭其台账行」。三条入站行的关闭结果已写入
+[completed.md](../trackers/completed.md)（REQ-036/057/074），REQ-075 指向其原关闭行。
+
+**REQ-074 遗留裁决项（不阻塞回执，登记在 ARCH-010 长期行）**：差异 ② 的两种处置——
+(A) 按根侧范本补齐 `src/` 26 个模块的「模块职责 / 设计关联（DesignRef） / 实现状态」文件头，并在
+`test_code_document_mapping.py` 把它变成硬判据（A 类批量文档改动，一次可做，代价是全库 diff）；
+(B) 明确接受现状（追溯事实源= code-map，文件头只写职责说明），把该决定写进 `doc-governance.md`
+追溯节并回执根侧「本仓库有意不同名」。**未获用户裁决前不实施**：本仓库 `AGENTS.md` 要求契约/规范类
+改动先定级，且补齐文件头会让 26 个模块同时进入 diff 面。
+
+## 承载 REQ-086（根侧 ARCH-020-E 的数据源需求：页级失败清单与 jobs 列表）
+
+**来源**：根仓库 `docs/trackers/todo.md` 的 **ARCH-020-E** 证据列原文——「同轮承载解析 UI 暂缓增强
+（bbox 拖拽缩放手柄、**失败页重解析按钮**、**任务中心抽屉**、页内搜索、质量信号展示——**待 8902 页级
+失败清单与 running jobs 数据源确认后排期**」。根侧未单独立号，本仓库登记为 `REQ-086`（请求接收）。
+
+**现状事实（本轮实测核对，非推测）**：
+
+- 路由清单只有 `GET /api/v1/parse-jobs/{job_id}`（`api/main.py:522`），**没有** jobs 列表端点；
+  书页只能按页号单读（`GET /books/{id}/pages/{page_no}`），`af_pages.status` 里的 `failed` 集合
+  **无法一次查出**——前端要知道「哪几页失败」目前只能自己 1..page_count 逐个试。
+- `ParseJob.progress` 只有 `{parsed, total}` 与一个 `error` 摘要字符串；`BookOut` 有 `parse_status`
+  /`pages_done`/`active_job_id`，但 `parse_status` 被「全书是否覆盖」与「最近任务结果」**共用一个字段**
+  （PLAN-003 真机新发现 N4），且 `completed` 会掩盖部分失败（N1）。
+- `running` 行存在无人推进的孤儿（DEFECT-007：`5f43593a12cc` 空闲 106683 秒），所以「running jobs」
+  这个数据源本身语义就不可信。
+
+**为什么本轮只登记不实施**：`api.md` 是根侧 8900 透传的**契约事实源**，端点集一旦开出来即成契约。
+在 DEFECT-006（部分失败/书级状态拆分）与 DEFECT-007（假 `running`）未经用户裁决成语义之前先开
+列表端点，等于把错误语义固化给前端，之后只能破坏性修订（ADR 0004 铁律：不做静默兼容层）。
+
+**需要根侧先回答的三条（作为裁决输入，随本批发出）**：
+
+1. 任务中心抽屉要的是**全书 jobs 历史**（分页、含 failed/completed）还是**仅活跃 jobs**（queued/running）？
+2. 页级失败清单是否要覆盖 `legacy` 哨兵行（`active_job_id` 为 NULL 的旧代际产物），还是只列生效版本？
+3. 失败页重解析按钮的提交粒度：单页 `pages=[n]` 够用，还是要支持「一键补齐全部 failed 页」的批价格式？
+
+**关闭条件**：DEFECT-006/007 语义裁决先行 → 端点契约成文（`api.md` + 设计条文）→ 实施带契约测试 →
+根侧确认数据源可用。责任分布：语义裁决＝用户；数据源需求细节＝根仓库；实施＝本仓库。
 
 ## 关闭与归档
 
