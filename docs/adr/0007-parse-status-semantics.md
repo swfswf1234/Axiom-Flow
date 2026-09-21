@@ -70,5 +70,6 @@ DEFECT-006/007 的取证（[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)
 取代：无。
 被取代：无。
 关联：承接 DEFECT-006（部分成功语义）与 DEFECT-007（假 `running`）的关闭条件成文；解除 ARCH-003
-的裁决阻塞；为 REQ-086 提供成文数据来源但不含其端点范围。实施由
-[PLAN-006](../plans/2026-09-21-parse-status-semantics.md) 承载。
+的裁决阻塞；为 REQ-086 提供成文数据来源但不含其端点范围。实施载体 PLAN-006 已于 2026-09-21 关闭
+并按 Delete 删除计划壳（正文见锚点 `9034a19`），结论落 `design/parsing-pipeline.md` 条文 S1~S7、
+`architecture/api.md` 状态机表与 `architecture/database-design.md` 列语义。

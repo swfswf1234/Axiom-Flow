@@ -21,3 +21,10 @@
   [history/plans/2026-09](../history/plans/2026-09/2026-09-17-axiom-flow-refactor.md)（v2 重构基线：
   2026-09-17 七条用户裁决 + af_* 真机迁移里程碑 + 8 条成功标准逐条判定）；
   关闭证据见 [completed.md](../trackers/completed.md) PLAN-002 行。
+- PLAN-006 解析状态语义收口（Axiom-Flow）已完成（2026-09-21），计划按 `Delete` 删除；语义事实源
+  固定为 [ADR 0007](../adr/0007-parse-status-semantics.md) + [api.md 状态机表](../architecture/api.md)
+  + [database-design.md 列语义](../architecture/database-design.md)
+  + [parsing-pipeline.md 条文 S1~S7](../design/parsing-pipeline.md)，运维边界见
+  [operations.md](../guides/operations.md)；壳的完整内容见提交 `9034a19`
+  （`git show 9034a19:docs/plans/2026-09-21-parse-status-semantics.md`），关闭证据见
+  [completed.md](../trackers/completed.md) PLAN-006 / DEFECT-006 / DEFECT-007 行。
