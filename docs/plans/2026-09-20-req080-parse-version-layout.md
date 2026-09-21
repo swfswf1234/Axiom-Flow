@@ -85,11 +85,12 @@ DEFECT-004（坐标空间）与 DEFECT-005（类型字面值与可见丢弃）�
 | 步 | 内容 | 为什么这个顺序 |
 | --- | --- | --- |
 | B | 本地实施 P2~P6 并全量门禁绿（fake engine + SQLite + 临时数据根） | 真机面零依赖，先把代码与迁移脚本定型 |
-| C | **单一批准窗口**：`af_*` 四表备份 → 真机 `alembic upgrade 20260920_0002` → 清 `af_pages` 幽灵行 → 释放新代码 | 备份/迁移/清理/发布必须同一窗口，否则新代码读旧表结构即故障 |
-| D | 在**版本布局上**单次重解析 `linearalgebra-b01` 前 20 页（含根仓库报告的受害第 7 页），激活后兼作 PLAN-003 W8 取证。备好的 `scripts/tmp/live_reparse_b01_pages.py`（未入库）**必须在版本布局上重写后才可用**——它写的是旧扁平路径与旧页行作用域 | 若先在旧布局重解析，V7 会把 b01 的 39 行 `af_pages`（9 个 job，非「一书一 job」）回填成 `legacy` 哨兵 → 端点不再读到该批行，真机证据一步即作废；故**不在旧布局重复真机解析** |
+| C | **单一批准窗口**：`af_*` 四表备份 → 真机 `alembic upgrade 20260920_0002` → 释放新代码。**2026-09-21 R0 修订**：原「清 `af_pages` 幽灵行」的手工 DELETE 取消——D 步强制 re-ingest 的 `reset_legacy()` 只清 `job_id='legacy'` 一批，幽灵行随之作废，无需单独授权删除；窗口前取证改由脚本 `S1_before.json` 记录 legacy/幽灵行数 | 备份/迁移/发布必须同一窗口，否则新代码读旧表结构即故障 |
+| D | 在**版本布局上**单次重解析 `linearalgebra-b01` 前 20 页（含根仓库报告的受害第 7 页），激活后兼作 PLAN-003 W8 取证。`scripts/tmp/live_reparse_b01_pages.py` **2026-09-21 R0 已重写为版本布局 + HTTP 驱动**（旧扁平路径版留档，见 I9）。**新增前置**：根仓库 2026-09-21 已清空 `dataset/parsed/` 的旧代际产物，故 D 步必先 `POST /books/{id}/ingest` 重建根视图页图，再提交解析任务 | 若先在旧布局重解析，V7 会把 b01 的存量 `af_pages`（9 个 job，非「一书一 job」）回填成 `legacy` 哨兵；而 legacy 只在 `active_job_id IS NULL` 时经根视图可读，一旦本窗口激活新版本即不再被端点读到，真机证据一步即作废；故**不在旧布局重复真机解析** |
 
-恢复条件：真机面恢复要求 = 用户批准 C 窗口（备份方案 + 迁移 + 幽灵行清理 + 发布同批）与 D 步重解析；
-本计划自身的工作项推进**不需要**等待该批准。计划关闭另需 P7 文档晋升与 P8 回执（S1~S7 证据齐备）。
+恢复条件：真机面恢复要求 = 用户批准 C 窗口（备份方案 + 迁移 + 发布同批）与 D 步 re-ingest+重解析；
+**2026-09-21 已获原则批准**（R1 窗口），执行前仍需按 runbook 逐步确认写操作。本计划自身的工作项推进
+**不需要**等待该批准。计划关闭另需 P7 文档晋升与 P8 回执（S1~S7 证据齐备）。
 
 责任位置：本仓库（P1~P8 开发、门禁与回执稿）；用户（C 窗口与 D 步重解析的 D 类批准、ADR 0005 评审、
 PLAN-003 D3 批准）。
@@ -162,17 +163,25 @@ ingest/purge 与版本的交互、只读版本列举端点、文档晋升与回�
 | # | 内容 | 产出 / 红灯判据 | 依赖 |
 | --- | --- | --- | --- |
 | P0 | 本计划转 Accepted（用户评审 V1~V10 与裁决 1~4）；治理入口按 `AGENTS.md` 大修改路径由本计划 + todo 承载，**不立 ADR**（2026-09-20 裁决） | **2026-09-21 达成**（裁决 5：用户选择「解除过度阻塞并开工实施」= V1~V10 评审通过；计划状态转 `In Progress`）；todo PLAN-004 行同步 | PLAN-003 收口（C1/C2/C3）——**已按裁决 5 改判为「C1/C3 达成即可开发」，C2 的 D3/D5 只关真机取证面** |
-| P1 | 向根仓库发**确认请求**（新 REQ 行）：指针式是否满足 R2「根目录即当前版」、manifest 基准（R8）、版本对比/回滚是否需要契约、人工编辑不随版本继承的可见性 | 跨项目请求登记（本方 todo + 回执稿） | P0 |
+| P1 | 向根仓库发**确认请求**（新 REQ 行）：指针式是否满足 R2「根目录即当前版」、manifest 基准（R8）、版本对比/回滚是否需要契约、人工编辑不随版本继承的可见性 | **2026-09-21 改判：不新增独立 REQ 行**，确认清单并入 REQ-080 回执稿的「请根仓库确认/回应的清单」四条（差异 1~4 同节成文），由根仓库在其 REQ-080 行一并登记——同一需求的两面（实施回执 + 契约确认）不分列两行。todo REQ-080 行的下一条件已含该项 | P0 |
 | P2 | Alembic 迁移 `20260920_0002`：`af_books.active_job_id`、`af_parse_jobs.source_sha256/page_count`、`af_pages` PK 重建、`af_block_edits` 唯一键与 `edit_id` 重建 + backfill（含 `legacy` 哨兵）；`db/models.py`、`repositories.py` 同步 | **达成（2026-09-21）**：迁移 `src/axiom_flow/migrations/versions/20260920_0002_parse_version_scoping.py`（主键/唯一键走「建新表 + 拷贝 + 改名」，同一份 DDL 兼容 SQLite 与 MySQL）；`test_db_migrations.py` 升/降/backfill/死默认值 8 例先红后绿，升降级可重复 | P0 |
 | P3 | `ingest/artifacts.py`：新增 `version_dir_for()`（含 `ensure_safe_segment(job_id)`）、`link_pages_into()`（`os.link` 回落 `copy2`）、`build_manifest()` 排除 `versions/`；`BookRepository.set_active_job()` 仓储方法 | **达成**：`version_dir_for`/`link_pages_into`/`seed_version_from`/`VERSIONS_DIRNAME` 落地，根 `build_manifest()` 排除 `versions/` 子树；`set_active_job()` 为激活唯一入口；红灯见 `tests/unit/test_ingest.py`（根清单不含 `versions/`、越界 `job_id` 报错、硬链接与根页图同 inode、不支持平台回落复制） | P2 |
 | P4 | `orchestrator/pipeline.py`：产物写版本目录、建页图硬链接、job 行写 `source_sha256/page_count`、终态校验后激活（单列 UPDATE）；保持条文 3 的页级提交与节流顺序；中间产物不落数据根（V10） | **达成**：写目标自第一页起即版本目录；`_inherit_page_rows` 保证页行与版本产物同构；续跑判据在 `(book_id, job_id)` 作用域内且要求 `blocks.json` 在盘；未 `completed`/有失败页不激活；`tests/unit/test_orchestrator.py` 全本/逐页/kill 续跑判据全绿 + 新增版本维度断言 | P3 |
 | P5 | `api/main.py`：读取路径统一走生效版本解析（含 `active_job_id IS NULL` 的 legacy 回落）、`GET /books/{id}/versions`、`BookOut.active_job_id`、提交任务不再隐式依赖根目录产物清单 | **达成**：`_read_scope()` 为读取面唯一入口，五类只读端点 + 块编辑端点全部改造；`ParseVersionOut` 与 `GET /books/{id}/versions` 上线；契约 `TestParseVersions`（S1 两版本并存读生效版、S4 `image_url` 字面量常量、manifest 基准=版本目录、生效目录缺失 404 不回落、重 ingest 后历史版本按 `job_id` 可直读） | P4 |
 | P6 | ingest/purge 改造（V8）：`ingest_book()` 只交换 `book.json` + `pages/`、保 `versions/`；API 侧不再调 `reset_for_book()` 删全部页行，改置 `active_job_id=NULL`；purge 删含 `versions/` 的整本目录 | **达成**：`importer._swap_root_view()`（改名让位 → 上位 → 清旧目录 + 失败回滚，无「`pages/` 不存在」读空窗），`reset_legacy()` 只清根视图行；`DELETE` 清全部版本 `af_pages` + `af_block_edits`（`delete_for_book`），purge 删整本目录；红灯：`test_reingest_preserves_versions_directory` + 契约「重 ingest 后版本目录仍在、根视图回落 legacy」 | P4 |
 | P7 | 文档晋升与联动：`parsing-pipeline.md`（产物树/版本目录/V10）、`parsing-management.md`（V8/端点表）、`api.md`（V5/V6/V9）、`database-design.md`（V2/V7 + Mermaid + DDL）、`code-map.md`、`guides/operations.md`；销账 PLAN-003「W7 完成登记」发现 2（`engine` 死默认值随本迁移一并清理）；发现 1（`tmp/`）已由条文 12 改判，随 V10 一并成文 | **2026-09-21 成文**：六份文档 + 两份台账已同步（`design/parsing-pipeline.md` 新增「解析版本与生效指针」节、`architecture/api.md` 新增 `/versions` 与生效版本读法、`database-design.md` 四表 DDL/Mermaid 重写、`operations.md` 新增单窗口 runbook）；PLAN-003 发现 2 已随 `20260920_0002` 的 `alter_column(server_default=None)` 销账并有守护用例 | P2~P6 定型 |
-| P8 | 门禁与收口：全量 `pytest` + `ruff`；REQ-080 实施回执稿（含差异点与待确认清单）、PLAN-003 W8 待办补「新布局上重跑冒烟」、`project-status.md` 刷新 | **进行中**：本地门禁 `352 passed, 2 skipped` + `ruff` 全绿；回执稿见「实施登记」附后的 P8 稿；S7（回执发出 + 根确认）与真机 C/D 窗口留恢复条件 | P7 |
+| P8 | 门禁与收口：全量 `pytest` + `ruff`；REQ-080 实施回执稿（含差异点与待确认清单）、PLAN-003 W8 待办补「新布局上重跑冒烟」、`project-status.md` 刷新 | **进行中**：本地门禁 `376 passed, 10 skipped` + `ruff` 全绿；**真机 D 步已达成（2026-09-21 20:35~20:36，job `86ab56ae2b6c`）**——版本布局上单次重解析 20 页全部 parsed 并**首次激活** `active_job_id`，`versions/<job_id>/` 产物 529 个（含 `chunks.json`/`manifest.json`）、根视图无 `chunks.json`、页图硬链接同 inode、丢弃 0；取证 `data/probes/live-window-20260921/{S1c_exclusive,S2_after}.json`（过程与两处脚本缺陷见 [PLAN-003](2026-09-20-parse-live-bringup.md)「承载 ARCH-017」节 G4/G5）。剩 S7：REQ-080/081/083 回执发出 + 根仓库确认 | P7 |
 
-台账联动：REQ-080 于 P8 关闭（回执发出且根仓库确认）；ARCH-004（分块）与 ARCH-005/006（对照/编辑）
-的产物读取前置在本计划解除；DEFECT-003 的「块下标 remapping」挂账项随 V7 收口；PLAN-003 W7 登记
+**D 步真机结论（2026-09-21，条文逐条判定）**：V1（不回写根视图）、V2（页行按 `(book_id, job_id)`
+作用域）、V3（`completed` + 产物齐备才激活，单列 UPDATE）、V5/V6（读取面走生效版本，`image_url`
+字面量不变）、V8（re-ingest 只换根视图、`versions/` 保留且 39 行 legacy 整批作废）、V9（`/versions`
+列出 12 个历史版本，失败版本 `parsed=0` 不激活）在本窗口一次运行内同时成立；V4/V7/V10 的本地判据
+不变。**串行前提**：本窗口 D-2 首次尝试因根侧并发提交 + 容器被重启而失败（归因失真的「模型服务不可用」），
+已由 ARCH-017 的单一占用闸门与出站请求 REQ-085 收口——版本布局本身无回归（零页行、指针未动、产物保留）。
+
+台账联动：REQ-080 于 P8 关闭（回执发出且根仓库确认）；**ARCH-004（分块）于 2026-09-21 随 D 步真机
+取证关闭**（`versions/86ab56ae2b6c/chunks.json` 生成 + 根视图无 `chunks.json`），ARCH-005/006（对照/
+编辑）的产物读取前置在本计划解除；DEFECT-003 的「块下标 remapping」挂账项随 V7 收口；PLAN-003 W7 登记
 的发现 1（`tmp/axiom-flow/`）改判为条文 12（不实现），发现 2（`af_parse_jobs.engine` 死默认值）在 P7 销账；
 PLAN-003 W8 的复核触发点在 P8 更新为「必须在版本布局上取证」。
 
@@ -191,7 +200,7 @@ PLAN-003 W8 的复核触发点在 P8 更新为「必须在版本布局上取证�
 | I6 | **生效版本目录缺失 → 显式 404**（`生效版本产物缺失：{book_id} @ {job_id}`），**不回落根视图** | ADR 0004 无自动兜底：静默回落会让前端以为在读新版本、实际读旧数据，比报错更坏 |
 | I7 | **`edit_id` 摘要纳入 `job_id`，但定位一律走唯一键** | 迁移前存量行保留旧摘要（不含 `job_id`）；若按新摘要查询，已有人工编辑会变成孤儿。重算历史主键属无收益的破坏性动作 |
 | I8 | **`ParseJobRow.engine` 与 DDL 默认值同时收口**：仓储行数据类 `engine` 改为必填、迁移 `20260920_0002` 里 `alter_column("engine", server_default=None)` | PLAN-003「W7 发现 2」销账：`'mineru'` 的 DDL 兜底是静默回落入口（ADR 0004 禁止）。降级**不**恢复死默认值（有意的单向门） |
-| I9 | **真机冒烟判据同步版本布局**：`tests/smoke/test_live_mineru_chain.py` 的整本用例改为断言 `versions/<job_id>/` 内产物齐套 + `active_job_id == job_id` + 根视图**不含** `chunks.json`（默认门禁 skip，故不改变 352 的计数） | 该用例是 D 窗口的取证工具；若仍断言旧扁平路径，D 步必然「代码对、用例红」，把实现问题误读成模型问题。`scripts/tmp/live_reparse_b01_pages.py`（未入库）同理**必须在版本布局上重写后**才可用于 D 步 |
+| I9 | **真机冒烟判据同步版本布局**：`tests/smoke/test_live_mineru_chain.py` 的整本用例改为断言 `versions/<job_id>/` 内产物齐套 + `active_job_id == job_id` + 根视图**不含** `chunks.json`（默认门禁 skip，故不改变 352 的计数）。**2026-09-21 R0 销账**：`scripts/tmp/live_reparse_b01_pages.py` 已在版本布局上重写为 HTTP 驱动（走 8902 端点提交/轮询，不再自拼旧扁平路径），并加部署自检（`alembic_version==20260920_0002` + `active_job_id` 字段在响应中）、`--check-only` 只读预检、pages 越界 422 复验与 re-ingest 自动化；旧扁平副本留档 `data/probes/window-prep-20260921/live_reparse_b01_pages.py.old-flat-layout`（见 [PLAN-003](2026-09-20-parse-live-bringup.md)「承载 REQ-083 / DEFECT-008 / DEFECT-006」节 R0-4） | 该用例是 D 窗口的取证工具；若仍断言旧扁平路径，D 步必然「代码对、用例红」，把实现问题误读成模型问题。脚本同理**必须在版本布局上重写后**才可用于 D 步，且重写要防「对未迁移部署跑真机」这类不可逆误操作 |
 
 **S1~S6 本地取证矩阵**（全部在 `tmp_path` 假数据根 + `FakeEngine` + SQLite 上成立；真机面见下一节）：
 
@@ -236,10 +245,21 @@ PLAN-003 W8 的复核触发点在 P8 更新为「必须在版本布局上取证�
 - 人工编辑**不随版本继承**是否可接受（新版本的块下标与内容可能不同，跨版本套用编辑即污染）；
 - 旧版本清理策略（磁盘配额）仍属 D 类，需另行立项并经用户确认，本计划不自动删除。
 
+**真机取证（2026-09-21 R1 窗口，回执可据此发出）**：真实部署 `alembic_version = 20260920_0002`；
+D-1 re-ingest 补齐 486 张页图并把 39 行 legacy（含第 999 页幽灵行）整批作废为 0 行；D-2 在版本布局上
+**单次**重解析 `linearalgebra-b01` 前 20 页 → job `86ab56ae2b6c` 20/20、52 秒，`parse_status=completed`、
+`pages_done=20`、`active_job_id=86ab56ae2b6c`（**首次真机激活**）。`versions/86ab56ae2b6c/` = 529 文件
+（`book.json` + `chunks.json` + `manifest.json` + 20×`blocks.json` + 20×`md` + 486 页图，其中 20 张与根
+视图**同 inode** 硬链接），根视图 `chunks.json` 不存在（`root_view_has_no_chunks=True`）；只读端点回显
+正常、块丢弃 0、`GET /books/{id}/versions` 列 12 个历史版本（失败版本 `parsed=0` 且不激活）。
+取证：`data/probes/live-window-20260921/{S0_preflight,S1_before,S1c_exclusive,S2_after}.json`。
+**给根侧的一条操作前提**：本机 GPU 只容得下一个 MinerU 解析，8900 侧不得在 8902 尚有在飞任务时并发提交
+或重启 vision 槽位（出站请求 REQ-085；本方已加闸门，等待期任务保持 `queued` 且 `started_at` 为空）。
+
 **REQ-081 时点承诺**：本方在真机 C 窗口（`af_*` 备份 + `alembic upgrade 20260920_0002` + 幽灵行清理
 + 同窗口发布）与 D 步（版本布局上单次重解析 `linearalgebra-b01` 前 20 页）完成后向根仓库发**二次
-回执**，届时根侧 §13 项 3/5 的复测数据才具代表性；根侧「b01 仅 2 页产物」的前提已过时（本方
-`af_pages` 为第 3~40 页 `parsed`）。
+回执**（**两前提均已于 2026-09-21 达成 ⇒ 二次回执即刻可发**），届时根侧 §13 项 3/5 的复测数据才具
+代表性；根侧「b01 仅 2 页产物」的前提已过时（现为生效版本 `86ab56ae2b6c` 的第 1~20 页 `parsed`）。
 
 ## 验证与验收
 
@@ -250,7 +270,8 @@ PLAN-003 W8 的复核触发点在 P8 更新为「必须在版本布局上取证�
 - **门禁命令**（`QED_env` 解释器）：
   `D:/software/anaconda3/envs/QED_env/python.exe -m pytest tests -q`（基线由 **303 passed, 2 skipped**
   增长到 **352 passed, 2 skipped**，2026-09-21 P2~P6 实施后；`tests/contract` 由 82 → **94**；本计划
-  每步只增不减）
+  每步只增不减。R1 窗口后的当前全量为 **376 passed, 10 skipped** + 契约 **96**，增量来自 ARCH-017
+  闸门用例与 ADR 0005 的 MySQL 层默认 skip）
   `+ -m ruff check src tests scripts`；文档触发项追加
   `tests/contract/test_architecture_documents.py`、`test_design_documents.py`、
   `test_code_document_mapping.py`、`test_plan_governance.py`、`test_tracker_governance.py`。
@@ -272,8 +293,19 @@ PLAN-003 W8 的复核触发点在 P8 更新为「必须在版本布局上取证�
 
 ## 关闭与归档
 
-- **关闭条件**：S1~S7 全达成；REQ-080 回执发出并获根仓库确认（或按其反馈改判）；迁移在真机
-  执行成功（或明确挂到 W8 同一窗口执行并在 todo 留恢复条件）。
+- **关闭条件（2026-09-21 拆分为两面，避免把真机外部依赖误读成开发前置——本轮曾因此过度阻塞）**：
+  - **本地面（已达成，2026-09-21）**：条文 V1~V10 晋升 `design`/`architecture`（P7）+ S1~S6 在
+    `tmp_path` + `FakeEngine` + SQLite 上有守护用例 + 全量门禁绿（`352 passed, 2 skipped`、契约 94、
+    ruff）。P1 确认清单并入回执稿成文。
+  - **真机面（唯一剩余门槛，全部 D 类待批准）**：① C 窗口执行成功（备份 + `alembic upgrade
+    20260920_0002` + 幽灵行清理 + 同窗口发布）；② D 步在版本布局上单次重解析并激活成功；③ S7 =
+    REQ-080 回执**发出**（①② 之前不发，否则向根仓库陈述未落地的状态）并获根确认或按其反馈改判。
+    关闭条件原文的替代支（迁移「明确挂到 W8 同一窗口执行并在 todo 留恢复条件」）**已满足**，
+    但 S7 独立不达成 ⇒ 本计划仍不得关闭。
+- **当前差距小结（2026-09-21 R1 窗口后）**：S1~S6 ✅ / P1 ✅ / P7 ✅ / P8 本地部分 ✅ /
+  **真机 ① C 窗口 ✅ + ② D 步 ✅**（迁移 `20260920_0002`、D-1 re-ingest、D-2 单次重解析并激活
+  `86ab56ae2b6c`）；仅剩 **S7 = REQ-080 回执发出** ⇒ 本计划不得关闭。连带保持开放：REQ-080（回执发出）、
+  REQ-081（二次回执）、PLAN-003 的 D3/W8 取证。ARCH-004 已随之关闭。
 - **归档判定 Retain**：根仓库需求对表（R1~R10）、现状约束（L1~L10）与条文推导需保留，
   计划壳归档 `docs/history/plans/2026-09/`。
 - **收尾动作**：todo 的 PLAN-004/REQ-080 行原子迁移 `completed.md`；`project-status.md` 能力表

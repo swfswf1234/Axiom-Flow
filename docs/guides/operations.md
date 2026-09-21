@@ -68,6 +68,11 @@
 重解析），**不在旧布局上重复真机解析**（避免解析完即被回填成 `legacy` 而失效）：
 
 ```powershell
+# C-0 窗口排他（本机 GPU 只容得下一个解析；与 8900 侧约定静默后再开工）
+#   **占用判据以模型侧计数为准**：GET http://127.0.0.1:5002/health → queued_tasks + processing_tasks == 0
+#   本机侧只判 af_parse_jobs 有无 `queued` 行；服务重启后遗留的 `running` 行是**无人推进的孤儿**
+#   （DEFECT-007），不阻塞窗口、只登记取证（2026-09-21 R1 实证：孤儿空闲 106683 秒）
+#   窗口期间不得经 8900 重启/换起 vision 槽位（2026-09-21 R1 实证：重启令排队与在飞任务同时判死）
 # C-1 停服（避免运行中写库）
 & D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py stop
 # C-2 备份 af_* 四表（含 alembic_version），例：导出到带日期的 .sql 后核对行数
@@ -77,16 +82,35 @@
 # C-4 校验：版本行 + 存量作用域 + 生效指针恒 NULL（存量不自动改语义）
 #   alembic_version = 20260920_0002；SELECT DISTINCT job_id FROM af_pages;（预期 legacy 或单书唯一 job）
 #   SELECT book_id, active_job_id FROM af_books;（预期全 NULL）
-# C-5 清理 af_pages 幽灵行（第 999 页等无产物行）——**单独授权后才删**
+# C-5 清理 af_pages 幽灵行（第 999 页等无产物行）——**2026-09-21 取消**：D 步 re-ingest 按 V8
+#     只作废 legacy 一批（`reset_legacy`），取证由窗口脚本 S1_before.json 承担，不手工 DELETE
 # C-6 起服并只读冒烟
 & D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py start --wait
+# C-7 窗口前置取证（不写不解析：就绪轮询 + 部署自证 + 越界 422 门槛复验）
+& D:\software\anaconda3/envs\QED_env\python.exe scripts/tmp/live_reparse_b01_pages.py --check-only
 ```
+
+- **窗口工具一律直连本机端口（`trust_env=False`）**：Windows 注册表代理开启后**不豁免** `127.0.0.1`，
+  `httpx` 默认跟随环境代理会让 5002/8902 的探活全部变 **502**（同刻 `curl` 直连仍 200），窗口可因此
+  空转到截止。适配器侧的同一条不变式见 [model-integration](../design/model-integration.md) 的
+  「直连，不经系统代理」条；`scripts/tmp/` 下的
+  窗口脚本与人工 `curl` 之外的一切自动化都必须显式关闭 `trust_env`。
+
+- **模型就绪不以 8900 的一次提示为准**：5002 的 vLLM 权重加载是分钟级，而根侧前端 `operateModel`
+  轮询截止只有 15s（`web-ui/src/stores/runtime.ts`），超时即显示「失败」但容器仍在起。判据用
+  `GET http://127.0.0.1:5002/health` **轮询到 200**（窗口脚本已内置，默认 300s 截止）。
 
 - **回滚**：`python -m alembic downgrade 20260917_0001` 是**有损**操作（旧结构无法表达多版本，按
   `(书, 页)`/`(书, 页, 块)` 只保留 `job_id` 最小的一行），因此回滚优先用 C-2 的备份还原；产物文件
   不随迁移删除，DB 与文件解耦。
-- **D 步（重解析）**：在版本布局上对目标书提交一次解析任务，产物落 `versions/<job_id>/`，成功后
+- **D 步（单次重解析）**：`python scripts/tmp/live_reparse_b01_pages.py 1 20` —— 脚本**只经 8902 API**
+  驱动（提交期门槛、生效指针、只读端点一并取证），先按需 re-ingest 补齐根视图页图（**根仓库
+  2026-09-21 已清空 `dataset/parsed/` 的 4 本旧代际产物，故页图必须重渲染；`af_pages` 里的旧
+  `parsed` 行描述的文件已不存在**），再提交一次解析任务；产物落 `versions/<job_id>/`，成功后
   `active_job_id` 指向该版本；重解析同时作为 PLAN-003 W8 的续跑证据。
+- **补证据不得再解析一次**：解析成功但取证段失败时，用 `--evidence-only <job_id>` 只读重取
+  （跳过 ingest/门槛探针/C-0/提交）。单次重解析是用户裁决的窗口约束，重新解析会制造新版本目录并
+  让已激活指针被移动。首次窗口（2026-09-21）即以此方式补齐 `S2_after.json`。
 - 迁移期间 8902 离线：8900 返回 503 并降级显示（独立性铁律），不影响配置域与其他界面。
 
 ## 故障排查

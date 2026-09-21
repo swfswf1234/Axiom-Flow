@@ -20,7 +20,7 @@ from axiom_flow.api.main import create_app
 from axiom_flow.config import load_settings
 from axiom_flow.db.models import AfPage, AfParseJob, Base
 from axiom_flow.db.repositories import ParseJobRepository
-from axiom_flow.engines.base import DocumentResult, PageResult
+from axiom_flow.engines.base import DocumentResult, ModelLoad, PageResult
 
 
 class FakeEngine:
@@ -34,6 +34,10 @@ class FakeEngine:
 
     def health(self) -> bool:
         return self.healthy
+
+    def model_load(self) -> ModelLoad:
+        """恒为空闲：契约面只跑单一占用闸门的放行分支（占用分支由编排单测守护）。"""
+        return ModelLoad(queued=0, processing=0)
 
     def close(self) -> None:
         self.closed = True
@@ -366,6 +370,26 @@ class TestParseJobsEndpoints:
         page = client.get("/api/v1/books/mathanalysis-b05/pages/2").json()
         assert page["blocks"]["blocks"][0]["text"] == "第 2 页重解析"
 
+    def test_pages_out_of_range_returns_422_and_creates_no_job(self, tmp_path, monkeypatch):
+        """DEFECT-006：pages 越界在受理前拒收（真机曾因此写出第 999 页幽灵行）。
+
+        故意用 `healthy=False` 的假引擎：422 必须先于 503 判出，否则越界请求仍会打模型。
+        """
+        test_client, session_factory = _build(
+            tmp_path, monkeypatch, engine_factory=lambda name: FakeEngine(healthy=False)
+        )
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)  # page_count == 2
+            for pages in ([3], [0], [-1], [1, 999]):
+                response = client.post(
+                    "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": pages}
+                )
+                assert response.status_code == 422, pages
+                assert "页码越界" in response.json()["detail"], pages
+            with session_factory() as session:
+                assert session.scalars(select(AfParseJob)).all() == []
+
     def test_job_missing_book_returns_404(self, client):
         assert client.post("/api/v1/parse-jobs", json={"book_id": "nope"}).status_code == 404
 
@@ -679,6 +703,22 @@ class TestDataBoundary:
         ):
             response = client.post("/api/v1/books/sync", json=[payload])
             assert response.status_code == 422, payload
+
+    def test_sync_accepts_fullwidth_punctuation_in_file_path(self, client):
+        """REQ-083：全角标点不是遍历风险；一条含 `（）：` 的路径不得殃及整批 422。"""
+        response = client.post(
+            "/api/v1/books/sync",
+            json=[
+                {"book_id": "mathanalysis-b17", "file_path": "raw/数学分析（第2版）.pdf"},
+                {"book_id": "probability-b03", "file_path": "raw/概率论：教程.pdf"},
+            ],
+        )
+
+        assert response.status_code == 200, response.text
+        assert sorted(book["book_id"] for book in response.json()["books"]) == [
+            "mathanalysis-b17",
+            "probability-b03",
+        ]
 
     def test_parse_job_rejects_unsafe_book_id(self, client):
         response = client.post("/api/v1/parse-jobs", json={"book_id": "../evil"})

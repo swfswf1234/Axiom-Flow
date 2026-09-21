@@ -475,8 +475,9 @@ def create_app(
     def create_parse_job(payload: ParseJobCreate, session: SessionDep) -> ParseJob:
         """提交解析任务：pages 缺省 = 全本解析；指定页 = 逐页重解析。202 受理后后台执行。
 
-        受理前两道门槛（条文 5/6）：引擎名解析（未实现 400、未知 422，不回落 MinerU）与
-        模型服务探活（不可用 503）；两者都不创建任务行。受理后的服务故障才记为 job `failed`。
+        受理前三道门槛（条文 5/6 + DEFECT-006）：页码越界 422（不探活、不落任务行，否则会在
+        `af_pages` 写出指向不存在页图的状态行）、引擎名解析（未实现 400、未知 422，不回落
+        MinerU）、模型服务探活（不可用 503）；三者都不创建任务行。受理后的服务故障才记为 job `failed`。
         """
         book = BookRepository(session).get(payload.book_id)
         if book is None:
@@ -484,6 +485,12 @@ def create_app(
         book_dir = book_dir_for(data_root, book.domain_id, book.course_id, payload.book_id)
         if not (book_dir / "book.json").is_file():
             raise HTTPException(status_code=404, detail=f"尚未 ingest：{payload.book_id}")
+        out_of_range = [p for p in payload.pages or () if p < 1 or p > (book.page_count or 0)]
+        if out_of_range:
+            raise HTTPException(
+                status_code=422,
+                detail=f"页码越界：{payload.book_id} 共 {book.page_count} 页，请求 {out_of_range}",
+            )
         try:
             engine_name = resolve_engine_name(payload.engine, settings.ocr_engine)
         except EngineSelectionError as exc:

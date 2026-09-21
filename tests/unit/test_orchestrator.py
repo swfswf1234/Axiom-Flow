@@ -25,7 +25,7 @@ from axiom_flow.db.repositories import (
     ParseJobRepository,
     ParseJobRow,
 )
-from axiom_flow.engines.base import DocumentResult, EngineError, PageResult
+from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
 from axiom_flow.ingest import ingest_book
 from axiom_flow.orchestrator import pipeline, run_parse_job
 from axiom_flow.schemas import BlocksPage
@@ -44,19 +44,37 @@ def _make_pdf(path: Path, pages: int = 2) -> Path:
 
 
 class FakeEngine:
-    """假引擎：全本两页；单页按页码返回。"""
+    """假引擎：全本两页；单页按页码返回。`loads` 逐次给出负载（耗尽后重复末值）。"""
 
     name = "mineru"
 
-    def __init__(self, *, healthy: bool = True, fail_pages: set[int] | None = None, fail_document: bool = False):
+    def __init__(
+        self,
+        *,
+        healthy: bool = True,
+        fail_pages: set[int] | None = None,
+        fail_document: bool = False,
+        loads: list[ModelLoad | None] | None = None,
+    ):
         self.healthy = healthy
         self.fail_pages = fail_pages or set()
         self.fail_document = fail_document
+        self.loads = loads
+        self.load_calls = 0
+        self.parse_calls = 0
 
     def health(self) -> bool:
         return self.healthy
 
+    def model_load(self) -> ModelLoad | None:
+        if self.loads is None:
+            return None
+        index = min(self.load_calls, len(self.loads) - 1)
+        self.load_calls += 1
+        return self.loads[index]
+
     def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult:
+        self.parse_calls += 1
         if self.fail_document:
             raise EngineError("MinerU 服务不可达：connection refused")
         return DocumentResult(
@@ -75,6 +93,7 @@ class FakeEngine:
         )
 
     def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult:
+        self.parse_calls += 1
         if page_no in self.fail_pages:
             raise EngineError(f"第 {page_no} 页解析失败")
         return PageResult(
@@ -302,6 +321,83 @@ class TestWholeBookJob:
 
         assert outcome.status == "failed"
         assert "书目不存在" in outcome.error
+
+
+class TestSingleOccupancyGate:
+    """单一占用闸门（ARCH-017 / R1 窗口实证）：他人占用时不提交，等待期保持 queued，超时文案分列。"""
+
+    def test_waits_for_idle_then_parses(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session, pages=[1])
+        engine = FakeEngine(
+            loads=[ModelLoad(queued=1, processing=0), ModelLoad(queued=0, processing=1), ModelLoad(queued=0, processing=0)]
+        )
+
+        outcome = run_parse_job(
+            session=session,
+            engine=engine,
+            job_id=job_id,
+            book_id="b05",
+            pages=[1],
+            data_root=data_root,
+            model_gate_interval=0.0,
+            model_gate_deadline=5.0,
+        )
+
+        assert outcome.status == "completed"
+        assert engine.load_calls == 3, "空闲前不得提交，每轮等待后复探一次"
+        assert engine.parse_calls == 1
+
+    def test_busy_until_deadline_fails_with_occupancy_wording(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session, pages=[1])
+        engine = FakeEngine(loads=[ModelLoad(queued=0, processing=1)])
+
+        outcome = run_parse_job(
+            session=session,
+            engine=engine,
+            job_id=job_id,
+            book_id="b05",
+            pages=[1],
+            data_root=data_root,
+            model_gate_interval=0.0,
+            model_gate_deadline=0.05,
+        )
+
+        assert outcome.status == "failed"
+        assert "占用" in outcome.error
+        assert "不可用" not in outcome.error, "占用与不可用是两种语义，不互相冒充"
+        assert engine.parse_calls == 0, "占用期间不得向模型服务提交任何内容"
+        job = ParseJobRepository(session).get(job_id)
+        assert job is not None and job.started_at is None, "等待期保持 queued（started_at 为空）"
+        assert PageRepository(session).list_for_book("b05", job_id) == []
+        book = BookRepository(session).get("b05")
+        assert book is not None and book.active_job_id is None
+
+    def test_engine_without_load_reporting_passes_through(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session, pages=[1])
+        engine = FakeEngine(loads=[None])
+
+        outcome = run_parse_job(
+            session=session,
+            engine=engine,
+            job_id=job_id,
+            book_id="b05",
+            pages=[1],
+            data_root=data_root,
+            model_gate_interval=0.0,
+            model_gate_deadline=5.0,
+        )
+
+        assert outcome.status == "completed", "引擎不上报负载时按可用放行，不臆造阻塞"
+        assert engine.load_calls == 1
+
+    def test_gate_contract_numbers(self):
+        assert (pipeline.MODEL_GATE_INTERVAL_SECONDS, pipeline.MODEL_GATE_DEADLINE_SECONDS) == (5.0, 900.0)
 
 
 class TestPerPageJob:

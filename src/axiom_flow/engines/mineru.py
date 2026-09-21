@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx
 
-from axiom_flow.engines.base import BboxSpace, DocumentResult, EngineError, PageResult
+from axiom_flow.engines.base import BboxSpace, DocumentResult, EngineError, ModelLoad, PageResult
 
 _DONE_STATES = {"done", "completed", "finished", "success"}
 _FAIL_STATES = {"fail", "failed", "error"}
@@ -43,6 +43,13 @@ _MIME_BY_SUFFIX = {
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
 }
+
+
+def _count(value: Any) -> int | None:
+    """负载计数字段：非负整数才采信（`bool` 不算），其余（缺失/字符串/负数）返回 None。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
 
 
 def _mime_for(filename: str) -> str:
@@ -216,6 +223,30 @@ class MinerUEngine:
         except httpx.HTTPError:
             return False
         return response.status_code == 200
+
+    def model_load(self) -> ModelLoad | None:
+        """负载探测：`GET /health` 的 `queued_tasks` / `processing_tasks`（3.4.4 实测字段）。
+
+        非 200、传输异常、非 JSON 对象或字段缺失/非计数一律返回 `None`＝**无法判定**：编排层按
+        可用放行，不因为探测不灵就凭空造出一个阻塞；真正的不可达仍由 `health()` 判定。
+        """
+        try:
+            response = self._http().get(f"{self.base_url}/health", timeout=min(self.timeout, 5.0))
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        queued = _count(payload.get("queued_tasks"))
+        processing = _count(payload.get("processing_tasks"))
+        if queued is None or processing is None:
+            return None
+        return ModelLoad(queued=queued, processing=processing)
 
     def _submit(self, content: bytes, filename: str) -> str:
         """提交任务：`POST /tasks`，202 受理并返回顶层 `task_id`。"""

@@ -14,56 +14,60 @@
 逐页/全本）→ 对照渲染 → 块级人工校验修改。设计见 [parsing-management](../design/parsing-management.md)、
 [parsing-pipeline](../design/parsing-pipeline.md)、[model-integration](../design/model-integration.md)。
 
-**推进顺序**：产物按版本划分（**PLAN-004，本地已交付，剩真机 C/D 窗口**）→ 真机打通收尾（PLAN-003，
-仅剩外部/裁决依赖）→ 对照与块编辑联调（ARCH-005/006）→ 代表书验收（ARCH-009）→ 跨项目回执
-（REQ-001/080/081）；裁决项 DEFECT-006/007 与 ADR 0005（DEFECT-001）择机插入，DEFECT-008 无阻塞可
-随时开工。各支线过程史实在其承载计划正文。
+**推进顺序**：产物按版本划分（**PLAN-004，本地 + 真机 C/D 均已达成，只剩 REQ-080 回执发出**）→
+真机打通收尾（PLAN-003，仅剩 D3 与外部/裁决依赖）→ 对照与块编辑联调（ARCH-005/006）→ 代表书验收
+（ARCH-009）→ 跨项目回执（REQ-001/080/081/083/084/085）。R0 批次（2026-09-21）收掉不需真机的入站项
+与窗口前置项；**R1 窗口（同日）真机达成** C 迁移 + D-1 re-ingest + D-2 单次重解析**首次激活版本**
+（前提：ARCH-017 单一占用闸门，已关闭）。各支线过程史实在其承载计划正文。
 
 ### 主线聚合
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
-| ARCH-001 | 主线 | 高 | In Progress | 解析管理闭环（聚合行）：同步/ingest/解析/对照/块编辑全链路达成（对齐根仓库 ARCH-020） | 下列全部支线行关闭且代表书验收达标 | 子行：ARCH-003/004/005/006/009/016、DEFECT-001/006/007/008、REQ-001/080/081。现状：引擎对齐、归一化与台账承载契约已关闭，版本划分本地完成、真机窗口待批。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| ARCH-001 | 主线 | 高 | In Progress | 解析管理闭环（聚合行）：同步/ingest/解析/对照/块编辑全链路达成（对齐根仓库 ARCH-020） | 下列全部支线行关闭且代表书验收达标 | 子行：ARCH-003/005/006/009/016、DEFECT-006/007、REQ-001/080/081/083/084/085。R1 窗口真机达成：C 迁移 + D-1 re-ingest + D-2 排他重解析**首次激活**；剩对照/块编辑与代表书验收。承载 [PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
 | PLAN-002 | 主线 | 高 | In Progress | [Axiom-Flow 配置简化与解析重构（axiom-flow-refactor）](../plans/2026-09-17-axiom-flow-refactor.md) | 8 条成功标准逐条判定：标准 6/7 随 PLAN-003 关闭即达成，标准 8 回执完成 | Step 1/2-A~E 已交付并真机验证；Step 3 由 PLAN-003 承接。判定表见计划「2026-09-20 复核与收窄」节。 |
-| PLAN-003 | 主线 | 高 | In Progress | [解析真机打通：设计偏差核对与契约修正（parse-live-bringup）](../plans/2026-09-20-parse-live-bringup.md) | C2 的 D3 删除演练与 D5/W3（ADR 0005）执行并登记 | W0~W8 与 C1/C3 达成，DEFECT-002~005 已关闭（门禁 303）；剩余全为外部/裁决依赖。判据与证据见计划「收尾执行设计/登记」节。 |
-| PLAN-004 | 主线 | 高 | In Progress | [解析产物按版本划分：versions/&lt;job_id&gt; 落盘与生效指针（req080-parse-version-layout）](../plans/2026-09-20-req080-parse-version-layout.md) | 条文 V1~V10 晋升 + S1~S6 本地全绿 + B→C→D 窗口真机取证 + REQ-080 回执 | **2026-09-21 P2~P7 完成**：版本布局代码 + 迁移 0002 + 六份文档晋升，S1~S6 本地取证矩阵见计划「实施登记」，门禁 `352 passed, 2 skipped` + ruff。下一条件：B→C→D 单窗口批准（备份+迁移+幽灵行清理+单次重解析）与回执发出。 |
+| PLAN-003 | 主线 | 高 | In Progress | [解析真机打通：设计偏差核对与契约修正（parse-live-bringup）](../plans/2026-09-20-parse-live-bringup.md) | C2 的 D3 真机删除演练执行并登记 | W0~W8、C1/C3、R0 前置与 **R1 窗口（ARCH-017 闸门 + D-2 排他重跑首次激活）**已交付；DEFECT-001~005/008 关闭，门禁 376/10 skipped。剩 D3 与 DEFECT-006/007 裁决。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| PLAN-004 | 主线 | 高 | In Progress | [解析产物按版本划分：versions/&lt;job_id&gt; 落盘与生效指针（req080-parse-version-layout）](../plans/2026-09-20-req080-parse-version-layout.md) | 条文 V1~V10 晋升 + S1~S6 本地全绿 + B→C→D 窗口真机取证 + REQ-080 回执 | **P2~P7+I9 与 C/D 真机窗口全部达成**：迁移 `20260920_0002`、D-1 re-ingest 486 页作废 39 行 legacy、D-2 单次重解析 20/20 **首次激活**。下一条件：S7 回执发出 + 根侧确认。 |
 
 ### 真机打通后的遗留卡点：落库回归网与状态语义
 
-**推进顺序**：DEFECT-008 可直接开工（B 类小改）；DEFECT-006/007 属用户裁决项（状态机语义）；
-DEFECT-001 受 ADR 0005 评审阻塞；ARCH-003/016 随上述各项收口。
+**推进顺序**：DEFECT-001 随 ADR 0005 接受 + W3 落地关闭（2026-09-21）；ARCH-017 闸门已落地并在排他
+窗口重跑成功、同批关闭（串行占用的根侧约定转 REQ-085）。余下全是**用户裁决**依赖——ARCH-003 等
+DEFECT-006/007 语义裁决，ARCH-016 等代表书类型分布取证（随 ARCH-009）。
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
-| DEFECT-001 | 支线 | 高 | Blocked | MySQL 级提交边界回归网：进度与页状态落库有测试守护（代码侧页级 commit 已交付） | ADR 0005 执行后 MySQL 双 Session 提交边界集成测试就位 | 真机 L4~L6 已证不落库问题不存在；剩余是回归网缺位。阻塞：[ADR 0005](../adr/0005-mysql-integration-test-isolation.md) Draft 评审（责任：用户裁决）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| ARCH-003 | 支线 | 高 | Blocked | 解析编排交付收口：af_parse_jobs + af_pages 全本/逐页/重试/质量信号语义完备并经真机验证 | DEFECT-006/007 语义成文实施且冒烟复跑通过 | 代码、真机四条链路与固化冒烟均已交付；阻塞于 DEFECT-006/007 裁决（责任：用户）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| ARCH-016 | 支线 | 高 | Blocked | MinerU 引擎适配器与统一 blocks 归一化稳定化（PaddleOCR-VL/qwen-vl 预留） | 代表书类型分布取证（随 ARCH-009）+ 真机零丢弃对账复跑 | 直连、端点契约、槽位分派、DEFECT-004/005 修复均已关闭；复跑需 MinerU 5002 在线。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| DEFECT-006 | 支线 | 中 | Open | 范围校验与部分失败语义成文实施：pages 越界拒收、completed 不掩盖失败页、书级状态拆分 | pages 越界 422 + 失败语义经裁决成文实施 + 真机幽灵行清理执行 | 待用户裁决「部分成功」判据；幽灵行清理并入 PLAN-004 C 窗口。取证见 [PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「收尾执行登记」。 |
-| DEFECT-007 | 支线 | 中 | Open | 被 kill 任务不再遗留假 running：状态机语义成文（reaper/启动期归一/已知语义三选一） | 处理方式经 ADR 级裁决成文并实施带测试 | 取证：`5f43593a12cc` 至今 running（`L9_final_jobs.txt`）；不阻断续跑但与 database-design 不一致。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| DEFECT-008 | 支线 | 中 | Open | `.env` 值尾行内 `#` 注释剥离：防上层 .env 带注释值成为坏 URL/路径 | 单测红→绿：值尾 ` #…` 剥离且引号内 `#` 不误伤 | B 类一行改动 + 单测，可直接开工；来源 PLAN-003 G5 走查（留档 D4_G5）。根仓库 `.env` 只读。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| ARCH-003 | 支线 | 高 | Blocked | 解析编排交付收口：af_parse_jobs + af_pages 全本/逐页/重试/质量信号语义完备并经真机验证 | DEFECT-006/007 语义成文实施且冒烟复跑通过 | 代码、真机四条链路、固化冒烟与 **MySQL 双 Session 提交边界回归网**均已交付；阻塞于 DEFECT-006/007 裁决（责任：用户）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| ARCH-016 | 支线 | 高 | Blocked | MinerU 引擎适配器与统一 blocks 归一化稳定化（PaddleOCR-VL/qwen-vl 预留） | 代表书类型分布取证（随 ARCH-009）+ 真机零丢弃对账复跑 | 直连、端点契约、槽位分派、DEFECT-004/005 修复关闭；**零丢弃对账真机复跑达成**（R1 窗口 b01 前 20 页 `dropped_blocks=0`，类型含 formula/caption/footer）。剩代表书取证（责任：ARCH-009）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| DEFECT-006 | 支线 | 中 | Open | 范围校验与部分失败语义成文实施：pages 越界拒收、completed 不掩盖失败页、书级状态拆分 | 部分失败语义经裁决成文实施，且真机重解析后越界页不落库 | pages 越界 422 已实施并在真机复验（`[491]/[0]/[1,487]` 全 422、任务行增量 0）；legacy 幽灵行由 D-1 re-ingest 作废为 0。剩「部分成功」判据待用户裁决。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| DEFECT-007 | 支线 | 中 | Open | 被 kill 任务不再遗留假 running：状态机语义成文（reaper/启动期归一/已知语义三选一） | 处理方式经 ADR 级裁决成文并实施带测试 | 取证更新：`5f43593a12cc` 仍 `running` 且空闲 **106683 秒**（R1 窗口 `S1c_exclusive.json`）。副作用已实证——窗口排他只能改用「模型侧计数」判据绕开它。待裁决。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
 
 ### 对照、分块与验收
 
-**推进顺序**：代表书在修复后代码上重解析（随 PLAN-004 D 步）后：ARCH-009 取证 → ARCH-005/006
-前端联调 → ARCH-004 约定收口。
+**推进顺序**：PLAN-004 D 步已完成（b01 前 20 页在版本布局上重解析并激活，ARCH-004 随之关闭）→
+代表书重解析取证（ARCH-009）→ ARCH-005/006 前端联调。
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
-| ARCH-004 | 支线 | 中 | In Progress | 分块交付收口：chunks 随真机新产物重建且版本目录归属约定成文 | 新产物 chunks 真机生成 + 归属约定写入 parsing-pipeline | 归属约定**已成文**（`chunks.json` 每版本一份、落 `versions/<job_id>/`；见 parsing-pipeline 产物树与「分块」节）。下一条件：PLAN-004 D 步真机重解析生成新 chunks。承载：[PLAN-004](../plans/2026-09-20-req080-parse-version-layout.md) |
-| ARCH-005 | 支线 | 高 | Open | 解析对照与质量度量：页图 vs 重渲染叠框与质量信号进对照视图 | 8903 前端真机联调通过（根仓库 ARCH-020-D/UI） | 代码侧前置（DEFECT-004/005）已关闭；需重解析代表书 + MinerU 在线 + 8903 排期。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| ARCH-006 | 支线 | 高 | Open | 渲染数据供给与块编辑真机闭环：edit 写入与 pages 合并回显交付 | 代表书重解析后 af_block_edits 真机写入且联调通过 | 端点与仓储已交付、L7 读取面全绿；编辑键不回溯，写入前必须重解析（现 af_block_edits 0 行）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| ARCH-009 | 支线 | 中 | Open | 套1 代表书验收：Rudin 中译 + 吉米多维奇全量解析质量达标 | 前 20 页冒烟→全量公式可渲染 ≥90% + 类型分布取证登记 | 前置 DEFECT-002/004/005 已全部关闭；需 MinerU 在线 + 修复后代码重解析。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| ARCH-005 | 支线 | 高 | Open | 解析对照与质量度量：页图 vs 重渲染叠框与质量信号进对照视图 | 8903 前端真机联调通过（根仓库 ARCH-020-D/UI） | 代码侧前置（DEFECT-004/005）与生效版本产物均已就绪（b01 前 20 页可经端点读）。剩 MinerU 在线重解析代表书 + 8903 排期联调。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| ARCH-006 | 支线 | 高 | Open | 渲染数据供给与块编辑真机闭环：edit 写入与 pages 合并回显交付 | 代表书重解析后 af_block_edits 真机写入且联调通过 | 端点与仓储已交付、L7 读取面全绿；**生效版本 `86ab56ae2b6c` 的块下标已可信**（编辑键不回溯，旧产物仍需重解析），`af_block_edits` 现 0 行。剩真机写入 + 联调。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| ARCH-009 | 支线 | 中 | Open | 套1 代表书验收：Rudin 中译 + 吉米多维奇全量解析质量达标 | 前 20 页冒烟→全量公式可渲染 ≥90% + 类型分布取证登记 | 前置 DEFECT-002/004/005 与串行占用（ARCH-017）已全部关闭，版本布局真机可用。剩 MinerU 在线 + 代表书重解析（须守排他窗口）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
 
 ### 跨项目请求
 
-**推进顺序**：PLAN-004 的 B→C→D 单窗口 + 重解析完成后发 REQ-081 二次回执并收 REQ-080；REQ-001
-等根仓库读取复核材料后回执。
+**推进顺序**：R1 窗口已产出全部回执所需事实（REQ-080 的 C/D 真机面、REQ-081 的可信重解析产物、
+REQ-083 的宽松路径实施）⇒ **回执批次待发**（REQ-080/081/083 同批）；REQ-001 等根侧读取复核材料；
+REQ-084/085 为本轮发起的根侧修复请求（都属 8900 侧模型编排：假失败误报、重启与在飞解析互斥），
+经用户转达登记。
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ-001 | 支线 | 高 | Open | **请求发出（目标：QED-Engine）**——8900 数据域适配 af_* 新契约并回执 | 根仓库读取复核材料并在其 todo 登记回执 | 复核材料（W8-g）已出；版本布局二次回执随 PLAN-004 收口发出。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「跨项目回执稿」 |
-| REQ-081 | 支线 | 高 | Blocked | bbox 失真（根仓库报告）修复回执并支持其 §13 复测 | 根仓库 §13 复测通过并回执 | 本方修复（DEFECT-004/005）已关闭；受害面为全部已解析页（38/486），复测须等 PLAN-004 D 步单次重解析后二次回执。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「跨项目回执稿（REQ-081）」 |
-| REQ-080 | 支线 | 高 | In Progress | **请求接收（QED-Engine）**——解析产物按版本划分实施并发实施回执 | PLAN-004 关闭且回执发出 | 本地实施面已完成，**回执稿 + 待根确认清单（指针式是否满足「根目录即当前版」、manifest 基准、编辑不随版本继承、回滚端点）已成文**于计划「REQ-080 实施回执稿」节。下一条件：C 窗口迁移 + D 步重解析后正式发出。承载：[PLAN-004](../plans/2026-09-20-req080-parse-version-layout.md) |
+| REQ-001 | 支线 | 高 | Open | **请求发出（目标：QED-Engine）**——8900 数据域适配 af_* 新契约并回执 | 根侧在 PLAN-044/ARCH-020-D 登记读取复核材料并回执 | 复核材料（W8-g）已出。2026-09-21 改判：根仓库 `REQ-001` 号已被 2026-08 端口迁移占用（同号不同事），根侧承载行改为 `PLAN-044`/`ARCH-020-D`。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「跨项目回执稿」 |
+| REQ-081 | 支线 | 高 | Blocked | bbox 失真（根仓库报告）修复回执并支持其 §13 复测 | 根仓库 §13 复测通过并回执 | 本方修复（DEFECT-004/005）与**复测前提**（版本布局上重解析、坐标/类型可信）均达成；责任转根侧。下一条件：随 REQ-080 同批发**二次回执**。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「跨项目回执稿（REQ-081）」 |
+| REQ-080 | 支线 | 高 | In Progress | **请求接收（QED-Engine）**——解析产物按版本划分实施并发实施回执 | PLAN-004 关闭且回执发出 | 本地实施 + **C/D 真机窗口全部达成**（首次激活 `versions/86ab56ae2b6c`），回执稿与待根确认清单四条已成文。下一条件：**正式发出回执**（不再有待取证项）并获根确认。承载：[PLAN-004](../plans/2026-09-20-req080-parse-version-layout.md) |
+| REQ-083 | 支线 | 高 | In Progress | **请求接收（QED-Engine）**——`file_path` 含全角标点（`（）``：`）不再整批 422 | 本方放宽带测试实施完成，且回执随窗口发出 | 已实施（段规则白名单→字符黑名单，全角标点放行、遍历/绝对/盘符仍拦）且真机 R1 窗口书目 `file_path` 读取正常；门禁 376。剩正式回执随批发出。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「承载 REQ-083」节 |
+| REQ-084 | 支线 | 中 | Open | **请求发出（目标：QED-Engine）**——8900 模型启动「假失败」误报修复（前端 15s 轮询超时 vs vLLM 分钟级加载） | 根侧修复后启动提示与实际就绪一致并回执 | 定因（根仓库只读走查）：`web-ui/src/stores/runtime.ts` 的 `POLL_TIMEOUT_MS=15000`、`infra-up.ps1` 120s 后 exit 1。本方窗口脚本改为轮询 `/health` 至就绪，不受影响。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「承载 REQ-083」节 |
+| REQ-085 | 支线 | 高 | Open | **请求发出（目标：QED-Engine）**——8900 不得在 8902 尚有 queued/running 解析任务时重启或换起 vision 槽位 | 根侧登记并给出互斥信号或确认约定 | R1 实证：并发重启令两任务同时判死、MinerU 计数 50→0。本方侧已闭环（ARCH-017 闸门关闭 + D-2 排他重跑成功），容器生命周期权在 8900，**经用户转达**。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「承载 ARCH-017」节 |
 
 ## 长期任务
 

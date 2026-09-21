@@ -133,8 +133,11 @@ display_title/file_path/ingest_status/parse_status/pages_done/**active_job_id** 
 批量同步已验证书目（upsert af_books，幂等，book_id 同源 qt_books）。请求：
 `[{book_id, domain_id, course_id, course_name, knowledge_id, title, part, authors, file_path}]`；
 响应：`{synced: int, updated: int, books: [...]}`。**入参边界：** `book_id`/`domain_id`/`course_id`
-须为安全路径段（拒绝 `/`、`..`、前导点），`file_path` 须为数据根相对路径（禁前导 `/`，≤512
-字符），违规 422。
+须为安全路径段（拒绝 `/`、`..`、前导点），`file_path` 须为数据根相对路径（≤512
+字符，段间只允许 `/`），违规 422。**`file_path` 的段规则是黑名单式**（REQ-083）：拒 `\`、半角
+`:`（Windows 盘符）、`/ : * ? " < > |`、控制字符、前导 `.`（含 `..`）与首尾空白/句点，**其余字符
+一律放行**——中文书名的全角标点（`（）：`、`【】`）不是遍历风险，用 `\w` 白名单会让一条违规殃及
+整批同步（根仓库 2026-09-21 实测整批 422，靠改书名止血）。
 
 ### POST /api/v1/books/{book_id}/ingest
 
@@ -217,24 +220,30 @@ NULL → 书目录根 = 根视图 legacy）。
 （版本 ↔ 源 PDF 快照对应）。失败页跳过不中断，`progress.error` 记录进行中失败页摘要（≤200
 字符），终态摘要写 `error`（≤500 字符）。**激活门槛（V3）**：任务 `completed` 且版本产物校验通过
 才把 `af_books.active_job_id` 指向本版本；`failed` 或中断**不激活**，产物保留不删（自然回滚 = 指针
-从未动过）。**受理前门槛**：书目/产物校验 → 引擎名解析 → 模型服务
-探活（不可用 503，**不创建任务行**）。
+从未动过）。**受理前门槛**（顺序固定）：书目存在 → 已 ingest 校验 → **`pages` 越界 422**（逐页判
+`1 ≤ p ≤ af_books.page_count`，DEFECT-006；此前接受 `pages=[40,999]` 会在 `af_pages` 写出指向不存在
+页图的幽灵行）→ 引擎名解析 → 模型服务探活（不可用 503，**不创建任务行**）；**越界判在探活之前**，
+非法请求不打模型。**受理后不并行打模型**：执行前经单一占用闸门等待（见下）。
 
 ### GET /api/v1/parse-jobs/{job_id}
 
 任务状态与进度（`ParseJob`：id/book_id/pages/engine/status/progress/error）。运行中可见
-`progress.parsed` 递增（节流写入：≥1s 或每 10 页）。
+`progress.parsed` 递增（节流写入：≥1s 或每 10 页）。**`queued` 可以很久**：本机 GPU 只容得下一个
+解析，任务在单 worker 队列里排队、且启动前还要等模型服务空闲（`queued_tasks + processing_tasks
+== 0`，最长 900 秒）；等待期 `started_at` 为空，超时则 `failed` 且 `error` 写「模型服务被其他解析
+任务占用」，与「模型服务不可用」区分（2026-09-21 R1 窗口后成文）。
 
 ### 错误语义
 
 | 场景 | 状态码 |
 | --- | --- |
-| 参数非法（页码越界、verdict 非枚举、引擎槽位未实现等） | 400 |
+| 参数非法（**块下标**越界、verdict 非枚举、引擎槽位未实现等） | 400 |
 | book / page / job / 产物不存在 | 404（中文 detail，如「书目不存在：{id}」） |
 | **生效版本产物目录缺失** | 404 `生效版本产物缺失：{book_id} @ {job_id}`（指针所指版本目录被外部删除等；**不回落根视图**，ADR 0004 无自动兜底） |
-| 入参 schema 违规（安全路径段、引擎字面值、file_path 形态） | 422 |
+| 入参 schema 违规（安全路径段、引擎字面值、`file_path` 形态、**`pages` 页码越界**） | 422 |
 | 模型服务不可用（**提交期探活失败**，MinerU 未起等） | 503（提示经 8900 `/models/{slot}` 启停模型或检查 `QED_OCR_MODEL_URL`（5002））；**不创建任务行** |
 | 模型服务在任务受理后故障 | 202 已受理 → job `failed`（`error` 记原因），已解析页保留 |
+| 模型服务被其他解析占用至闸门超时 | 202 已受理 → job `failed`，`error` 写「模型服务被其他解析任务占用」（**不冒充**「模型服务不可用」）；不写页行、不激活版本 |
 
 8902 离线/5xx 时 8900 返回 503 + `Axiom-Flow 服务不可达：…`（独立性铁律，不影响配置域端点）。
 

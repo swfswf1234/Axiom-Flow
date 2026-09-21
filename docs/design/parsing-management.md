@@ -83,26 +83,28 @@ sequenceDiagram
 
 | 端点 | 语义 |
 | --- | --- |
-| `POST /books/sync` | 幂等 upsert af_books（请求 `[{book_id, domain_id, course_id, course_name, knowledge_id, title, part, authors, file_path}]`）；`book_id`/`domain_id`/`course_id` 必须是安全路径段、`file_path` 为数据根相对路径（≤512 字符、禁前导 `/`），违规 422 |
+| `POST /books/sync` | 幂等 upsert af_books（请求 `[{book_id, domain_id, course_id, course_name, knowledge_id, title, part, authors, file_path}]`）；`book_id`/`domain_id`/`course_id` 必须是安全路径段、`file_path` 为数据根相对路径（≤512 字符，**段规则为黑名单**：拒 `\`、半角 `:`、`/ : * ? " < > |`、控制字符、前导 `.` 与首尾空白/句点，全角标点放行——REQ-083），违规 422 |
 | `GET /books`、`GET /books/{id}` | 书目列表/详情（af_books，含 `active_job_id`；空表回退文件系统） |
 | `PATCH /books/{id}`、`DELETE /books/{id}` | 修改（notes）/删除：删 `af_books` 与该书**所有版本**的 `af_pages`/`af_block_edits` 行，`?purge=true` 连整本产物目录（含 `versions/`）一并删除；`af_parse_jobs` 历史行一律保留为审计 |
 | `POST /books/{id}/ingest` | 渲染页图 + book.json（不调模型），回写 ingest_status/page_count/sha256。**重复 ingest 只替换根视图**（`book.json` + `pages/` 原子交换，`versions/` 完整保留），并置 `active_job_id=NULL`、`parse_status=pending`、`pages_done=0`，页行只清 `job_id='legacy'` 一批；历史版本状态与任务行保留，但旧版本不再对生效端点可见（源文件已变，需重新解析） |
-| `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页重解析，两者都产出一个**完整快照**版本） |
+| `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页重解析，两者都产出一个**完整快照**版本；`pages` 越界在受理前 422，不探活不落任务行——DEFECT-006） |
 | `GET /books/{id}/versions` | 解析版本只读列举（`job_id/engine/status/page_count/parsed/source_sha256/created_at/active`）；不改生效指针 |
 | `GET /books/{id}/pages/{no}` | 单页 blocks+markdown+image_url+已合并 edits（**作用域 = 生效版本**；`active_job_id` 为空时读根视图 legacy） |
 | `PUT /books/{id}/pages/{no}/blocks/{index}/edit`、`GET .../edits` | 块编辑 upsert / 页内编辑列表（写入生效版本的 `job_id`） |
 | `GET /books/{id}/chunks` | 分块预览（读生效版本 `chunks.json`；`?max_chars=&overlap_blocks=` 可实时重算） |
 | `GET /books/{id}/manifest` | 生效版本的产物清单，路径相对该版本目录（不含 `versions/<job_id>/` 前缀） |
 
-**错误语义**：400 参数非法（含引擎槽位未实现）；404 book/page/job 不存在**或生效版本目录缺失**
-（显式报错，不回落根视图）；422 入参 schema 违规（安全路径段、引擎字面值）；503 模型服务不可用
-（仅提交期探活失败，且不创建任务行）。
+**错误语义**：400 参数非法（含块下标越界、引擎槽位未实现）；404 book/page/job 不存在**或生效版本
+目录缺失**（显式报错，不回落根视图）；422 入参 schema 违规（安全路径段、`file_path` 形态、引擎字面值、
+`pages` 页码越界）；503 模型服务不可用（仅提交期探活失败，且不创建任务行）。
 
 **引擎选择**：`POST /parse-jobs` 的 `engine` 可选，缺省回落 `AXIOM_OCR_ENGINE`；未实现/未知名称
 一律显式报错，**绝不回落到其他引擎**（见 [model-integration](model-integration.md)）。
 
 **跨项目**：8900 现用 `/review`（ok/bad）需改 `/edit`（四表覆盖层），并补 `/ingest`、`/chunks`
-透传；由本仓库 `REQ-001` 请求根仓库适配，根侧完成后回执。
+透传；由本仓库 `REQ-001` 请求根仓库适配，根侧完成后回执。**根侧承载行**为 `PLAN-044`／
+`ARCH-020-D`（2026-09-21 改判：根仓库的 `REQ-001` 号已被 2026-08 端口迁移占用，与本方 `REQ-001`
+同号不同事，故回执登记位置按对方计划行而非编号对齐）。
 
 ## 降级与独立性
 

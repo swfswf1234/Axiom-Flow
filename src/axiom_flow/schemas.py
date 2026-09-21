@@ -17,6 +17,7 @@ API 契约模型：BookOut / BookSyncItem / IngestResponse / PageData / EditReco
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
@@ -29,8 +30,15 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # 中文段合法（`\w` 在 Unicode 下含汉字），但 Windows 盘符 `D:` 因 `:` 不在字符类内被拒。
 SAFE_SEGMENT_PATTERN = r"^\w[\w.\-]{0,63}$"
 OPTIONAL_SEGMENT_PATTERN = r"^(?:\w[\w.\-]{0,63})?$"
-# 数据根相对路径：逐段套用段规则，段间只允许 `/`。
-RELATIVE_PATH_PATTERN = r"^(?:\w[\w.\-]*(?:/\w[\w.\-]*)*)?$"
+# `file_path` 段：**黑名单**式（REQ-083）。中文书名的全角标点（`（）：`、`【】`）是 Ps/Pe/Po 而非
+# 词字符，用 `\w` 白名单会让一条违规殃及整批 sync（根仓库实测 422 后靠改书名止血）。防遍历与
+# Windows 非法字符仍必须拒：`\`、半角 `:`（盘符）、`/ : * ? " < > |`、控制字符、前导 `.`（含 `..`）
+# 与首尾空白/句点；段内空格与非 ASCII 标点放行。全角 `：` 与半角 `:` 是不同字符，放宽不引入盘符风险。
+_PATH_SEGMENT = r"(?![.\s])[^\\/:*?\"<>\x00-\x1f|]{1,255}(?<![.\s])"
+RELATIVE_PATH_PATTERN = rf"^(?:{_PATH_SEGMENT}(?:/{_PATH_SEGMENT})*)?$"
+# pydantic 的 `pattern=` 走 Rust regex，不支持前后视断言，因此本模式只能由 Python `re` 执行
+# （见 `BookSyncItem._validate_file_path`）。
+_RELATIVE_PATH = re.compile(RELATIVE_PATH_PATTERN)
 
 # ---------- 枚举 ----------
 
@@ -314,7 +322,15 @@ class BookSyncItem(BaseModel):
     part: str = ""
     display_title: str = ""
     authors: list[Author] = Field(default_factory=list)
-    file_path: str = Field(default="", pattern=RELATIVE_PATH_PATTERN, max_length=512)
+    file_path: str = Field(default="", max_length=512)
+
+    @field_validator("file_path")
+    @classmethod
+    def _validate_file_path(cls, value: str) -> str:
+        """数据根相对路径校验（条文 7 + REQ-083）：违规 422。"""
+        if not _RELATIVE_PATH.match(value):
+            raise ValueError(f"file_path 含遍历段或非法字符：{value!r}")
+        return value
 
 
 class SyncResponse(BaseModel):

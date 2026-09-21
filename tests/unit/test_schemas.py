@@ -258,6 +258,31 @@ class TestApiModels:
         assert item.authors == []
         assert item.domain_id == ""
 
+    def test_book_sync_item_accepts_fullwidth_punctuation(self):
+        """REQ-083：中文书名的全角标点不是遍历风险，不得让整批 sync 422。"""
+        item = BookSyncItem(
+            book_id="mathanalysis-b17",
+            file_path="raw/math-advanced/数学分析（第2版）：讲义【上】.pdf",
+        )
+
+        assert item.file_path.endswith(".pdf")
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "raw/../etc/passwd",
+            "../outside.pdf",
+            "raw\\book.pdf",
+            "D:/raw/book.pdf",
+            "/absolute/book.pdf",
+            "raw/book.pdf.",
+            "raw//double.pdf",
+        ],
+    )
+    def test_book_sync_item_still_rejects_unsafe_path(self, path):
+        with pytest.raises(ValidationError):
+            BookSyncItem(book_id="b05", file_path=path)
+
     def test_book_out_status_defaults(self):
         book = BookOut(book_id="b05")
         assert book.ingest_status == "none"

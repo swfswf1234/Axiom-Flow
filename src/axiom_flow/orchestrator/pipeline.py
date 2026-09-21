@@ -61,6 +61,10 @@ PROGRESS_PAGE_INTERVAL = 10  # 或每处理这么多页写一次
 
 # 模型服务不可用的统一措辞：提交期 503 与执行期 job failed 共用（两段语义，同一文案）。
 MODEL_UNAVAILABLE = "模型服务不可用：请经 8900 /models/{slot} 启停模型后重试"
+# 单一占用闸门（ARCH-017）：本机 GPU 只够一个解析在飞，服务侧不会替调用方排队，串行由编排层负责。
+MODEL_GATE_INTERVAL_SECONDS = 5.0
+MODEL_GATE_DEADLINE_SECONDS = 900.0
+MODEL_BUSY = "模型服务被其他解析任务占用：等待 {wait:g} 秒后排队/在飞仍未清零，请稍后重试"
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +229,28 @@ def _inherit_page_rows(
     return copied
 
 
+def _await_model_idle(
+    engine: ParseEngine,
+    *,
+    interval: float = MODEL_GATE_INTERVAL_SECONDS,
+    deadline: float = MODEL_GATE_DEADLINE_SECONDS,
+) -> bool:
+    """单一占用闸门：等待模型服务空闲后放行；等待超时返回 `False`。
+
+    引擎不上报负载（`model_load()` 返回 `None`）即放行——探测不灵不等于占用，**不臆造阻塞**；
+    真正的不可达由 `health()` 判定，两种语义不互相冒充（ARCH-017 / R1 窗口实证）。
+    """
+    load = engine.model_load()
+    started = time.monotonic()
+    while load is not None and load.busy:
+        remaining = deadline - (time.monotonic() - started)
+        if remaining <= 0:
+            return False
+        time.sleep(min(interval, remaining))
+        load = engine.model_load()
+    return True
+
+
 def run_parse_job(
     *,
     session: Session,
@@ -235,6 +261,8 @@ def run_parse_job(
     data_root: Path | str,
     dpi: int = DEFAULT_DPI,
     persist_per_page: bool = True,
+    model_gate_interval: float = MODEL_GATE_INTERVAL_SECONDS,
+    model_gate_deadline: float = MODEL_GATE_DEADLINE_SECONDS,
 ) -> ParseOutcome:
     """执行一次解析任务（同步；由 `orchestrator.jobs.JobRunner` 在后台线程调用）。"""
     books = BookRepository(session)
@@ -254,6 +282,18 @@ def run_parse_job(
             job_id,
             book_id,
             f"尚未 ingest 或产物缺失：{book_id}",
+            book.pages_done,
+            persist=persist_per_page,
+        )
+
+    if not _await_model_idle(
+        engine, interval=model_gate_interval, deadline=model_gate_deadline
+    ):
+        return _fail(
+            session,
+            job_id,
+            book_id,
+            MODEL_BUSY.format(wait=model_gate_deadline),
             book.pages_done,
             persist=persist_per_page,
         )

@@ -51,6 +51,41 @@ class TestHealth:
         assert _engine(handler).health() is False
 
 
+class TestModelLoad:
+    """负载探测：读 /health 的 queued_tasks/processing_tasks；无法判定时返回 None（不臆造阻塞）。"""
+
+    def test_reads_queued_and_processing(self):
+        engine = _engine(
+            lambda request: httpx.Response(
+                200, json={"status": "ok", "queued_tasks": 2, "processing_tasks": 1}
+            )
+        )
+        load = engine.model_load()
+        assert (load.queued, load.processing) == (2, 1)
+
+    def test_idle_reports_zero(self):
+        engine = _engine(lambda request: httpx.Response(200, json={"queued_tasks": 0, "processing_tasks": 0}))
+        assert engine.model_load().busy is False
+
+    def test_non_200_is_unknown(self):
+        engine = _engine(lambda request: httpx.Response(503, json={"queued_tasks": 9, "processing_tasks": 9}))
+        assert engine.model_load() is None
+
+    def test_missing_fields_is_unknown(self):
+        engine = _engine(lambda request: httpx.Response(200, json={"status": "ok", "processing_tasks": 1}))
+        assert engine.model_load() is None
+
+    def test_non_json_is_unknown(self):
+        engine = _engine(lambda request: httpx.Response(200, text="<html>not json</html>"))
+        assert engine.model_load() is None
+
+    def test_transport_error_is_unknown(self):
+        def handler(request):
+            raise httpx.ConnectError("refused")
+
+        assert _engine(handler).model_load() is None
+
+
 class TestSubmitContract:
     """提交段：POST /tasks，202 受理，只送产物形态开关。"""
 

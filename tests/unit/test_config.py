@@ -118,6 +118,35 @@ class TestDotenvIsolation:
         assert load_settings().db_name == "from-bom"
 
 
+class TestDotenvInlineComment:
+    """DEFECT-008：值尾行内 `#` 注释剥离（根 `.env` 用 `值 # 说明` 写法，不剥离即成为坏 URL）。"""
+
+    def test_inline_comment_after_value_is_stripped(self, isolated):
+        (isolated / ".env").write_text(
+            "QED_OCR_MODEL_URL=http://127.0.0.1:5002 # 本地 MinerU 容器\n", encoding="utf-8"
+        )
+
+        assert load_settings().ocr_model_url == "http://127.0.0.1:5002"
+
+    def test_hash_inside_quotes_is_preserved(self, isolated):
+        (isolated / ".env").write_text('AXIOM_VISION_MODEL="qwen # vl"\n', encoding="utf-8")
+
+        assert load_settings().vision_model == "qwen # vl"
+
+    def test_hash_without_preceding_space_stays_in_value(self, isolated):
+        (isolated / ".env").write_text("QED_DB_NAME=qed#mine\n", encoding="utf-8")
+
+        assert load_settings().db_name == "qed#mine"
+
+    def test_password_inline_comment_stripped_and_not_leaked(self, isolated):
+        (isolated / ".env").write_text("QED_DB_PASSWORD=pw123 # 口令\n", encoding="utf-8")
+
+        settings = load_settings()
+
+        assert settings.db_password == "pw123"
+        assert "#" not in repr(settings)
+
+
 class TestLlmApiKey:
     """llm_api_key 只读唯一密钥 API_KEY；AXIOM_API_KEY 退役无回退。"""
 

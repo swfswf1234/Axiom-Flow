@@ -18,10 +18,26 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from typing import Any
+
+# `.env` 值的行内注释：`#` 前必须有空白才算注释（DEFECT-008）。
+_INLINE_COMMENT = re.compile(r"\s#.*$")
+
+
+def _strip_env_comment(value: str) -> str:
+    """取 `.env` 值本体：引号内原样保留，未加引号时剥掉尾部 ` # 说明`。
+
+    根仓库 `.env` 用 `KEY=value # 说明` 写法；不剥离会让注释混进 URL/路径成为坏配置。
+    """
+    if value[:1] in ('"', "'"):
+        closing = value.find(value[0], 1)
+        if closing != -1:
+            return value[1:closing]
+    return _INLINE_COMMENT.sub("", value).strip()
 
 
 def _default_data_dir() -> Path:
@@ -90,7 +106,7 @@ def _env_file_values(start: Path | None = None) -> dict[str, str]:
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
-            value = value.strip().strip('"').strip("'")
+            value = _strip_env_comment(value.strip())
             if not value:
                 continue
             if key.startswith(("QED_", "AXIOM_")) or key == "API_KEY":

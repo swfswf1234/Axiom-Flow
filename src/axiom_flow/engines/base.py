@@ -46,13 +46,34 @@ class DocumentResult:
     images: dict[str, bytes] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class ModelLoad:
+    """模型服务当前负载（编排层单一占用闸门的判据）。
+
+    GPU 资源不足以并行解析，服务侧的并发许可（MinerU `max_concurrent_requests: 3`）**不能**
+    替代调用方自我排他。
+    """
+
+    queued: int
+    processing: int
+
+    @property
+    def busy(self) -> bool:
+        """有排队或在飞任务即视为占用。"""
+        return (self.queued + self.processing) > 0
+
+
 @runtime_checkable
 class ParseEngine(Protocol):
-    """解析引擎协议：健康探活、全本解析（默认）、单页解析（重解析）。"""
+    """解析引擎协议：健康探活、负载探测、全本解析（默认）、单页解析（重解析）。"""
 
     name: str
 
     def health(self) -> bool: ...
+
+    def model_load(self) -> ModelLoad | None:
+        """当前负载；引擎不上报、服务未答或载荷不合预期时返回 `None`（无法判定，不是占用）。"""
+        ...
 
     def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult: ...
 

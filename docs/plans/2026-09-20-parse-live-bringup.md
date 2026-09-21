@@ -5,7 +5,7 @@
 最后更新：2026-09-21
 关联 ADR：[ADR 0002](../adr/0002-pending-design-location.md)（待评审设计先入 plans/）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（引擎由配置选择、不设自动兜底）、[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（MySQL 集成测试隔离边界）
 关联设计：[model-integration.md](../design/model-integration.md)、[parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)
-关联 Tracker：docs/trackers/todo.md（PLAN-003、ARCH-001/003/004/005/006/009/016、REQ-001、REQ-075、REQ-080、REQ-081、DEFECT-001/002/003 与本轮新登 DEFECT-004/005/006/007/008）
+关联 Tracker：docs/trackers/todo.md（PLAN-003、ARCH-001/003/004/005/006/009/016/017、REQ-001、REQ-075、REQ-080、REQ-081、REQ-083、REQ-084、REQ-085、DEFECT-001/002/003 与本轮新登 DEFECT-004/005/006/007/008）
 归档判定：Retain（契约条文晋升 design/architecture、实现收口后，计划壳归档 `docs/history/plans/2026-09/`）
 
 > **2026-09-20 收尾范围（用户裁决）**：本计划的执行面收窄为「**解析真机打通（小样止）** + **数据库
@@ -791,6 +791,101 @@ W7 期间发现并登记（不在本轮静默修复）：
   `tests/smoke/test_live_mineru_chain.py` 的产物断言已改到 `versions/<job_id>/` 并加「激活」判据，
   故 D 窗口的复跑**不再需要改代码**，只需 5002 在线；② 本计划关闭依赖的**外部项清单未变**（D3、
   D5/W3=ADR 0005、REQ-001/081 等根回执、DEFECT-006/007/008、幽灵行清理并入 C 窗口）。
+- **七轮复核后（2026-09-21，ADR 0005 接受 + W3 落地）**：C2 的 **D5 达成**（见下节「承载 DEFECT-001」），
+  DEFECT-001 与 REQ-075 之后本计划的第三个硬依赖关闭；外部项清单缩短为 **D3 真机删除演练**（随 R1
+  窗口）、REQ-001/081/083/084 根侧回执、DEFECT-006/007 裁决。门禁基线 **366 passed, 2 skipped →
+  366 passed, 10 skipped**（新增 `tests/integration/` 8 例在默认门禁下 skip）。
+
+## 承载 DEFECT-001（W3：ADR 0005 接受 + MySQL 双 Session 提交边界回归网）
+
+**目的**：DEFECT-001 的原始成因是「共享 Session 看得见未提交数据」，因此 SQLite 单测结构性地抓不到
+它。W3 补一层在真实事务隔离下断言提交边界的回归网（ADR 0005 提供合法依据，PLAN-003「W3 设计」节）。
+
+**关闭条件**：ADR 0005 转 Accepted，且 `tests/integration/test_parse_persistence.py` 在
+`QED_TEST_MYSQL=1` 下真跑绿、默认门禁下整层 skip 绿。
+
+| # | 工作项 | 状态 | 结果与证据 |
+| --- | --- | --- | --- |
+| W3-a | ADR 0005 评审（Draft → Accepted） | **完成 2026-09-21** | 用户确认接受，并**改判决定 3**：由「`qed_test` 整库自建自删」改为「复用 `qed_test`、夹具只拥有本方 `af_*` 四表 + `alembic_version`，绝不 `DROP DATABASE`」——因为刚核验到根仓库 2026-09-21 已把 `qed_test` 灌成 `qed` 的 13 表镜像，按草案执行会删掉别人的资产。决定 2 同时补「库名不符即 `pytest.exit` 终止会话」。修订写入 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)「评审与实施记录」节 |
+| W3-b | `tests/support/mysql.py` + `tests/integration/test_parse_persistence.py` | **完成 2026-09-21** | 先红（`ModuleNotFoundError: tests.support.mysql`，7 errors）后绿：opt-in 真跑 **8 passed**，默认门禁 **8 skipped**。断言面 ①未 commit 的页行对他连接不可见、commit 后可见 ②第 n 页调用引擎前前 n-1 页已提交（`parsed_snapshots == [0,1,2]`）③`progress.parsed` 采样单调且在运行中确实前进过 ④非 `EngineError` 穿透与整本中途失败时前序页行仍在、`active_job_id` 不激活 ⑤**反向判据** `test_deferred_commits_are_genuinely_invisible_mid_run`：`persist_per_page=False` 时独立连接什么都看不到，证明正向断言不恒真 ⑥边界自证：engine URL 与 `SELECT DATABASE()` 均为 `qed_test`、Alembic 落在 `20260920_0002` |
+| W3-c | `standards/testing.md` 两处联动 + 指南 | **完成 2026-09-21** | 分层表 integration 行改为「mock 面门禁必跑 / MySQL 面需 `QED_TEST_MYSQL=1`，默认 skip」；编写约定的隔离铁律补**唯一例外**句（回环 + `qed_test` 自有表白名单 + 数据根 `tmp_path` + 缺开关 skip）；`guides/development.md` 增该命令块与「执行时机：改 `orchestrator/`、`db/` 持久化语义后必须跑一次」；code-map 补 `tests/support/` 行与 orchestrator 的测试列 |
+
+**边界核验（跑完后只读查库）**：`qed` 业务库四表与 `alembic_version` 未变（17/10/39/1 行，
+`20260917_0001`）；`qed_test` 内 `qt_*`/`qed_*` 8 张镜像表保留，其 `af_*` 四表与 `alembic_version`
+如裁决所料被夹具收尾删除（根侧可重建，事实源仍是 `qed`）。
+
+**本节不声称**：`qed` 已迁移（真机 `alembic_version` 仍是 `20260917_0001`，`20260920_0002` 属 R1 的
+C 窗口）；DEFECT-006/007 的状态语义裁决；任何真机解析结果。
+
+
+## 承载 REQ-083 / DEFECT-008 / DEFECT-006（2026-09-21 R0：真机窗口前置批次）
+
+**目的**：把「不依赖真机、但窗口一旦开启就必须在场」的三项修复与窗口工具一次性收口，使 C/D
+单窗口不需要中途改代码（受「重解析只做一次」裁决约束，见 PLAN-004「已裁决事项」）。
+
+**关闭条件**：三项红灯转绿且门禁全绿 + 窗口脚本在版本布局上可跑 `--check-only`；DEFECT-006 的
+状态语义子项（部分成功/假 running）不在本节，另由 DEFECT-006/007 行承载裁决。
+
+**工作项与状态（2026-09-21 全部达成，门禁 366 passed, 2 skipped + ruff 全绿）**：
+
+| # | 项 | 交付 | 判据 |
+| --- | --- | --- | --- |
+| R0-1 | **REQ-083**（入站：根仓库请求）`file_path` 段字符类放宽 | `schemas.py:31-41` 把 `RELATIVE_PATH_PATTERN` 改为**黑名单段**（`_PATH_SEGMENT`）：拒 `\`、半角 `:`、`/ : * ? " < > |`、控制字符、前导 `.`、首尾空白/句点，其余放行；因 pydantic-core 不支持前后视断言，`BookSyncItem.file_path` 改用 `field_validator` + Python `re`（`schemas.py:41`） | 红灯→绿：`test_book_sync_item_accepts_fullwidth_punctuation`、`test_book_sync_item_still_rejects_unsafe_path[7 例]`、契约 `test_sync_accepts_fullwidth_punctuation_in_file_path`（两条含 `（）：` 的路径整批 synced）；`test_sync_rejects_unsafe_path_segments` 四例**不改动仍绿** |
+| R0-2 | **DEFECT-008** `.env` 值尾行内 `#` 注释剥离 | `config._strip_env_comment()`：引号内原样保留；未加引号时按 `\s#.*$` 剥离（`#` 前无空白视为值的一部分，与 python-dotenv 同语义） | 新增 `TestDotenvInlineComment` 4 例（含 `QED_DB_PASSWORD` 剥离后不进 repr） |
+| R0-3 | **DEFECT-006 页码越界子项** | `api/main.py` 提交门槛扩为四道：书目 → 已 ingest → **`pages` 越界 422** → 引擎名 → 探活 503；越界判在探活**之前**（非法请求不打模型） | 契约 `test_pages_out_of_range_returns_422_and_creates_no_job`：故意用 `healthy=False` 假引擎，红灯实测原为 **503**（先探活）→ 绿为 422 且 `af_parse_jobs` 零行 |
+| R0-4 | 窗口工具改版本布局（销 PLAN-004 **I9** 挂账） | `scripts/tmp/live_reparse_b01_pages.py` **重写**：只经 8902 API 驱动（不再进程内跑管线）；`--check-only` 前置取证；模型/服务**轮询到 200** 才算就绪（默认 300s）；自证 `alembic_version==20260920_0002` + `active_job_id` 字段在场，否则拒绝跑（防旧部署写出幽灵行）；页图不全时先 re-ingest；越界 422 探针复验后才提交解析；产出 `S0/S1/S2` 三份留档（含 clip/degenerate/dropped/硬链接/根视图无 chunks/数据根 `tmp` 不存在） | 语法与 ruff 通过；真机判据待 C/D 窗口执行（本节不声称真机结果） |
+| R0-5 | runbook 重核（根仓库 2026-09-21 清了 `dataset/parsed/`） | `guides/operations.md`：C-5 幽灵行手工删除**取消**（re-ingest 按 V8 `reset_legacy` 自动作废，取证转 `S1_before.json`）；新增 C-7 `--check-only` 前置；D 步写明**必须先 re-ingest 补齐页图**；新增「模型就绪不以 8900 一次提示为准」条 | 与 `af_*` 迁移单窗口顺序一致，无未落地命令 |
+
+**根侧「启动即失败」的定因（2026-09-21 只读走查，不由本仓库修复）**：8900 前端
+`operateModel` 以 `POLL_TIMEOUT_MS=15000`（`web-ui/src/stores/runtime.ts:30,351,366`）轮询
+`getSlotStatus(slot).ready`，超时即显示「收敛超时/失败」；而 vLLM 权重加载为分钟级，且
+`model_start` 恒回 `status="starting"`（`backend/qed_engine/api/control.py:190`）、
+`qed_mineru_service.py cmd_start` 不带 `--wait`（`:127`）→ `docker compose up -d` 在就绪前即返回。
+`ready` 无持久化，是每次 `GET /health`（1s 超时、无重试，`runtimes/base.py:52-58`）现算，因此
+一次「超时」不污染状态，稍后再探即 `true`。本方处置：窗口脚本自行轮询到就绪（R0-4）；根侧处置
+（放宽截止/不显示为失败/对齐 `infra-up.ps1` 的 120s 与 `compose.yaml` `start_period`）以发起请求
+`REQ-084` 承载（见 todo「跨项目请求」）。
+
+**本节不声称**：任何真机结果、根仓库改动、REQ-083 的根侧关闭（须根侧撤销改名并回执）。
+
+## 承载 ARCH-017 / REQ-085（模型服务单一占用闸门与窗口排他）
+
+**目的**：R1 窗口 D-2 实证——本机 GPU 只容得下一个 MinerU 解析，而 MinerU 自身
+`max_concurrent_requests=3` 不替调用方排队。根侧控制台在同一时间向 8902 并发提交并重启了 vision
+容器，导致排队 9.5 分钟后的任务在启动瞬间探活失败，却被记成「模型服务不可用」（故障归因失真，
+且我方无法自证「没有并行打模型」）。本节把**串行占用**变成本仓库可执行、可测试的契约。
+
+**关闭条件**：`model_load()` + 闸门带测试落地且门禁全绿，并在窗口排他条件下重跑 D-2 成功激活版本。
+**2026-09-21 达成并关闭 ARCH-017**（G1/G2/G4 完成，G3 出站请求转入 todo REQ-085 由根侧关闭；过程史实在本表）。
+
+| # | 工作项 | 状态 | 结果与证据 |
+| --- | --- | --- | --- |
+| G1 | 契约成文（design + architecture + runbook） | **完成 2026-09-21** | `model-integration.md` 适配器契约新增 `model_load()` 与「不臆造占用」条、`parsing-pipeline.md` 错误处理表新增「模型服务被其他解析占用」行 + 成文理由段、`api.md` `GET /parse-jobs/{id}` 说明「queued 可以很久」并在错误表分列两种文案、`operations.md` runbook 新增 **C-0 窗口排他**前置 |
+| G2 | 实现：`MinerUEngine.model_load()` + `pipeline` 启动前闸门 | **完成 2026-09-21** | 红灯先行：`tests/unit/test_engines.py::TestModelLoad` 6 例（`queued_tasks`/`processing_tasks` → `ModelLoad`；非 200 / 传输异常 / 非 JSON / 字段缺失一律 `None`）+ `tests/unit/test_orchestrator.py::TestSingleOccupancyGate` 4 例（排队→在飞→空闲三轮复探后放行、恒占用超时判 `failed` 且文案含「占用」不含「不可用」且 `parse_calls == 0`、`started_at` 为 NULL、`af_pages` 零行、不激活；`None` 即放行且只探一次；常量 `(5.0, 900.0)`）。实现：`engines/base.py` 新增 `ModelLoad(queued, processing).busy` 与协议成员 `model_load()`、`engines/mineru.py` 的 `_count()` 采信非负整数、`orchestrator/pipeline.py` 的 `_await_model_idle()` 接在 `health()` 之前（等待期不 `mark_running`），`MODEL_BUSY` 与 `MODEL_UNAVAILABLE` 分列；三处测试替身（契约 `FakeEngine`、集成 `_ProbeEngine`、单测 `FakeEngine`）同步实现协议。**门禁**：`pytest tests -q` → `376 passed, 10 skipped`、`ruff check src tests scripts` 全绿、`QED_TEST_MYSQL=1 pytest tests/integration -q` → `8 passed` |
+| G3 | 出站请求 REQ-085（目标：QED-Engine） | 待转达 | 8900 在 8902 尚有 `queued`/`running` 任务时不得重启/换起 vision 槽位（本仓库无写权限，经用户转达登记）。已在 todo 登记为 `REQ-085`（**不影响 ARCH-017 关闭**：本方串行闸门已可自证，容器生命周期权在 8900） |
+| G4 | R1 窗口 D-2 在排他条件下重跑 | **完成 2026-09-21** | 首次尝试失败证据：`D_run.log` + `S1b_gate_probe_fail.json`（19:16~19:34）；job `471761dd16f7` failed、`af_pages` 零行、`active_job_id` 未动。留档口径：`S1_before.json`/`S2_after.json`/`S0_preflight.json` 已被 20:39 的 `--evidence-only` 补证据**覆盖**，故其内容属**激活后**快照（`active_job_id=86ab56ae2b6c`、页行 20），首次尝试的「前态」以 `D_run.log` 的 19:2x 行为准。重跑前置：8902 重启加载闸门代码（pid 207560）+ 窗口脚本新增 **C-0 排他取证**（`S1c_exclusive.json`）。**重跑结果：job `86ab56ae2b6c` 20/20 页 parsed、`parse_status=completed`、`active_job_id` 置位（真机首次激活）**，`versions/86ab56ae2b6c/` = `book.json`+`chunks.json`+`manifest.json`+526 个页级文件（20×blocks.json + 20×md + 486 页图硬链接，实测 `st_ino` 一致 20 个）、根视图无 `chunks.json`；块类型分布 `caption/footer/formula/page_number/paragraph`、**丢弃 0**、越框裁剪 right/bottom/degenerate = 1/0/0；MinerU `completed_tasks` 由 1 → 21 自证「确实逐页打过模型」。**串行性自证**：提交时 `queued_tasks+processing_tasks=0` 且本机无 `queued` 行，20 页在 52 秒内完成（上一次同区间在并发下 10 分钟） |
+| G5 | 窗口脚本两处缺陷修正（同窗口实证） | **完成 2026-09-21** | ① `_metrics()` 把页端点响应当作 BlocksPage 顶层使用，而真机信封是 `{blocks, markdown, image_url, edits}` → 解析成功后取证段 `AttributeError`；已改为读 `response["blocks"]` 子对象，并新增 `--evidence-only <job_id>`（**只为补证据而不再解析一次**，跳过 ingest/门槛探针/C-0/提交）。② 脚本裸用 `httpx.get/post` 走系统代理：Windows 注册表代理不豁免 `127.0.0.1`，代理被打开后 5002/8902 探针全变 **502**（`curl` 直连 200 对照），窗口 15 分钟空转 → 统一改为模块级 `httpx.Client(trust_env=False)`，与 MinerU 适配器条文 11 同一不变式 |
+
+**窗口实证时间线（本地时刻，DB 存 UTC）**：19:19~19:22 `909ce841b85c`（mathanalysis-b05，根侧提交）
+completed → 19:24:34 `bac16a3e7605`（mathanalysis-b05）开始 → **19:25:01 `471761dd16f7`（我方 D-2）入队**
+→ 19:34:37 两者同时终态：根侧任务 `MinerU 轮询失败（连续 3 次）：Server disconnected`、我方任务
+`模型服务不可用`（`started_at` 为 NULL，即从未进入执行）→ 19:35:16 `88de6a2f682e`（mathanalysis-b01）
+running。MinerU `/health` 的 `completed_tasks`/`failed_tasks` 由 50 归 0，证明容器在此期间被重启。
+
+**同窗口已达成（不受本节影响，事实源在此）**：D-1 re-ingest 成功——真实数据根
+`parsed/linear_algebra/linearalgebra-b01/` = 486 张页图 + `book.json` + `manifest.json`；`af_pages`
+39 行 legacy（含第 999 页幽灵行）整批作废为 **0 行**，即 PLAN-004 取消手工 DELETE（C-5）的判据成立；
+`pages` 越界探针在 ingest 后转为 `[491]/[0]/[1,487]` 全部 **422**、任务行增量 0（DEFECT-006 受理前
+门槛真机自证）。同时修正窗口脚本的顺序假设：**未 ingest 的书打不到 422 门槛**（404 在前），
+`--check-only` 下该项记为待复验而非失败。
+
+**同窗口的两条如实登记（不判为缺陷）**：① 取证字段 `data_root_tmp_absent=False`——真实数据根
+`D:\coding\QED-Engine\dataset\tmp\` **确实存在**，但其下两项 `qed-tracker`（2026-08-28）与
+`参考书籍`（2026-09-03）的 mtime 都早于本仓库任何写入，属**根侧历史目录**，不是条文 12 意义上
+「本组件产生的中间产物」；本仓库在该目录下零写入，故不据此判缺陷，也不越界删除他人文件。
+② 孤儿 `running` 行 `5f43593a12cc`（空闲 106683 秒）使「DB 状态」不能作为排他判据——窗口脚本的
+C-0 因此改以**模型侧计数**（`queued_tasks + processing_tasks`）为主判据、本机只判 `queued` 行，
+这正是 DEFECT-007 的实证之一（裁决未下之前，孤儿行只登记不阻塞）。
 
 ## 关闭与归档
 

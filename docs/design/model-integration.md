@@ -75,6 +75,10 @@ flowchart LR
   （指定 pages 的逐页重解析）；
 - 输出：页级结果（`blocks` + `markdown` + `bbox` + `image_size`），由 `normalize/` 归一为统一 schema；
 - 差异（MinerU `content_list`/`middle.json`、PaddleOCR-VL JSON、qwen-vl markdown）在适配层消化；
+- **负载探测**：`model_load()` 返回 `ModelLoad(queued, processing)`（模型服务当前排队与在飞任务数），
+  该引擎不上报负载时返回 `None`。编排层据此在**任务启动前**执行单一占用闸门——GPU 资源不足以并行
+  解析，绝不在他人占用时叠加提交（见下「MinerU」节与
+  [parsing-pipeline 错误处理](parsing-pipeline.md#错误处理与质量验收)）；
 - 适配器**不暴露模型调参**：引擎参数（如 MinerU 后端/语言/公式开关）由模型服务侧（QED-Engine
   控制台与容器配置）管理，本仓库调用固定契约。
 
@@ -126,6 +130,12 @@ flowchart LR
   流量恒为直连，不提供代理开关。
 - 失败语义：模型服务不可达 → **提交期**探活返回 503 且不创建任务行；任务受理后进到执行期的故障
   → 页/任务 `failed`；**不自动切换引擎**（不设自动兜底）。
+- **`model_load()` 的字段来源与不臆造原则（2026-09-21 R1 窗口后新增）**：读 `GET /health` 的
+  `queued_tasks` 与 `processing_tasks`（3.4.4 实测字段；同一响应里 `max_concurrent_requests: 3`
+  说明服务侧**允许**并行，资源约束必须由调用方自我执行）。非 200、JSON 异常或两字段缺失一律返回
+  `None` —— 表示「无法判定」，编排层**按可用放行**，不因为探测不灵就凭空造出一个阻塞；真正的
+  不可达仍由 `health()` 判定。窗口实证：一次并发把 MinerU 打到「连续 3 次轮询断连」，排队中的任务
+  轮到时探活失败，被误记为「模型服务不可用」，因此占用与不可用必须分列两种文案。
 - 引擎分派：实际引擎 = 请求体 `engine`（可选）优先、缺省回落 `AXIOM_OCR_ENGINE`，由
   `engines/factory.py` 显式分派；未在 `factory.ENGINE_NAMES` 注册的名称返回 400、非法字面值由
   schema 返回 422，已登记但未实现的槽位（`paddleocr-vl`、`qwen-vl`）同样返回 400。
@@ -155,6 +165,13 @@ flowchart LR
 
 模型服务地址可配置：默认直连本地服务（`QED_OCR_MODEL_URL`）；部署形态需要时可指向 8900
 提供的代理地址，适配器契约不变。
+
+**单一占用与重启互斥（2026-09-21 R1 窗口实证）**：本仓库的执行器是 `max_workers=1` 的串行队列，
+闸门只保证**我方不叠加提交**；模型容器的重启/换起权在 8900，而「8902 尚有 `queued`/`running`
+任务时重启容器」会直接毁掉在飞与排队中的解析（该窗口内一次并发重启使两个任务同时报断连/不可用）。
+因此对根侧的出站要求登记为 **REQ-085**：8900 在 8902 有未完成解析任务时不得重启/换起 vision 槽位，
+或至少提供可被 8902 探测的「占用中」信号。窗口执行前须与 8900 侧约定静默（见
+[operations runbook](../guides/operations.md)）。
 
 ## 退役清单（已执行，2026-09-17）
 

@@ -47,6 +47,10 @@
 $env:QED_SMOKE_LIVE = "1"
 & D:\software\anaconda3\envs\QED_env\python.exe -m pytest tests/smoke -q -m smoke
 
+# MySQL 提交边界集成测试（需本机 mysqld 在线；默认门禁下 skip，须显式开启）
+$env:QED_TEST_MYSQL = "1"
+& D:\software\anaconda3\envs\QED_env\python.exe -m pytest tests/integration -q
+
 # 静态检查
 & D:\software\anaconda3\envs\QED_env\python.exe -m ruff check src tests
 
@@ -55,7 +59,13 @@ $env:QED_SMOKE_LIVE = "1"
 
 > 真机冒烟（`tests/smoke/`）只连本机回环上的模型服务，数据根与数据库用 `tmp_path` 内的合成 PDF 与
 > SQLite，不读写真实 `QED_DATA_ROOT`、不写共享 `qed` 库；开启后模型不可达即**失败**，不静默跳过。
-> 该「显式开启」口径与 PLAN-003 条文 10 同批，待 ADR 0005 评审后一并晋升 `standards/testing.md`。
+> 该「显式开启」口径与 PLAN-003 条文 10 同批，已随 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)
+> 晋升 `standards/testing.md`。
+>
+> `QED_TEST_MYSQL=1` 的隔离边界同见 ADR 0005：只连回环 MySQL、只用 `qed_test` 库内本方自有的
+> `af_*` 四表与 `alembic_version`（夹具 DROP 前逐名断言，绝不 `DROP DATABASE`），数据根用 `tmp_path`。
+> **执行时机**：改动 `orchestrator/` 或 `db/` 的提交/持久化语义后必须跑一次该层，默认门禁的 skip
+> 不等于这条路径已验证。
 
 ## 门禁
 
