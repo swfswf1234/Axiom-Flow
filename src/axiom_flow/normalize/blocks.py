@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from axiom_flow.engines.base import BboxSpace, PageResult
 from axiom_flow.schemas import Block, BlocksPage, BlockType, QualityMetrics
 
-# MinerU content_list 类型 → 统一块类型
+# MinerU content_list 类型 → 统一块类型。真机 3.4.4 的页眉/页脚字面值是 `header`/`footer`
+# （`page_header`/`page_footer` 为旧版/其它版本字面值，两者并存以免回归），见 DEFECT-005。
 _TYPE_MAP: dict[str, BlockType] = {
     "title": BlockType.HEADING,
     "text": BlockType.PARAGRAPH,
@@ -24,6 +26,8 @@ _TYPE_MAP: dict[str, BlockType] = {
     "table_caption": BlockType.CAPTION,
     "table_footnote": BlockType.CAPTION,
     "page_footnote": BlockType.CAPTION,
+    "header": BlockType.HEADER,
+    "footer": BlockType.FOOTER,
     "page_header": BlockType.HEADER,
     "page_footer": BlockType.FOOTER,
     "page_number": BlockType.PAGE_NUMBER,
@@ -190,8 +194,17 @@ def blocks_to_markdown(blocks: list[Block]) -> str:
     return "\n\n".join(part for part in parts if part).strip() + "\n"
 
 
-def compute_quality(blocks: list[Block], *, native_text_length: int | None = None) -> QualityMetrics:
-    """页质量信号：空块率 / 公式平均置信度（无公式取 1.0）/ 表格数 / 文本长度比。"""
+def compute_quality(
+    blocks: list[Block],
+    *,
+    native_text_length: int | None = None,
+    dropped_literals: Sequence[str] = (),
+) -> QualityMetrics:
+    """页质量信号：空块率 / 公式平均置信度（无公式取 1.0）/ 表格数 / 文本长度比 + 可见丢弃。
+
+    `dropped_literals` 为引擎返回但未能归一的条目原始 `type` 字面值：丢弃必须**可见**
+    （计入信号），否则同页块数与引擎条目数不一致却无从判定（DEFECT-005 契约）。
+    """
     total = len(blocks)
     empty = sum(1 for block in blocks if not (block.text or block.latex or block.html or block.items))
     empty_ratio = (empty / total) if total else 1.0
@@ -214,6 +227,8 @@ def compute_quality(blocks: list[Block], *, native_text_length: int | None = Non
         avg_formula_confidence=round(avg_confidence, 4),
         table_count=sum(1 for block in blocks if block.type is BlockType.TABLE),
         text_length_ratio=round(ratio, 4),
+        dropped_block_count=len(dropped_literals),
+        dropped_types=sorted({str(literal) for literal in dropped_literals}),
     )
 
 
@@ -226,9 +241,11 @@ def normalize_page(
 ) -> BlocksPage:
     """引擎页级结果 → 统一 `BlocksPage`（含 index/order 与质量信号）。
 
-    引擎只回 markdown（无结构化块）时，整页回退为单个 paragraph 块（bbox = 全页）。
+    引擎**未回结构化条目**只回 markdown 时，整页回退为单个 paragraph 块（bbox = 全页）；回了条目
+    但全部未能归一时不回退——那是映射缺口，回退会把缺陷伪装成一个正文块（违反可见丢弃契约）。
     """
     blocks: list[Block] = []
+    dropped: list[str] = []
     for raw in result.blocks:
         block = block_from_raw(
             raw,
@@ -237,9 +254,11 @@ def normalize_page(
             image_size=image_size,
             space=result.bbox_space,
         )
-        if block is not None:
+        if block is None:
+            dropped.append(str(raw.get("type", "")))
+        else:
             blocks.append(block)
-    if not blocks and result.markdown.strip():
+    if not result.blocks and result.markdown.strip():
         blocks = [
             Block(
                 type=BlockType.PARAGRAPH,
@@ -254,5 +273,5 @@ def normalize_page(
         image_size=image_size,
         source=source,
         blocks=blocks,
-        quality=compute_quality(blocks, native_text_length=native_text_length),
+        quality=compute_quality(blocks, native_text_length=native_text_length, dropped_literals=dropped),
     )

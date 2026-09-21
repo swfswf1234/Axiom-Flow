@@ -2,12 +2,16 @@
 
 产物形态（`<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`）：
 - `book.json`               ← BookMeta
-- `manifest.json`           ← ManifestEntry 列表
+- `manifest.json`           ← ManifestEntry 列表（根清单不递归 `versions/`）
+- `versions/<job_id>/`      ← 一次解析任务 = 一个完整快照版本（book.json + pages/ + chunks.json + manifest.json）
 - `chunks.json`             ← ChunkSet（派生、不入库、可重建）
 - `pages/p<NNNN>.blocks.json` ← BlocksPage（块级结构化，渲染 + 向量化共同基座）
 - `pages/p<NNNN>.md`          ← 页级 Markdown（`$$...$$` / `$...$` 内嵌公式）
 
-API 契约模型：BookOut / BookSyncItem / IngestResponse / PageData / EditRecord / ParseJob。
+生效版本由 `af_books.active_job_id` 单点指认（NULL = 根视图 legacy）；读取端点与 URL 不因
+版本化改变（PLAN-004 / REQ-080）。
+
+API 契约模型：BookOut / BookSyncItem / IngestResponse / PageData / EditRecord / ParseVersionOut / ParseJob。
 块类型 10 种；解析来源 source ∈ {mineru, paddleocr-vl, qwen-vl}（后两者预留）。
 """
 
@@ -170,12 +174,18 @@ class Block(BaseModel):
 
 
 class QualityMetrics(BaseModel):
-    """页质量信号（空块率/公式平均置信度/表格成功数/文本长度比）。"""
+    """页质量信号（空块率/公式平均置信度/表格成功数/文本长度比 + 可见丢弃计数）。"""
 
     empty_block_ratio: float = Field(ge=0.0, le=1.0)
     avg_formula_confidence: float = Field(ge=0.0, le=1.0)
     table_count: int = Field(ge=0)
     text_length_ratio: float = Field(ge=0.0)
+    dropped_block_count: int = Field(
+        default=0, ge=0, description="引擎返回但未能归一为统一块的条目数（字面值未覆盖或必需字段缺失）"
+    )
+    dropped_types: list[str] = Field(
+        default_factory=list, description="被丢弃条目的原始 type 字面值（去重升序，供人工判定映射缺口）"
+    )
 
 
 class BlocksPage(BaseModel):
@@ -282,6 +292,9 @@ class BookOut(BaseModel):
     ingest_status: str = IngestStatus.NONE
     parse_status: str = ParseStatus.PENDING
     pages_done: int = 0
+    active_job_id: str | None = Field(
+        default=None, description="当前生效解析版本（af_books.active_job_id）；None = 根视图 legacy"
+    )
     notes: str | None = None
 
 
@@ -331,10 +344,11 @@ class IngestResponse(BaseModel):
 
 
 class EditRecord(BaseModel):
-    """块级人工编辑记录（af_block_edits 覆盖层）。"""
+    """块级人工编辑记录（af_block_edits 覆盖层，绑定其所属解析版本）。"""
 
     edit_id: str
     book_id: str
+    job_id: str = ""
     page_no: int = Field(ge=1)
     block_index: int = Field(ge=0)
     block_type: str = ""
@@ -344,6 +358,23 @@ class EditRecord(BaseModel):
     corrected_bbox: BBox | None = None
     edited_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class ParseVersionOut(BaseModel):
+    """GET /books/{id}/versions 响应行：一个解析版本（= 一次任务）的自证信息。
+
+    只读列举，供对照视图切换与审计；`parsed` 计入从基线继承的页，因此逐页重解析的版本同样
+    显示为完整快照的页数。
+    """
+
+    job_id: str
+    engine: str = ""
+    status: str = ""
+    page_count: int | None = None
+    parsed: int = 0
+    source_sha256: str = ""
+    created_at: datetime | None = None
+    active: bool = False
 
 
 class EditRequest(BaseModel):

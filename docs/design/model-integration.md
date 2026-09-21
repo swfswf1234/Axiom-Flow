@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：暂定
 实现状态：Current（config/engines 已实现，MinerU 适配器按 3.4.4 异步协议落地 + `factory.py` 显式
-分派 + `bbox_space` 坐标空间声明；paddleocr-vl/qwen-vl 预留；llm_client/fallback 已退役）
+分派 + `bbox_space` 坐标空间声明 + 归一化可见丢弃计数；paddleocr-vl/qwen-vl 预留；llm_client/fallback 已退役）
 最后更新：2026-09-21
 关联代码：`src/axiom_flow/config.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`
 关联测试：`tests/unit/test_config.py`、`tests/unit/test_engines.py`、`tests/unit/test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py`
@@ -106,8 +106,10 @@ flowchart LR
   `PageResult.bbox_space` 声明 `"normalized_1000"`，由归一化侧按 `bbox / 1000 * image_size` 换算；
   `middle_json.pdf_info[*].page_size` 对 PNG 输入返回按 200 DPI 折算的标称点尺寸（与页图像素比
   约 1:2.78），**不能**当缩放基准，`page_size` 只留档、不参与坐标换算。`content_list[].type`
-  实测字面值含 `text`、`header`、`footer`（**不是** `page_header`/`page_footer`）。类型映射仍待修
-  （[DEFECT-005](../trackers/todo.md)）；坐标空间已修复（[DEFECT-004](../trackers/todo.md) 见关闭台账）。
+  实测字面值含 `text`、`header`、`footer`（**不是** `page_header`/`page_footer`），归一化侧两类
+  字面值并存收录；映射表未覆盖的字面值按**可见丢弃**计入 `QualityMetrics.dropped_block_count` /
+  `dropped_types`，不静默丢块（DEFECT-004 坐标空间与 DEFECT-005 类型映射均已修复，见
+  [completed.md](../trackers/completed.md)）。
   实验与复验留档 `data/probes/live-bringup-20260920/{L3d_coord_space.json,L3c_page0003.json}`、
   `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`。
 

@@ -242,6 +242,14 @@ class TestNormalizePage:
         assert page.blocks[0].type is BlockType.PARAGRAPH
         assert page.blocks[0].bbox == (0, 0, *IMAGE_SIZE)
         assert page.page == 4
+        assert page.quality.dropped_block_count == 0
+
+    def test_all_items_dropped_never_fall_back_to_paragraph(self):
+        """原始条目全部未归一时不得整页回退：回退会把映射缺口伪装成一个正文块（静默降级）。"""
+        page = _normalize([{"type": "chart", "text": "图"}], markdown="正文")
+        assert page.blocks == []
+        assert page.quality.dropped_block_count == 1
+        assert page.quality.dropped_types == ["chart"]
 
     def test_quality_attached(self):
         page = _normalize([{"type": "text", "text": "x", "bbox": [0, 0, 10, 10]}])
@@ -272,3 +280,97 @@ class TestQuality:
         assert quality.empty_block_ratio == 1.0
         assert quality.avg_formula_confidence == 1.0
         assert quality.text_length_ratio == 1.0
+
+
+class TestVisibleDrop:
+    """DEFECT-005：真机类型字面值映射 + 未覆盖/必需字段缺失必须**可见丢弃**（计入质量信号）。"""
+
+    def test_real_machine_header_and_footer_literals_map(self):
+        """真机 `content_list` 回的是 `header`/`footer`（非 `page_header`/`page_footer`）→ 必须成块。"""
+        page = _normalize([
+            {"type": "header", "text": "吉米多维奇数学分析习题集", "bbox": [0, 0, 100, 10]},
+            {"type": "text", "text": "正文", "bbox": [0, 50, 100, 80]},
+            {"type": "footer", "text": "42", "bbox": [0, 900, 100, 930]},
+        ])
+        assert [b.type for b in page.blocks] == [
+            BlockType.HEADER,
+            BlockType.PARAGRAPH,
+            BlockType.FOOTER,
+        ]
+        assert [b.text for b in page.blocks] == ["吉米多维奇数学分析习题集", "正文", "42"]
+
+    def test_legacy_page_header_literals_still_map(self):
+        """旧字面值不回归：`page_header`/`page_footer` 与 `header`/`footer` 同义。"""
+        page = _normalize([
+            {"type": "page_header", "text": "旧页眉", "bbox": [0, 0, 10, 10]},
+            {"type": "page_footer", "text": "旧页脚", "bbox": [0, 0, 10, 10]},
+        ])
+        assert [b.type for b in page.blocks] == [BlockType.HEADER, BlockType.FOOTER]
+
+    def test_unmapped_literal_is_dropped_visibly(self):
+        """映射表未覆盖的字面值：丢块但计入质量信号，不静默消失。"""
+        page = _normalize([
+            {"type": "text", "text": "正文", "bbox": [0, 0, 10, 10]},
+            {"type": "aside_text", "text": "边注", "bbox": [0, 0, 10, 10]},
+            {"type": "chart", "text": "图", "bbox": [0, 0, 10, 10]},
+        ])
+        assert [b.type for b in page.blocks] == [BlockType.PARAGRAPH]
+        assert page.quality is not None
+        assert page.quality.dropped_block_count == 2
+        assert page.quality.dropped_types == ["aside_text", "chart"]
+
+    def test_missing_required_field_drop_is_visible_too(self):
+        """必需字段缺失（表格无 html、公式无 latex）同样计入，不静默丢块。"""
+        page = _normalize([
+            {"type": "table", "bbox": [0, 0, 10, 10]},
+            {"type": "equation", "bbox": [0, 0, 10, 10]},
+            {"type": "image", "bbox": [0, 0, 10, 10]},
+            {"type": "text", "text": "正文", "bbox": [0, 0, 10, 10]},
+        ])
+        assert [b.type for b in page.blocks] == [BlockType.PARAGRAPH]
+        assert page.quality is not None
+        assert page.quality.dropped_block_count == 3
+        assert page.quality.dropped_types == ["equation", "image", "table"]
+
+    def test_index_stays_contiguous_after_drop(self):
+        """丢弃不得让 `index` 跳号：块编辑以 `index` 为定位键（af_block_edits）。"""
+        page = _normalize([
+            {"type": "aside_text", "text": "边注", "bbox": [0, 0, 10, 10]},
+            {"type": "text", "text": "第一", "bbox": [0, 0, 10, 10]},
+            {"type": "chart", "text": "图", "bbox": [0, 0, 10, 10]},
+            {"type": "text", "text": "第二", "bbox": [0, 0, 10, 10]},
+        ])
+        assert [b.index for b in page.blocks] == [0, 1]
+        assert [b.order for b in page.blocks] == [0, 1]
+
+    def test_no_drop_keeps_signal_zero(self):
+        page = _normalize([{"type": "text", "text": "正文", "bbox": [0, 0, 10, 10]}])
+        assert page.quality is not None
+        assert page.quality.dropped_block_count == 0
+        assert page.quality.dropped_types == []
+
+    def test_header_footer_excluded_from_markdown(self):
+        """页眉/页脚成块后仍不进页级 Markdown（否则正文混入页码）。"""
+        page = _normalize([
+            {"type": "header", "text": "页眉", "bbox": [0, 0, 10, 10]},
+            {"type": "text", "text": "正文", "bbox": [0, 50, 10, 80]},
+            {"type": "footer", "text": "42", "bbox": [0, 900, 10, 930]},
+        ])
+        markdown = blocks_to_markdown(page.blocks)
+        assert markdown.strip() == "正文"
+
+    def test_compute_quality_signature_back_compatible(self):
+        """旧调用点（只传 blocks）不传丢弃信息时默认为 0。"""
+        quality = compute_quality([])
+        assert quality.dropped_block_count == 0
+
+    def test_accounting_invariant_on_mixed_page(self):
+        """对账不变式（默认门禁覆盖，不依赖真机）：原始条目数 = 存活块数 + 可见丢弃数。"""
+        raw = [
+            {"type": "text", "text": "正文", "bbox": [0, 0, 10, 10]},
+            {"type": "chart", "text": "图", "bbox": [0, 0, 10, 10]},
+            {"type": "table", "bbox": [0, 0, 10, 10]},
+            {"type": "header", "text": "页眉", "bbox": [0, 20, 10, 30]},
+        ]
+        page = _normalize(raw, markdown="正文\n\n页眉")
+        assert len(raw) == len(page.blocks) + page.quality.dropped_block_count

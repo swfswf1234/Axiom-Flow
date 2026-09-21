@@ -168,6 +168,19 @@ class TestBlocksPage:
         with pytest.raises(ValidationError):
             QualityMetrics(empty_block_ratio=1.5, avg_formula_confidence=0.9, table_count=0, text_length_ratio=0.5)
 
+    def test_drop_signals_default_and_bound(self):
+        """可见丢弃信号（DEFECT-005）：默认零，计数不得为负。"""
+        quality = QualityMetrics(
+            empty_block_ratio=0.0, avg_formula_confidence=1.0, table_count=0, text_length_ratio=1.0
+        )
+        assert quality.dropped_block_count == 0
+        assert quality.dropped_types == []
+        with pytest.raises(ValidationError):
+            QualityMetrics(
+                empty_block_ratio=0.0, avg_formula_confidence=1.0, table_count=0,
+                text_length_ratio=1.0, dropped_block_count=-1,
+            )
+
     def test_source_enum_values(self):
         assert {s.value for s in Source} == {"mineru", "paddleocr-vl", "qwen-vl"}
 
