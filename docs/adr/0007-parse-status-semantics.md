@@ -1,7 +1,7 @@
 # ADR 0007：解析状态语义三分（结局三态、进度/结局分列、启动期归一）
 
 状态：Accepted
-最后更新：2026-09-21
+最后更新：2026-09-22
 关联代码：`src/axiom_flow/schemas.py`（`JobStatus`/`ParseStatus`）、`src/axiom_flow/orchestrator/pipeline.py`（终态判定）、`src/axiom_flow/orchestrator/jobs.py`（执行器）、`src/axiom_flow/db/models.py`（af_books/af_parse_jobs）、`src/axiom_flow/api/main.py`（lifespan）
 关联测试：`tests/unit/test_schemas.py`、`tests/unit/test_orchestrator.py`、`tests/unit/test_db_migrations.py`、`tests/contract/test_api_v1_contract.py`、`tests/integration/test_parse_persistence.py`
 
@@ -53,7 +53,8 @@ DEFECT-006/007 的取证（[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)
    `completed`/`failed` → `last_parse_result`，`parsing` → `pending`），**不改写历史任务状态**——
    幽灵 `running` 行由首次部署后的启动期归一处理，以保持「活动态只有一个写入者」。
 7. **根侧契约影响**：8900/前端遇未知枚举值必须按「非终态或不可读」保守处理而非猜测；页级失败清单与
-   任务列表的数据来源已具备（决定 1/2），但**本 ADR 不新增端点**，端点语义由 REQ-086 承载。
+   任务列表的数据来源已具备（决定 1/2），但**本 ADR 不新增端点**，端点语义由 REQ-087 承载（该请求行
+   2026-09-21 首登为 `REQ-086`，2026-09-22 因根仓库把 `REQ-086` 用给「全本分块提交」而改号，同号不同事）。
 
 ## 后果
 
@@ -70,6 +71,6 @@ DEFECT-006/007 的取证（[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)
 取代：无。
 被取代：无。
 关联：承接 DEFECT-006（部分成功语义）与 DEFECT-007（假 `running`）的关闭条件成文；解除 ARCH-003
-的裁决阻塞；为 REQ-086 提供成文数据来源但不含其端点范围。实施载体 PLAN-006 已于 2026-09-21 关闭
+的裁决阻塞；为 REQ-087 提供成文数据来源但不含其端点范围。实施载体 PLAN-006 已于 2026-09-21 关闭
 并按 Delete 删除计划壳（正文见锚点 `9034a19`），结论落 `design/parsing-pipeline.md` 条文 S1~S7、
 `architecture/api.md` 状态机表与 `architecture/database-design.md` 列语义。

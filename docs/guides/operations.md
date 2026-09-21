@@ -131,7 +131,7 @@
 - **`interrupted` 的续跑语义 = 同一 `job_id` 重放**，不新建版本：版本作用域是 `(book_id, job_id)`，
   已 `parsed` 且产物在位的页跳过引擎调用，只补剩余页；重放前**不需要**手工清行、也不需要删版本目录。
   **但重放入口目前只有代码路径**（`orchestrator.run_parse_job(job_id=…)`，`scripts/tmp/` 窗口脚本按此
-  用法）：`POST /parse-jobs` 每次生成新 `job_id`，按既有 `job_id` 续跑的端点属 REQ-086 范围，
+  用法）：`POST /parse-jobs` 每次生成新 `job_id`，按既有 `job_id` 续跑的端点属 REQ-087 范围，
   PLAN-006 未开放。因此真机上被打断的版本要么经脚本重放、要么重新提交为一版（旧版保留不删）。
 - **`20260921_0001` 迁移窗口**（D 类，执行前须用户批准）：停服 → 备份 `af_*` 四表 →
   `python -m alembic upgrade 20260921_0001` → 校验 `alembic_version` 与

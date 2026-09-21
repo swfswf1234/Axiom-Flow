@@ -7,7 +7,7 @@
 
 ## 背景
 
-QED-Engine 根仓库经 [ADR 0011](../../../docs/history/adr/v0.1/0011-pending-design-location.md) 裁决（范本，
+QED-Engine 根仓库经 [ADR 0011](https://github.com/QED-Engine/qed-engine/blob/main/docs/history/adr/v0.1/0011-pending-design-location.md) 裁决（范本，
 同 [ADR 0001](0001-v2-exploration-direction.md) 对齐根仓库 ADR 0010 的模式）：待评审的设计
 内容（接口契约草案、流程方案等）不再直接进入 `design/`，一律随计划在 `plans/` 承载，经用户
 评审完全确定后以稳定名称迁入 `design/` 或合并固定文档；`design/` 目录本身即「已确定」可信度
@@ -33,4 +33,4 @@ QED-Engine 根仓库经 [ADR 0011](../../../docs/history/adr/v0.1/0011-pending-d
 
 取代：无（新增规则，细化 [文档治理规范](../standards/doc-governance.md) 的 design/plans 分类边界）。
 被取代：无。来源范本：QED-Engine 根仓库
-[ADR 0011](../../../docs/history/adr/v0.1/0011-pending-design-location.md)。
+[ADR 0011](https://github.com/QED-Engine/qed-engine/blob/main/docs/history/adr/v0.1/0011-pending-design-location.md)。

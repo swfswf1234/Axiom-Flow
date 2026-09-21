@@ -1,7 +1,7 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-09-21
+最后更新：2026-09-22
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
@@ -28,3 +28,12 @@
   [operations.md](../guides/operations.md)；壳的完整内容见提交 `9034a19`
   （`git show 9034a19:docs/plans/2026-09-21-parse-status-semantics.md`），关闭证据见
   [completed.md](../trackers/completed.md) PLAN-006 / DEFECT-006 / DEFECT-007 行。
+- PLAN-004 解析产物按版本划分（Axiom-Flow）已完成（2026-09-22，根侧四条确认全部接受后关闭），
+  计划按 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-20-req080-parse-version-layout.md)（保留
+  根仓库需求对表 R1~R10、本仓库现状约束 L1~L10 与条文 V1~V10 的**推导依据**）；运行时事实源不在壳内，
+  而以晋升后的 [parsing-pipeline.md「解析版本与生效指针」](../design/parsing-pipeline.md)、
+  [api.md](../architecture/api.md)、[database-design.md](../architecture/database-design.md) 为准；
+  关闭证据见 [completed.md](../trackers/completed.md) PLAN-004 与 REQ-080 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-20-req080-parse-version-layout.md` 处须改指上述
+  归档位置（迁移文件头注释 `20260920_0002_parse_version_scoping.py` 已随本批更新）。
