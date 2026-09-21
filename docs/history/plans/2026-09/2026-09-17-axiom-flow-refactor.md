@@ -1,10 +1,10 @@
 # Axiom-Flow 配置简化与解析重构（axiom-flow-refactor）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-09-20
-关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、解析管线归本仓库；本计划不新增 ADR，只对齐既有决策）
-关联设计：[model-integration.md](../design/model-integration.md)、[parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)
+最后更新：2026-09-21
+关联 ADR：[ADR 0004](../../../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、解析管线归本仓库；本计划不新增 ADR，只对齐既有决策）
+关联设计：[model-integration.md](../../../design/model-integration.md)、[parsing-pipeline.md](../../../design/parsing-pipeline.md)、[parsing-management.md](../../../design/parsing-management.md)
 关联 Tracker：docs/trackers/todo.md（PLAN-002、ARCH-001/003/004/005/006/009/016、REQ-001、REQ-075、REQ-080、DEFECT-001/002/003）
 归档判定：Retain（配置与解析事实并入 design/architecture 后，计划壳归档 history/plans/2026-09/）
 
@@ -205,6 +205,49 @@ qwen-vl 引擎（仅预留）；不实现 RAG / Milvus / 知识图谱 / 数学�
 
 ## 关闭与归档
 
+### 关闭判定（2026-09-21，逐条）
+
+**与计划口径的偏差（已改判）**：下文旧口径把标准 6/7 绑到「PLAN-003 关闭即判达成」。PLAN-003 因
+D3 真机删除演练（需用户批准）与 DEFECT-006/007 语义裁决而长期开放，继续绑定只会让本计划无期限
+挂起；而标准 6/7 的**判据本身**已在 2026-09-21 的 R1 真机窗口逐条达成。故本轮改为**按判据自身证据
+判定**，PLAN-003 的剩余依赖与本计划无关。
+
+| 标准 | 2026-09-21 判定 | 依据（可复跑） |
+| --- | --- | --- |
+| 1~3 配置三段式 / `config.py` / 服务脚本 | 达成（2026-09-20 已判） | `test_config.py`（含 DEFECT-008 行内注释 4 例）+ `test_service_scripts.py`；G5 三段走查证明生效层恒为本仓库 `.env` |
+| 4 API 契约 + 契约测试 | 达成（2026-09-20 已判），此后随版本布局扩到 15 条路由 | `architecture/api.md` + `tests/contract/test_api_v1_contract.py` |
+| 5 af_* 四表一次迁移 + 仓储幂等/upsert | 达成（2026-09-20 真机） | `qed` 库迁移至 `20260920_0002`；ARCH-013/014/015/003 侧证据入 completed.md |
+| 6 基本解析闭环（sync→ingest→解析→归一化→落盘+回写） | **达成（改判）**：原「未达成」的两项成因均已消除 | DEFECT-002（3.4.4 三段端点）与 DEFECT-001（页级提交边界）关闭；R1 窗口 job `86ab56ae2b6c` 20/20 页 52 秒完成并**首次激活** `active_job_id`，产物落 `versions/<job_id>/`（`data/probes/live-window-20260921/S2_after.json`）；`tests/smoke/test_live_mineru_chain.py`（`QED_SMOKE_LIVE=1`）常驻复跑 |
+| 7 分块：`chunks.json` + `GET /chunks` + 抽样 20 页无公式腰斩、溯源可回跳 | **达成（本轮就地补做真机取证）** | 见下「标准 7 真机取证」 |
+| 8 门禁全绿 + REQ-001/REQ-075 回执 | **达成（本方侧发出）** | 门禁 `376 passed, 10 skipped` + `ruff check src tests scripts` 全绿 + 契约 96；REQ-075 已关闭（completed 行）；REQ-001 复核材料与延后项② 二次回执随 `95e1d37` 发出——根侧登记在其 `REQ-001` todo 行独立跟踪，不再作为本计划门槛 |
+
+**标准 7 真机取证（2026-09-21 就地补做，只读）**：脚本 `scripts/tmp/live_check_chunk_formula_integrity.py`
+对**生效版本** `86ab56ae2b6c`（20 页 / 原始块 159 / chunk 17）跑四项判据，结果 **PASS**，留档
+`data/probes/chunk-integrity-20260921/C1_chunks.json`：
+
+1. 公式整块不腰斩：18 个 `formula` 块按 `block_text` 规则（display → `$$…$$`，行内 → `$…$`）渲染后，
+   **全部**作为完整子串出现在某个 chunk 文本中（缺失 0）；
+2. 分隔符平衡：逐 chunk 统计 `$$` 对与残余单 `$`，奇数者 0（腰斩必然留下奇数定界符）；
+3. 溯源可回跳：`block_refs` 的 `(page, index)` 全部命中该版本 `pages/pNNNN.blocks.json` 的合法下标
+   （悬空 0）；
+4. 非噪声块全覆盖：排除 `header/footer/page_number/image` 后应入块的块 100% 被引用（未覆盖 0）。
+
+**反向判据**（证明上述 PASS 不是空判据，在临时副本上人为破坏）：腰斩一个公式 →
+`formula_blocks_missing_from_chunks=2` 且 `chunks_with_unbalanced_dollar_delimiters=1`；插入悬空
+`block_refs` → `dangling_block_refs` 命中；整删一个 chunk → `uncovered_non_noise_blocks=3`。四种破坏
+全部变红。默认门禁侧由 `tests/unit/test_chunking.py::test_formula_and_table_never_split` 常驻守护；
+真机取证脚本读真实数据根，按测试隔离铁律**不进默认门禁**。
+
+**顺带取证（移交 ARCH-009 复用）**：该版本块类型分布 = `paragraph` 121 / `page_number` 14 /
+`formula` 18 / `footer` 4 / `caption` 2，与 `dropped_block_count = 0`（R1 窗口）互证映射表无缺口。
+
+**移交项（唯一）**：上述四项判据在**代表书**（Rudin 中译 + 吉米多维奇）上的复跑属质量验收，
+归 ARCH-009 关闭条件（其「类型分布取证登记」与本脚本同源，脚本可直接复用）。
+
+**关闭结果 Achieved**，归档判定 **Retain**（本计划承载 2026-09-17 重构基线裁决与 af_* 真机迁移里程碑）。
+
+### 旧口径（保留原貌，不覆盖事实）
+
 - 关闭条件（2026-09-20 收口）：Step 3 工作项由 PLAN-003 承接后，本计划判定口径改为——
   **标准 1~5 已达成；标准 6（基本解析闭环）与标准 7（分块）随 PLAN-003 关闭即判达成；标准 8 的
   门禁部分已达成、REQ-001/075 回执随 PLAN-003 W8**。因此本计划在 PLAN-003 关闭且回执发出后随之
@@ -215,7 +258,7 @@ qwen-vl 引擎（仅预留）；不实现 RAG / Milvus / 知识图谱 / 数学�
 
 ## 台账历史归档（2026-09-21 承载契约压缩）
 
-按 [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md) 决定 4 压缩 todo 行证据列，以下为
+按 [ADR 0006](../../../adr/0006-ledger-plan-carrier-contract.md) 决定 4 压缩 todo 行证据列，以下为
 PLAN-002 行被移除的历史日志原文（保留原貌，不回改）。
 
 > **2026-09-20 复核收窄**：Step 1 与 Step 2-A~E 交付、门禁 245 passed + ruff 全绿，DB 与存储支线关闭；**2026-09-20 收口**：Step 3 联调与缺陷修复由 PLAN-003 承接，本计划剩余仅「标准 6/7 随 PLAN-003 关闭即判达成 + 标准 8 回执」

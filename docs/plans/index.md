@@ -17,3 +17,7 @@
   [任务生命周期](../standards/task-lifecycle.md)、[文档治理](../standards/doc-governance.md)
   与压缩后的 todo；壳的完整内容见提交 `b42540b`（`git show b42540b:docs/plans/2026-09-21-ledger-plan-carrier-contract.md`），
   关闭证据见 [completed.md](../trackers/completed.md) PLAN-005 行。
+- PLAN-002 Axiom-Flow 配置简化与解析重构（Axiom-Flow）已完成（2026-09-21），计划按 `Retain` 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-17-axiom-flow-refactor.md)（v2 重构基线：
+  2026-09-17 七条用户裁决 + af_* 真机迁移里程碑 + 8 条成功标准逐条判定）；
+  关闭证据见 [completed.md](../trackers/completed.md) PLAN-002 行。
