@@ -58,6 +58,6 @@ QED-Tracker 已通过 ADR 0003/0004/0008 完成同类对齐，其 `doc-governanc
 
 取代：无（细化并扩展 [文档规范](../standards/doc-governance.md) 治理机制）。
 被取代：无。
-来源范本：QED-Tracker
-[ADR 0004](../../../QED-Tracker/docs/adr/0004-standards-governance-alignment.md)、
-[文档治理规范](../../../QED-Tracker/docs/standards/doc-governance.md)。
+来源范本：QED-Tracker（兄弟仓库，本工作区只读，路径以对方仓库为准，故不作可解析链接）
+`QED-Tracker/docs/adr/0004-standards-governance-alignment.md`、
+`QED-Tracker/docs/standards/doc-governance.md`。

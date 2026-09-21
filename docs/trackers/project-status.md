@@ -34,9 +34,13 @@
 
 ## 当前主线
 
-- **本轮主攻（全库唯一，2026-09-21）**：**PLAN-005 台账与计划承载契约治理**（[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)
-  经用户确认转 Accepted，W2~W8 执行中：standards/todo 新契约/skills/契约测试/存量行压缩）。
-  与之并行的开发面为 PLAN-004（版本划分 P2~P7 **已实施并完成本地闭环**，真机 B→C→D 单窗口待批准）。
+- **本轮主攻（全库唯一，2026-09-21）**：**PLAN-004 解析产物按版本划分（REQ-080）**——P2~P7 已实施
+  并**完成本地闭环**（迁移 `20260920_0002` + 版本目录写入/读取 + ingest 保版本 + 六份文档晋升，
+  门禁 `352 passed, 2 skipped` + 契约 94 + ruff），剩余仅真机 **B→C→D 单窗口**（D 类待批准）与
+  REQ-080 回执发出；本计划**尚不可关闭**（判据拆分见其正文「关闭与归档」）。
+- **已关闭（2026-09-21）**：**PLAN-005 台账与计划承载契约治理**（[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)
+  转 Accepted，`standards/`、todo 新契约、三个技能、治理契约测试与存量行压缩全部落地；计划壳按
+  `Delete` 判定删除，回溯锚点 `b42540b`，证据入 completed.md）。
 - **v2 探索纪元**：Axiom-Flow 为 QED-Engine 后端解析组件（[ADR 0001](../adr/0001-v2-exploration-direction.md)），
   推倒 v1 重建，聚焦解析与渲染数据供给。
 - **ARCH-020 重构（2026-09-14）**：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)
