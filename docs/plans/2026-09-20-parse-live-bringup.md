@@ -796,6 +796,14 @@ W7 期间发现并登记（不在本轮静默修复）：
   窗口）、REQ-001/081/083/084 根侧回执、DEFECT-006/007 裁决。门禁基线 **366 passed, 2 skipped →
   366 passed, 10 skipped**（新增 `tests/integration/` 8 例在默认门禁下 skip）。
 
+- **九轮（2026-09-21，跨项目回执批次发出）**：本计划末的「跨项目回执发出（2026-09-21，R1 窗口后）」一节
+  把 W8-g 的待发材料转为**已发出**（锚点 commit `95e1d37`，门禁 `376 passed, 10 skipped` / 契约 96 / `QED_TEST_MYSQL=1`
+  集成 8 passed）：REQ-080 实施回执 + 待根确认四条、REQ-081 **二次回执**（根侧 §13 复测前提成立，
+  产物 = 生效版本 `86ab56ae2b6c` 第 1~20 页）、REQ-083 回执，以及 REQ-084/085 两条出站转达稿。
+  对本计划的影响：**回执发出这一项依赖自此销账**，外部项清单收窄为 ① D3 真机删除演练（需用户批准）、
+  ② 根侧回应（REQ-001 登记复核材料、REQ-080 四条确认、REQ-081 §13 复测、REQ-083 撤销改名、
+  REQ-084/085 登记）、③ DEFECT-006/007 语义裁决。本计划仍**不因九轮关闭**（①③ 未达成）。
+
 ## 承载 DEFECT-001（W3：ADR 0005 接受 + MySQL 双 Session 提交边界回归网）
 
 **目的**：DEFECT-001 的原始成因是「共享 Session 看得见未提交数据」，因此 SQLite 单测结构性地抓不到
@@ -862,7 +870,7 @@ C 窗口）；DEFECT-006/007 的状态语义裁决；任何真机解析结果。
 | --- | --- | --- | --- |
 | G1 | 契约成文（design + architecture + runbook） | **完成 2026-09-21** | `model-integration.md` 适配器契约新增 `model_load()` 与「不臆造占用」条、`parsing-pipeline.md` 错误处理表新增「模型服务被其他解析占用」行 + 成文理由段、`api.md` `GET /parse-jobs/{id}` 说明「queued 可以很久」并在错误表分列两种文案、`operations.md` runbook 新增 **C-0 窗口排他**前置 |
 | G2 | 实现：`MinerUEngine.model_load()` + `pipeline` 启动前闸门 | **完成 2026-09-21** | 红灯先行：`tests/unit/test_engines.py::TestModelLoad` 6 例（`queued_tasks`/`processing_tasks` → `ModelLoad`；非 200 / 传输异常 / 非 JSON / 字段缺失一律 `None`）+ `tests/unit/test_orchestrator.py::TestSingleOccupancyGate` 4 例（排队→在飞→空闲三轮复探后放行、恒占用超时判 `failed` 且文案含「占用」不含「不可用」且 `parse_calls == 0`、`started_at` 为 NULL、`af_pages` 零行、不激活；`None` 即放行且只探一次；常量 `(5.0, 900.0)`）。实现：`engines/base.py` 新增 `ModelLoad(queued, processing).busy` 与协议成员 `model_load()`、`engines/mineru.py` 的 `_count()` 采信非负整数、`orchestrator/pipeline.py` 的 `_await_model_idle()` 接在 `health()` 之前（等待期不 `mark_running`），`MODEL_BUSY` 与 `MODEL_UNAVAILABLE` 分列；三处测试替身（契约 `FakeEngine`、集成 `_ProbeEngine`、单测 `FakeEngine`）同步实现协议。**门禁**：`pytest tests -q` → `376 passed, 10 skipped`、`ruff check src tests scripts` 全绿、`QED_TEST_MYSQL=1 pytest tests/integration -q` → `8 passed` |
-| G3 | 出站请求 REQ-085（目标：QED-Engine） | 待转达 | 8900 在 8902 尚有 `queued`/`running` 任务时不得重启/换起 vision 槽位（本仓库无写权限，经用户转达登记）。已在 todo 登记为 `REQ-085`（**不影响 ARCH-017 关闭**：本方串行闸门已可自证，容器生命周期权在 8900） |
+| G3 | 出站请求 REQ-085（目标：QED-Engine） | 转达稿已成文，待用户转达 | 8900 在 8902 尚有 `queued`/`running` 任务时不得重启/换起 vision 槽位（本仓库无写权限，经用户转达登记）。已在 todo 登记为 `REQ-085`，**转达稿见本计划「本轮发出的两条出站请求」节（锚点 `95e1d37`）**（**不影响 ARCH-017 关闭**：本方串行闸门已可自证，容器生命周期权在 8900） |
 | G4 | R1 窗口 D-2 在排他条件下重跑 | **完成 2026-09-21** | 首次尝试失败证据：`D_run.log` + `S1b_gate_probe_fail.json`（19:16~19:34）；job `471761dd16f7` failed、`af_pages` 零行、`active_job_id` 未动。留档口径：`S1_before.json`/`S2_after.json`/`S0_preflight.json` 已被 20:39 的 `--evidence-only` 补证据**覆盖**，故其内容属**激活后**快照（`active_job_id=86ab56ae2b6c`、页行 20），首次尝试的「前态」以 `D_run.log` 的 19:2x 行为准。重跑前置：8902 重启加载闸门代码（pid 207560）+ 窗口脚本新增 **C-0 排他取证**（`S1c_exclusive.json`）。**重跑结果：job `86ab56ae2b6c` 20/20 页 parsed、`parse_status=completed`、`active_job_id` 置位（真机首次激活）**，`versions/86ab56ae2b6c/` = `book.json`+`chunks.json`+`manifest.json`+526 个页级文件（20×blocks.json + 20×md + 486 页图硬链接，实测 `st_ino` 一致 20 个）、根视图无 `chunks.json`；块类型分布 `caption/footer/formula/page_number/paragraph`、**丢弃 0**、越框裁剪 right/bottom/degenerate = 1/0/0；MinerU `completed_tasks` 由 1 → 21 自证「确实逐页打过模型」。**串行性自证**：提交时 `queued_tasks+processing_tasks=0` 且本机无 `queued` 行，20 页在 52 秒内完成（上一次同区间在并发下 10 分钟） |
 | G5 | 窗口脚本两处缺陷修正（同窗口实证） | **完成 2026-09-21** | ① `_metrics()` 把页端点响应当作 BlocksPage 顶层使用，而真机信封是 `{blocks, markdown, image_url, edits}` → 解析成功后取证段 `AttributeError`；已改为读 `response["blocks"]` 子对象，并新增 `--evidence-only <job_id>`（**只为补证据而不再解析一次**，跳过 ingest/门槛探针/C-0/提交）。② 脚本裸用 `httpx.get/post` 走系统代理：Windows 注册表代理不豁免 `127.0.0.1`，代理被打开后 5002/8902 探针全变 **502**（`curl` 直连 200 对照），窗口 15 分钟空转 → 统一改为模块级 `httpx.Client(trust_env=False)`，与 MinerU 适配器条文 11 同一不变式 |
 
@@ -886,6 +894,89 @@ running。MinerU `/health` 的 `completed_tasks`/`failed_tasks` 由 50 归 0，�
 ② 孤儿 `running` 行 `5f43593a12cc`（空闲 106683 秒）使「DB 状态」不能作为排他判据——窗口脚本的
 C-0 因此改以**模型侧计数**（`queued_tasks + processing_tasks`）为主判据、本机只判 `queued` 行，
 这正是 DEFECT-007 的实证之一（裁决未下之前，孤儿行只登记不阻塞）。
+
+## 跨项目回执发出（2026-09-21，R1 窗口后）
+
+按[跨项目协作流程](../standards/cross-project-collaboration.md)第 4 步：回执只落本仓库 todo/计划，
+根仓库自读登记，本仓库不写根仓库文件；出站请求在本仓库登记后由**用户转达**根仓库。
+
+**锚点（根侧复核的坐标）**：代码/测试/台账 = commit `95e1d37`（分支 `release`）；本节文本随其后的
+docs commit 同批推送，**根侧拉取 `release` HEAD 即得全部材料**。门禁真实输出
+`pytest tests -q` → **376 passed, 10 skipped**、`ruff check src tests scripts` → All checks passed、
+`tests/contract` → **96 passed**、`QED_TEST_MYSQL=1 pytest tests/integration -q` → **8 passed**；
+真机取证 `data/probes/live-window-20260921/{S0_preflight,S1_before,S1c_exclusive,S2_after}.json`。
+
+### REQ-080 —— 解析产物按版本划分（回执 QED-Engine，本方实施完成，等根侧确认四条）
+
+事实源：[PLAN-004「REQ-080 实施回执稿」](2026-09-20-req080-parse-version-layout.md)（差异 1~4 +
+请根确认清单四条 + 真机取证段）。要点：`versions/<job_id>/` 落盘 + `af_books.active_job_id` 生效指针
+（NULL = 根视图）+ 只读 `GET /api/v1/books/{id}/versions`；迁移 `20260920_0002` 已在真实 `qed` 库生效；
+**8900 与前端零改造**（端点路径、响应结构、`image_url` 字面量、manifest 相对路径基准全部不变）。
+
+**待根侧回应（本方 REQ-080 关闭门槛）**：① 差异 1~4 是否满足 REQ-080 的关闭语义；② 版本对比/回滚
+是否需要端点契约（当前无写入端点，切换是一条 UPDATE）；③ 人工编辑不随版本继承是否可接受；
+④ 旧版本清理策略属 D 类需另行立项。
+
+### REQ-081 —— bbox 坐标失真的**二次回执**（回执 QED-Engine，根侧 §13 复测前提已达成）
+
+首次回执见本计划「跨项目回执稿（W8-g，2026-09-21）」一节的 REQ-081 段。当时本方承诺的三步
+（版本布局落地 → 迁移窗口 → 单次重解析）**已于 2026-09-21 R1 窗口全部完成**，故本条即为可复测通知：
+
+- **可复测的产物**：`linearalgebra-b01` **生效版本 `86ab56ae2b6c`** 的第 **1~20 页**（含贵方报告的第 7 页），
+  20/20 页 `parsed`。读取路径不变：`GET /api/v1/books/linearalgebra-b01/pages/{page_no}`（块含 `bbox`）
+  与 `.../pages/{page_no}/image`；`GET .../versions` 可看到 12 个历史版本。
+- **三点变化，请贵方复测时注意**：
+  ① 坐标已按归一化 0–1000 → 页图像素正确换算，不再出现「`x1` 恒等于 1241」的夹取残留；本方端到端
+  复验 5/5 块平均 IoU **0.9314**（旧实现同判据 0.0114）。
+  ② DEFECT-005（类型字面值）同已解除：`header`/`footer` 入映射，未覆盖字面值转为**可见丢弃**并落进
+  `quality.dropped_block_count`/`dropped_types`；本次 20 页丢弃 **0**，故按 `index` 定位的对照视图可直接用，
+  但**必须换用重解析后的产物**（旧产物是修复前的下标语义）。
+  ③ 约 **7px 的系统性左偏**仍在（引擎检测框自身特性，非坐标空间问题），叠框请保留少量外扩容差。
+- **旧代产物已作废**：R1 窗口 D-1 re-ingest 把 39 行 legacy 页行（含第 999 页幽灵行）整批作废为 0 行，
+  因此贵方此前缓存的任何 b01 页数据都不再是端点会返回的内容；页图计数 486 未变。
+- 首轮回执里「受害面是全部已解析页而非单页」的判断成立，本轮取证页区间按 1~20 取即可。
+
+### REQ-083 —— `file_path` 含全角标点不再整批 422（回执 QED-Engine，本方侧交付完成）
+
+- 贵方为绕过本方校验所做的**改名止血**（全角 → `_`/`-`）自此无必要：`BookSyncItem.file_path` 的段规则
+  由 `\w` 白名单改为字符黑名单，全角 `（）`、`：`、`【】` 及空格放行；防遍历（`..`、前导/尾随 `.` 与空白）、
+  `\`、半角 `:`（盘符）、`/ : * ? " < > |` 与控制字符仍拒（422）。测试：`tests/unit/test_schemas.py`
+  新增全角标点通过 + 六类违规仍拦的用例；真机 R1 窗口书目 sync 读取正常。
+- 实现细节供贵方参考：pydantic 的 `pattern=` 走 Rust regex、不支持前后视断言，故该模式由 Python `re`
+  在 `field_validator` 内执行，端点行为（422 + detail 文案）不变。
+- **对贵方的操作含义**：09-20 的临时改名（全角 → `_`/`-`）现在**可以撤销**，这是 REQ-083 的根侧关闭动作。
+  撤销代价取决于改名范围：只动 `display_title` ⇒ 重新 sync 一条 PUT 即可覆盖；若改到了目录名或
+  `book_id` 这类键 ⇒ 本方需重新 ingest（旧 `versions/<job_id>/` 整树会随 purge 作废，属 D 类操作，
+  请先与本方确认窗口）。建议在回执里一并说明改名范围。
+
+### REQ-001 —— 延后项 ② 随之解除（本方仍开放等待根侧复核）
+
+首次回执「本方延后项 ②：版本布局落地后 `versions/<job_id>` 与生效指针需再回执一次」由本节的
+REQ-080 回执承接完毕；REQ-001 行保持开放，等根侧读取本节并复核后关闭。
+
+### 本轮发出的两条出站请求（需用户转达根仓库）
+
+**REQ-084 —— 8900 模型启动「假失败」误报修复（目标：QED-Engine）**
+
+- 现象：控制台点启动后约 15 秒即报启动失败，而 vLLM/MinerU 加载常需数分钟；本方窗口期间被此误报
+  误导过一次判断。
+- 定因（根仓库只读走查，未做任何写入）：`web-ui/src/stores/runtime.ts` 的 `POLL_TIMEOUT_MS = 15000`
+  与 `infra-up.ps1` 在 120 秒后 `exit 1`，两处都以固定超时判成败，而非以模型服务真实就绪判成败。
+- 建议：轮询目标服务的 `GET :5002/health` 直到 200（本方窗口脚本 `scripts/tmp/live_reparse_b01_pages.py`
+  即此做法，可作参考实现），把「已提交启动」与「已就绪」分成两个提示；超时只报「仍在加载」而非失败。
+- 本方侧状态：不受该误报影响（自行轮询 `/health`），故不阻塞本方任何任务；关闭权在根侧。
+
+**REQ-085 —— 8900 不得在 8902 尚有 queued/running 解析任务时重启或换起 vision 槽位（目标：QED-Engine）**
+
+- R1 窗口实证（时间线见上节「承载 ARCH-017」）：19:25:01 本方 D-2 任务入队等待，19:34:37 根侧提交的任务
+  与本方任务**同时判死**，`/health` 的 `completed_tasks`/`failed_tasks` 由 50 归 0 —— 容器在此期间被重启，
+  两个任务的失败归因都是假的。
+- 请求：① 8902 有在飞任务时不重启/换起 vision 槽位；若必须重启，先给出互斥信号或让 8900 侧查询
+  `GET /api/v1/parse-jobs/{id}` 的 `queued`/`running` 计数；② 允许贵方在 UI 上把「模型被占用/正在排队」
+  与「模型不可用」分列（本方 `/parse-jobs` 的 detail 文案已按此分列，可直接透传）。
+- 本方侧状态：**已闭环**——ARCH-017 单一占用闸门落地（同一时刻只有一个解析打 MinerU，等待期保持
+  `queued` 且 `started_at` 为空）并在排他窗口重跑成功。但容器生命周期权在 8900，本方无法自证根侧不重启，
+  故 REQ-085 保持开放直到根侧登记/确认。
 
 ## 关闭与归档
 
