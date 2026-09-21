@@ -71,7 +71,9 @@
 # C-0 窗口排他（本机 GPU 只容得下一个解析；与 8900 侧约定静默后再开工）
 #   **占用判据以模型侧计数为准**：GET http://127.0.0.1:5002/health → queued_tasks + processing_tasks == 0
 #   本机侧只判 af_parse_jobs 有无 `queued` 行；服务重启后遗留的 `running` 行是**无人推进的孤儿**
-#   （DEFECT-007），不阻塞窗口、只登记取证（2026-09-21 R1 实证：孤儿空闲 106683 秒）
+#   （DEFECT-007），不阻塞窗口、只登记取证（2026-09-21 R1 实证：孤儿空闲 106683 秒）。
+#   **PLAN-006 起此类孤儿行由冷启动的启动期归一自动改判 `interrupted`**（见下节），窗口脚本
+#   仍把 `queued` 当作占用信号——只有真正在排队的任务才算占用
 #   窗口期间不得经 8900 重启/换起 vision 槽位（2026-09-21 R1 实证：重启令排队与在飞任务同时判死）
 # C-1 停服（避免运行中写库）
 & D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py stop
@@ -113,6 +115,30 @@
   让已激活指针被移动。首次窗口（2026-09-21）即以此方式补齐 `S2_after.json`。
 - 迁移期间 8902 离线：8900 返回 503 并降级显示（独立性铁律），不影响配置域与其他界面。
 
+## 单实例前提与启动期归一（PLAN-006 / ADR 0007）
+
+**部署边界（显式承担，不是疏漏）**：8902 按**单实例**运行。任务是后台线程内的单 worker 队列，
+`af_parse_jobs.status` 的 `queued`/`running` 只描述「本进程在推进它」；一旦起第二个实例，
+它的启动期归一会把第一个实例**正在跑**的任务一并判成 `interrupted`。要多实例必须先重开这条
+裁决（引入心跳/租约，`queued`/`running` 需可证活）。
+
+- **归一时刻**：`api/main.py` 的 lifespan 在**受理首个请求之前**调用 `runner.reconcile_on_startup()`，
+  把上次进程遗留的 `queued`/`running` 任务行改写为 `interrupted`（`error` 写「服务重启中断，可重跑」，
+  置 `finished_at`），书目侧进度回 `pending`。**结局只在该书最新一次任务时置 `interrupted`**——更早的
+  中断行不得覆盖后来的真实结局（`last_parse_result` 语义）。
+- **可观测**：归一发生时会打 `WARNING 启动期归一：N 个遗留活动任务改写为 interrupted`；N=0 时静默。
+  只想确认现状不必起服：`SELECT job_id, status FROM af_parse_jobs WHERE status IN ('queued','running')`。
+- **`interrupted` 的续跑语义 = 同一 `job_id` 重放**，不新建版本：版本作用域是 `(book_id, job_id)`，
+  已 `parsed` 且产物在位的页跳过引擎调用，只补剩余页；重放前**不需要**手工清行、也不需要删版本目录。
+  **但重放入口目前只有代码路径**（`orchestrator.run_parse_job(job_id=…)`，`scripts/tmp/` 窗口脚本按此
+  用法）：`POST /parse-jobs` 每次生成新 `job_id`，按既有 `job_id` 续跑的端点属 REQ-086 范围，
+  PLAN-006 未开放。因此真机上被打断的版本要么经脚本重放、要么重新提交为一版（旧版保留不删）。
+- **`20260921_0001` 迁移窗口**（D 类，执行前须用户批准）：停服 → 备份 `af_*` 四表 →
+  `python -m alembic upgrade 20260921_0001` → 校验 `alembic_version` 与
+  `SELECT book_id, parse_status, last_parse_result FROM af_books`（预期进度全 `pending`、
+  存量终态值平移进 `last_parse_result`）→ 起服。**降级有损**：`partial` 在旧结构无对应值，
+  回滚时按旧语义归 `completed`。
+
 ## 故障排查
 
 | 现象 | 处置 |
@@ -120,6 +146,8 @@
 | `stop` 回显 `stopped (forced)` | 优雅信号（CTRL_BREAK）未生效（conda run 等跨 console 语境常见），taskkill 强杀兜底成功——正常现象，无需处理 |
 | `stop` 回显 `stop failed: pid …` | 按提示手动 `taskkill /PID <pid> /T /F`，确认进程退出后重试 `stop` 清理 PID 文件 |
 | API 返回 503（模型服务不可用） | 确认 MinerU 服务在线：经 8900 `/models/vision/start`（旧名 `/models/mineru/start`）或根仓库 `scripts/image-model/` 脚本；再确认 `QED_OCR_MODEL_URL`（5002）可达 |
+| 任务显示 `interrupted` | 上次进程遗留的活动行被启动期归一改判（不再假装 running），**不是**引擎故障。核对 `failed_pages` 与 `versions/<job_id>/` 在位页后按上节续跑；版本未激活属预期（激活判据未满足） |
+| 任务显示 `partial` | 有页失败但任务正常结束：`GET /parse-jobs/{id}` 的 `failed_pages` 给出完整页码，`af_pages` 逐页 `error` 给出原因；生效指针**不会**指向该版本（判据未齐备），产物保留在 `versions/` 供排查 |
 | 只读端点 404 `生效版本产物缺失：<book_id> @ <job_id>` | `af_books.active_job_id` 指向的版本目录被外部删除/未落盘（不回落根视图，ADR 0004）。核对 `versions/` 是否在盘、`GET /books/{id}/versions` 各行 `parsed`；确认产物不可恢复后重新解析或把指针置 NULL（`UPDATE af_books SET active_job_id=NULL WHERE book_id=…`，置 NULL 属数据修正，按 D 类先备份） |
 | 容器已起但解析慢/超时 | 由根仓库 `scripts/image-model/` 排查 GPU 穿透与 vLLM warmup（首次约 1 分钟）；整本解析超时调大 `AXIOM_OCR_TIMEOUT`（默认 600s） |
 | 模型异常 | 由根仓库 `scripts/image-model/` 重建容器/镜像 |

@@ -20,28 +20,32 @@
 与窗口前置项；**R1 窗口（同日）真机达成** C 迁移 + D-1 re-ingest + D-2 单次重解析**首次激活版本**
 （前提：ARCH-017 单一占用闸门，已关闭）。**2026-09-21 主线审计收尾**：PLAN-002 八条标准逐条判定后关闭
 （标准 6/7 改按判据自身证据判定，取证脚本见 PLAN-002 关闭判定节）、ARCH-016 去重关闭（类型分布取证移交
-ARCH-009）。各支线过程史实在其承载计划正文。
+ARCH-009）。**同日 DEFECT-006/007 语义裁决落定 → 新立 [ADR 0007](../adr/0007-parse-status-semantics.md)
+与 [PLAN-006](../plans/2026-09-21-parse-status-semantics.md)（状态语义实施，当前主攻）**。各支线过程
+史实在其承载计划正文。
 
 ### 主线聚合
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
-| ARCH-001 | 主线 | 高 | In Progress | 解析管理闭环（聚合行）：同步/ingest/解析/对照/块编辑全链路达成（对齐根仓库 ARCH-020） | 下列全部支线行关闭且代表书验收达标 | 子行：ARCH-003/005/006/009、DEFECT-006/007、REQ-001/080/081/083/084/085/086。R1 真机达成 + 欠账四条已回执关闭；剩对照/块编辑与代表书验收。承载 [PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| PLAN-003 | 主线 | 高 | In Progress | [解析真机打通：设计偏差核对与契约修正（parse-live-bringup）](../plans/2026-09-20-parse-live-bringup.md) | C2 的 D3 真机删除演练执行并登记 | W0~W8、C1/C3、R0 与 **R1 窗口（ARCH-017 闸门 + D-2 排他重跑首次激活）**已交付；DEFECT-001~005/008 关闭，门禁 376，**回执批次已发出（`95e1d37`）**。剩 D3 与 DEFECT-006/007 裁决。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| ARCH-001 | 主线 | 高 | In Progress | 解析管理闭环（聚合行）：同步/ingest/解析/对照/块编辑全链路达成（对齐根仓库 ARCH-020） | 下列全部支线行关闭且代表书验收达标 | 子行：ARCH-003/005/006/009、DEFECT-006/007、REQ-001/080/081/083/084/085/086。R1 真机达成 + 欠账四条关闭 + 状态语义裁决（ADR 0007→PLAN-006）；剩对照/块编辑与代表书验收。承载 [PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| PLAN-003 | 主线 | 高 | In Progress | [解析真机打通：设计偏差核对与契约修正（parse-live-bringup）](../plans/2026-09-20-parse-live-bringup.md) | C2 的 D3 真机删除演练执行并登记 | W0~W8、C1/C3、R0 与 **R1 窗口（ARCH-017 闸门 + D-2 排他重跑首次激活）**已交付；DEFECT-001~005/008 关闭，门禁 376，回执 `95e1d37`。剩余关闭依赖仅 D3（裁决项已转 PLAN-006）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
 | PLAN-004 | 主线 | 高 | In Progress | [解析产物按版本划分：versions/&lt;job_id&gt; 落盘与生效指针（req080-parse-version-layout）](../plans/2026-09-20-req080-parse-version-layout.md) | 条文 V1~V10 晋升 + S1~S6 本地全绿 + B→C→D 窗口真机取证 + REQ-080 回执 | **P2~P7+I9 与 C/D 真机窗口全部达成**：迁移 `20260920_0002`、D-1 re-ingest 486 页作废 39 行 legacy、D-2 单次重解析 20/20 **首次激活**；S7 回执随 `95e1d37` 发出。下一条件：根侧确认四条。 |
+| PLAN-006 | 主线 | 高 | In Progress | [PLAN-006：解析状态语义收口（parse-status-semantics）](../plans/2026-09-21-parse-status-semantics.md) | S1~S6 达成且门禁全绿 + S7 台账收口（不依赖真机） | 2026-09-21 用户裁决 **A1/B1/C1** 并立 [ADR 0007](../adr/0007-parse-status-semantics.md)；本计划承载 W1~W9（判据同源、`failed_pages`、书级进度/结局分列、迁移 `20260921_0001`、启动期归一）。 |
 
 ### 真机打通后的遗留卡点：落库回归网与状态语义
 
 **推进顺序**：DEFECT-001 随 ADR 0005 接受 + W3 落地关闭（2026-09-21）；ARCH-017 闸门已落地并在排他
 窗口重跑成功、同批关闭（串行占用的根侧约定转 REQ-085）；ARCH-016 于 2026-09-21 主线审计时关闭（零丢弃
-复跑达成，类型分布取证与 ARCH-009 判据重复故移交）。余下全是**用户裁决**依赖——ARCH-003 等
-DEFECT-006/007 语义裁决，代表书取证等 ARCH-009。
+复跑达成，类型分布取证与 ARCH-009 判据重复故移交）。**同日 DEFECT-006/007 裁决落定（A1/B1/C1，
+[ADR 0007](../adr/0007-parse-status-semantics.md)）⇒ 二者与 ARCH-003 统一由 PLAN-006 实施承载**；
+代表书取证仍等 ARCH-009。
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
-| ARCH-003 | 支线 | 高 | Blocked | 解析编排交付收口：af_parse_jobs + af_pages 全本/逐页/重试/质量信号语义完备并经真机验证 | DEFECT-006/007 语义成文实施且冒烟复跑通过 | 代码、真机四条链路、固化冒烟与 **MySQL 双 Session 提交边界回归网**均已交付；阻塞于 DEFECT-006/007 裁决（责任：用户）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| DEFECT-006 | 支线 | 中 | Open | 状态语义成文实施：`completed` 不掩盖失败页、书级 `parse_status` 拆分「本轮任务结果」与「全书覆盖度」（页码越界子项已随 R0-3 交付并成文，自本行剔除） | 部分失败与书级状态语义经裁决成文实施，且真机重解析后判据可复验 | 剩余两子项待用户裁决（承载已备选项）。已交付：pages 越界受理前 422（真机 `[491]/[0]/[1,487]` 全 422、任务行增量 0）+ `api.md`/`parsing-management` 成文；legacy 幽灵行由 D-1 re-ingest 作废为 0。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
-| DEFECT-007 | 支线 | 中 | Open | 被 kill 任务不再遗留假 running：状态机语义成文（reaper/启动期归一/已知语义三选一） | 处理方式经 ADR 级裁决成文并实施带测试 | 取证更新：`5f43593a12cc` 仍 `running` 且空闲 **106683 秒**（R1 窗口 `S1c_exclusive.json`）。副作用已实证——窗口排他只能改用「模型侧计数」判据绕开它。待裁决。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) |
+| ARCH-003 | 支线 | 高 | Blocked | 解析编排交付收口：af_parse_jobs + af_pages 全本/逐页/重试/质量信号语义完备并经真机验证 | PLAN-006 S1~S4 达成且冒烟复跑通过 | 代码、真机四条链路、固化冒烟与 **MySQL 双 Session 提交边界回归网**均已交付；裁决已成文（[ADR 0007](../adr/0007-parse-status-semantics.md)），阻塞改为等 PLAN-006 实施落地（责任：本方）。承载：[PLAN-006](../plans/2026-09-21-parse-status-semantics.md) |
+| DEFECT-006 | 支线 | 中 | In Progress | 状态语义实施：`completed` 与激活门槛同源、新增 `partial` 三态与 `failed_pages`、书级进度/结局分列 | ADR 0007 决定 1~3 成文实施且判据可复验 | 2026-09-21 裁决 **A1 + B1**（三态 + `last_parse_result` 分列），页码越界子项已随 R0-3 交付。实施：W1~W5。承载：[PLAN-006](../plans/2026-09-21-parse-status-semantics.md) |
+| DEFECT-007 | 支线 | 中 | In Progress | 被 kill 任务不再遗留假 running/queued：启动期归一为 `interrupted`（单实例前提成文） | ADR 0007 决定 4 实施带测试、运维边界写入指南 | 取证：`5f43593a12cc` 仍 `running` 且空闲 **106683 秒**（`S1c_exclusive.json`）；副作用已实证（窗口排他改用模型侧计数绕开）。裁决 **C1 启动期归一**。实施：W6/W8。承载：[PLAN-006](../plans/2026-09-21-parse-status-semantics.md) |
 
 ### 对照、分块与验收
 
@@ -69,7 +73,7 @@ REQ-083 等撤销改名并回执、REQ-001 等 PLAN-044/ARCH-020-D 登记；REQ-
 | REQ-001 | 支线 | 高 | Open | **请求发出（目标：QED-Engine）**——8900 数据域适配 af_* 新契约并回执 | 根侧在 PLAN-044/ARCH-020-D 登记读取复核材料并回执 | 复核材料已出且**延后项②（版本布局二次回执）随 `95e1d37` 解除**。2026-09-21 改判：根侧 `REQ-001` 号已被 2026-08 端口迁移占用（同号不同事），承载行改为 `PLAN-044`/`ARCH-020-D`。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「跨项目回执发出」 |
 | REQ-081 | 支线 | 高 | Blocked | bbox 失真（根仓库报告）修复回执并支持其 §13 复测 | 根仓库 §13 复测通过并回执 | **二次回执已发出（`95e1d37`）**：可复测产物 = 生效版本 `86ab56ae2b6c` 第 1~20 页，坐标/类型/`index` 可信、丢弃 0。阻塞点：根侧复测（责任在根）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「REQ-081 二次回执」 |
 | REQ-080 | 支线 | 高 | In Progress | **请求接收（QED-Engine）**——解析产物按版本划分实施并发实施回执 | PLAN-004 关闭且回执发出 | **回执已正式发出（commit `95e1d37`，含真机首次激活取证）**。下一条件：根侧确认待确认清单四条 ⇒ 关 PLAN-004。承载：[PLAN-004](../plans/2026-09-20-req080-parse-version-layout.md) |
-| REQ-083 | 支线 | 高 | In Progress | **请求接收（QED-Engine）**——`file_path` 含全角标点（`（）``：`）不再整批 422 | 本方放宽实施带测试 + 回执发出，且根侧撤销临时改名并回执 | 实施 + 门禁 376 + **回执已发出（`95e1d37`）**，本方侧无待办。下一条件：根侧撤销全角→`_` 改名并回执（改名范围决定是否需重新 ingest）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「REQ-083 回执」 |
+| REQ-083 | 支线 | 高 | Blocked | **请求接收（QED-Engine）**——`file_path` 含全角标点（`（）``：`）不再整批 422 | 根侧撤销临时改名并回执 | 实施 + 门禁 376 + **回执已发出（`95e1d37`）**，**本方侧无待办**（故改判 Blocked）。阻塞点：根侧撤销全角→`_` 改名并回执（责任在根；改名范围决定是否需重新 ingest）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「REQ-083 回执」 |
 | REQ-084 | 支线 | 中 | Open | **请求发出（目标：QED-Engine）**——8900 模型启动「假失败」误报修复（前端 15s 轮询超时 vs vLLM 分钟级加载） | 根侧修复后启动提示与实际就绪一致并回执 | 定因（根侧只读走查）：`runtime.ts` `POLL_TIMEOUT_MS=15000`、`infra-up.ps1` 120s 后 exit 1。**转达稿已成文（`95e1d37`）**，待用户转达。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「出站请求」 |
 | REQ-085 | 支线 | 高 | Open | **请求发出（目标：QED-Engine）**——8900 不得在 8902 尚有 queued/running 解析任务时重启或换起 vision 槽位 | 根侧登记并给出互斥信号或确认约定 | R1 实证：并发重启令两任务同时判死、MinerU 计数 50→0。本方侧已闭环（ARCH-017 闸门 + 排他重跑）。**转达稿已成文（`95e1d37`）**，待用户转达。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「出站请求」 |
 | REQ-086 | 支线 | 高 | Open | **请求接收（QED-Engine）**——提供页级失败清单与 jobs 列表数据源（根侧 ARCH-020-E 排期前置） | 语义裁决后两端点成文实施带契约测试，根侧确认可用 | 实测缺口：无 jobs 列表端点、页状态只能按页号单读、`parse_status` 一字段两用、孤儿 `running`。**本轮只登记不实施**（须先裁 DEFECT-006/007，否则冻结错误语义）。承载：[PLAN-003](../plans/2026-09-20-parse-live-bringup.md)「承载 REQ-086」 |

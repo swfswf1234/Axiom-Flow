@@ -1,9 +1,13 @@
 """解析任务编排：全本（默认）/逐页 → 引擎 → 归一化 → 分块 → 落盘 → 回写 af_*。
 
-设计事实源：`docs/design/parsing-pipeline.md`。失败语义：
+设计事实源：`docs/design/parsing-pipeline.md`、[ADR 0007](../../../docs/adr/0007-parse-status-semantics.md)。
+失败语义（终态判据与激活门槛**同源**，不存在「`completed` 但未激活」）：
 - 模型服务不可用（提交前探活失败）→ 任务 `failed`，不中断其他任务；
-- 单页失败（重试 1 次仍失败）→ 该页 `failed`，任务继续，汇总报告列出失败页；
-- 整本解析失败（引擎异常）→ 任务 `failed`，已解析页保留（可重跑）。
+- 目标页全部 `parsed` 且产物在位 → `completed`，同时激活本版本；
+- 至少一页成功但未齐备（含单页失败，重试 1 次仍失败）→ `partial`，**不激活**，失败页结构化写
+  `af_parse_jobs.failed_pages`；
+- 零页成功，或整本解析异常中止 → `failed`，已解析页保留（可重跑）。
+`interrupted` 不在本管线产出，只由服务启动期归一写入（ADR 0007 决定 4）。
 
 版本布局（PLAN-004 / REQ-080）：一次任务 = 一个解析版本，产物只写 `<book_dir>/versions/<job_id>/`，
 **不回写根视图**（根视图的页图仍由 ingest 拥有，版本目录以硬链接接入）。页状态行按
@@ -50,7 +54,7 @@ from axiom_flow.ingest import (
 )
 from axiom_flow.normalize.blocks import blocks_to_markdown, normalize_page
 from axiom_flow.normalize.chunking import build_chunks, chunk_set_payload
-from axiom_flow.schemas import BlocksPage, ChunkParams, ChunkSet, JobStatus, ParseStatus
+from axiom_flow.schemas import BlocksPage, ChunkParams, ChunkSet, JobStatus, LastParseResult, ParseStatus
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +187,7 @@ def _fail(
     progress: dict[str, object] | None = None,
     *,
     persist: bool = True,
+    failed_pages: list[int] | None = None,
 ) -> ParseOutcome:
     """终态 failed：先提交已累计页行，再写 progress 与终态。
 
@@ -193,8 +198,13 @@ def _fail(
     jobs = ParseJobRepository(session)
     if progress is not None:
         jobs.update_progress(job_id, progress)
-    jobs.mark_finished(job_id, status=JobStatus.FAILED, error=message)
-    BookRepository(session).update_parse(book_id, parse_status=ParseStatus.FAILED, pages_done=pages_done)
+    jobs.mark_finished(job_id, status=JobStatus.FAILED, error=message, failed_pages=failed_pages)
+    BookRepository(session).update_parse(
+        book_id,
+        parse_status=ParseStatus.PENDING,
+        pages_done=pages_done,
+        last_parse_result=LastParseResult.FAILED,
+    )
     if persist:
         session.commit()
     return ParseOutcome(job_id=job_id, status=JobStatus.FAILED, parsed=pages_done, total=0, error=message)
@@ -335,7 +345,7 @@ def run_parse_job(
     total = len(requested_pages)
     parsed = len(resumed)
     failed: list[int] = []
-    progress: dict[str, object] = {"parsed": parsed, "total": total, "error": ""}
+    progress: dict[str, object] = {"parsed": parsed, "total": total, "failed": 0, "error": ""}
     last_progress_at = time.monotonic()
 
     def _commit() -> None:
@@ -356,6 +366,7 @@ def run_parse_job(
     def _mark_failed(page_no: int, error: str) -> None:
         failed.append(page_no)
         page_repo.upsert(book_id, job_id, page_no, status="failed", error=error)
+        progress["failed"] = len(failed)
         progress["error"] = f"失败页：{','.join(str(no) for no in failed)}"[:200]
         _commit()
         _flush_progress(force=True)
@@ -417,29 +428,38 @@ def run_parse_job(
             page_repo.count_parsed(book_id, job_id),
             progress,
             persist=persist_per_page,
+            failed_pages=failed,
         )
 
     rebuild_chunks(version_dir, book_id)
     write_manifest(version_dir)
 
     pages_done = page_repo.count_parsed(book_id, job_id)
-    parse_status = ParseStatus.COMPLETED if not failed else ParseStatus.FAILED
-    # 激活只在终态判定之后：目标页齐备才把生效指针交给这个版本，否则读取端继续走原作用域
-    if not failed and _version_is_complete(page_repo, book_id, job_id, version_dir, requested_pages):
+    # ADR 0007 决定 1：`completed` 与激活门槛是同一判据，二者不可能分叉
+    complete = _version_is_complete(page_repo, book_id, job_id, version_dir, requested_pages)
+    if complete:
         books.set_active_job(book_id, job_id)
     else:
         logger.warning("parse job %s 未激活：目标页未齐备（失败页 %s）", job_id, failed or "-")
-    books.update_parse(book_id, parse_status=parse_status, pages_done=pages_done)
+    status = JobStatus.COMPLETED if complete else (JobStatus.PARTIAL if parsed else JobStatus.FAILED)
+    progress["failed"] = len(failed)
+    books.update_parse(
+        book_id,
+        parse_status=ParseStatus.PENDING,
+        pages_done=pages_done,
+        last_parse_result=LastParseResult(status.value),
+    )
     jobs.mark_finished(
         job_id,
-        status=JobStatus.COMPLETED if parsed else JobStatus.FAILED,
+        status=status,
         error=str(progress["error"]),
         progress=progress,
+        failed_pages=failed,
     )
     _commit()  # 终态与 progress 收尾必写：不依赖调用方提交
     return ParseOutcome(
         job_id=job_id,
-        status=JobStatus.COMPLETED if parsed else JobStatus.FAILED,
+        status=status,
         parsed=parsed,
         total=total,
         failed_pages=failed,

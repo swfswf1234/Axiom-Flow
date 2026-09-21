@@ -6,7 +6,7 @@
 最后更新：2026-09-21
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_engines.py`、`tests/unit/test_normalize.py`、`tests/unit/test_chunking.py`、`tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`、`tests/smoke/test_live_mineru_chain.py`
-关联 ADR：`docs/adr/0001-v2-exploration-direction.md`、`docs/adr/0004-model-boundary-and-pipeline-ownership.md`
+关联 ADR：`docs/adr/0001-v2-exploration-direction.md`、`docs/adr/0004-model-boundary-and-pipeline-ownership.md`、`docs/adr/0007-parse-status-semantics.md`
 
 > 本文档定义解析管线的内部结构：预处理（PDF → 页图）→ 引擎调用 → 后处理（归一化 + 分块）
 > → 编排落盘 → 质量信号。对外 API 契约见 `../architecture/api.md`；数据库表见
@@ -181,7 +181,7 @@ flowchart LR
 | --- | --- | --- |
 | V1 | **版本目录唯一落点**：解析产物只写 `<book_dir>/versions/<job_id>/`，内部布局与根布局同构；`job_id`（`uuid4().hex[:12]`）仍过 `ensure_safe_segment()` + `ensure_within()` 双闸 | `version_dir_for()`；版本目录从**第一页产物写入起**就是目标目录，不存在「先写别处、成功末尾再搬」的阶段（那会与条文 3 的页级持久化不变式冲突） |
 | V2 | **生效指针唯一事实源 = `af_books.active_job_id`**（`NULL` = 根视图 legacy）；`af_parse_jobs` 不存布尔「生效」列，避免同一事实两处漂移 | `BookRepository.set_active_job()` 单列 UPDATE |
-| V3 | **激活门槛**：任务终态 `completed`、**无失败页**且目标页全部 `parsed` 并产物在位、`chunks.json` 与 `manifest.json` 重算成功后，才把指针交给该版本；`failed`/中断/校验不过**不激活**，文件保留在 `versions/` 下供排查，不自动删除、也不被端点读到 | 运行中被杀 → 指针仍指旧版，读取端不可能看到半版本 |
+| V3 | **激活门槛 = `completed` 判据本身**：目标页全部 `parsed` 并产物在位、`chunks.json` 与 `manifest.json` 重算成功后，才把指针交给该版本；同一次判定同时决定任务终态（ADR 0007 决定 5），故不存在「`completed` 但未激活」。**未齐备**（`partial`）、`failed`、中断、校验不过一律**不激活**，文件保留在 `versions/` 下供排查，不自动删除、也不被端点读到 | 运行中被杀 → 指针仍指旧版，读取端不可能看到半版本 |
 | V4 | **版本是完整快照（写时复制播种）**：新版本先按 `os.link` 从**当前生效作用域**（`active_job_id` 指向的版本目录，为空则根视图）继承页图与既有页产物，再写本次目标页；跳过 `manifest.json`/`chunks.json` 派生文件与 `versions/` 子树 | `seed_version_from()` + `link_pages_into()`；页图硬链接失败回落 `copy2` 并 `WARNING`。逐页重解析因此不必重跑整本，且旧版本的文件条目不受影响（`os.replace` 只换目录项） |
 | V5 | **manifest 基准 = 版本目录内 POSIX 相对路径**（`pages/p0001.blocks.json`），不带 `versions/<job_id>/` 前缀（该字段经 8900 原样透传给前端）；根 `manifest.json` 只描述 ingest 级文件，`build_manifest()` 显式排除 `versions/` 子树与隐藏临时文件 | `ingest/artifacts.build_manifest()` |
 | V10 | **不引入数据根暂存**：引擎中间产物只在内存，版本目录之外不得产生中间产物；`<data_root>/tmp/axiom-flow/` 恒不应存在，存在即缺陷 | 契约用例断言数据根只有 `raw/` 与 `parsed/` |
@@ -199,6 +199,25 @@ flowchart LR
 只读版本列举见 `GET /api/v1/books/{book_id}/versions`（`architecture/api.md` V6/V9）；**切换/回滚的写入
 端点与旧版本清理都不在本契约内**（清理属 D 类数据操作，需用户确认）。天然回滚方式：把
 `active_job_id` 置回 `NULL` 即回到根视图行为，不搬动任何文件。
+
+## 任务与书目状态语义（PLAN-006 / ADR 0007）
+
+旧契约把「做到哪」和「怎么结束」挤在同一列（`af_books.parse_status` 同时取 `parsing` 与
+`completed`），于是 DEFECT-007（进度刷新覆盖结局）与 DEFECT-006（部分完成无处表达）都无解。
+现按 ADR 0007 分列，条文如下：
+
+| # | 条文 | 落点 |
+| --- | --- | --- |
+| S1 | **任务 `status` 六态**：`queued`/`running` 活动态；终态 `completed`（目标页齐备）、`partial`（≥1 页 `parsed` 但未齐备）、`failed`（0 页产出或引擎整体异常）、`interrupted`（上次进程遗留） | `schemas.JobStatus` |
+| S2 | **失败页结构化且不截断**：`af_parse_jobs.failed_pages` 存页码数组；`error`（≤500）与 `progress.error`（≤200）只是给人看的摘要，摘要截断不丢页码 | `ParseJobRepository.mark_finished()` |
+| S3 | **书目进度与结局分列**：`parse_status` ∈ `pending`/`parsing` 只表进度；`last_parse_result` ∈ `completed`/`partial`/`failed`/`interrupted`（`""` = 从未有任务）只在**终态**写入，运行中的进度刷新不得覆盖它 | `BookRepository.update_parse()` / `mark_parse_idle()` |
+| S4 | **`completed` 与版本激活同一判据**：`_version_is_complete()` 一次判定同时给出 `status` 与指针动作，「completed 但未激活」在结构上不可能（不是靠文档约定） | `pipeline.run_parse_job` 终态块 |
+| S5 | **`interrupted` 的唯一写入者是启动期归一**：`JobRunner.reconcile_on_startup()` 在 FastAPI `lifespan` 内、**受理首个请求之前**把遗留 `queued`/`running` 行改写为 `interrupted`，书目进度归 `pending`；结局仅在该任务是这本书的**最新**任务时置 `interrupted`（更早的中断行不得覆盖后来的真实结局） | `api/main.py` lifespan |
+| S6 | **单实例前提**：归一能成立，是因为「写活动态的只有这个进程」。多实例部署会让存活实例的任务被同伴误判为中断——本契约显式承担该部署约束，代价与运维口径见 `docs/guides/operations.md` | 部署边界 |
+| S7 | **`interrupted` 的续跑 = 同 `job_id` 重放**，不新建版本：版本作用域 `(book_id, job_id)` 下已 `parsed` 且产物在位的页跳过引擎（不变式 2） | `pipeline` 续跑判据 |
+
+**反向约束**：迁移与运维脚本都不改写历史任务的 `status`（回填旧行为新三态等于伪造历史），
+管线自身也**不产出** `interrupted`——四种终态之外的那一态只有一个作者。
 
 ## 分块（blocks → chunk）
 
@@ -245,13 +264,13 @@ flowchart LR
 
 | 场景 | 行为 |
 | --- | --- |
-| 单页失败（超时/空输出/异常） | 重试 1 次 → 仍失败标记 `af_pages.status=failed`，job 不中断；失败页摘要即时写入 `progress.error`（≤200 字符），终态摘要写 `af_parse_jobs.error`（≤500 字符） |
+| 单页失败（超时/空输出/异常） | 重试 1 次 → 仍失败标记 `af_pages.status=failed`，job 不中断；页码进 `af_parse_jobs.failed_pages`（结构化、不截断，S2），失败页摘要即时写入 `progress.error`（≤200 字符），终态摘要写 `af_parse_jobs.error`（≤500 字符）；终态按齐备与否判 `completed`/`partial`/`failed`（S1） |
 | 轮询期瞬时失败（HTTP 异常/非 2xx） | 适配器累计**连续 3 次**才判引擎失败（成功一次即清零计数），全程受同一 `deadline` 约束；不与单页重试互相吞并 |
 | 结果载荷非 JSON | 归一为 `EngineError`；`JSONDecodeError` 等内部异常不得穿透编排层（否则任务回滚会吞掉已解析页行） |
 | 页质量信号不达标 | 记录质量信号并标记；不自动切换引擎（用户裁决不设自动兜底） |
 | 模型服务未启动 | **两段语义**：提交期探活（参数校验后、落库前）失败 → 503 且**不创建 job 行** + 提示经 8900 `/models/{slot}` 启停模型；任务受理后的故障 → job `failed` |
 | 模型服务被其他解析占用 | **单一占用闸门（2026-09-21 R1 窗口后新增）**：任务启动前读 `model_load()`，`queued + processing > 0` 时**不提交任何内容**，按 5 秒间隔复探、最长等待 900 秒；等待期内 job 保持 `queued`（`started_at` 为空），超时才判 `failed` 且文案为「模型服务被其他解析任务占用」——与「模型服务不可用」分列，不互相冒充。引擎不上报负载（返回 `None`）时按可用放行，不臆造阻塞 |
-| 电源中断/进程被杀 | 每页成功/失败即 `session.commit()`，且**产物写先于页行提交**（不变式：有页行必有产物）→ 重启后在**同一版本作用域** `(book_id, job_id)` 内续跑「无行 ∪ failed」页；未激活的版本指针不动，读取端继续看到上一个完整版本 |
+| 电源中断/进程被杀 | 每页成功/失败即 `session.commit()`，且**产物写先于页行提交**（不变式：有页行必有产物）→ 重启后**先由启动期归一把遗留活动行判为 `interrupted`**（S5），再在同一版本作用域 `(book_id, job_id)` 内续跑「无行 ∪ failed」页；未激活的版本指针不动，读取端继续看到上一个完整版本 |
 | 模型服务不可达 | API 层错误映射为可读中文错误信息，不泄漏堆栈 |
 
 进度写入节流：`af_parse_jobs.progress` 在「距上次写入 ≥1 秒」或「每处理满 10 页」时覆写一次，

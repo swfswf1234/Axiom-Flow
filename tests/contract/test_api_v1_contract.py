@@ -19,8 +19,8 @@ from sqlalchemy.pool import StaticPool
 from axiom_flow.api.main import create_app
 from axiom_flow.config import load_settings
 from axiom_flow.db.models import AfPage, AfParseJob, Base
-from axiom_flow.db.repositories import ParseJobRepository
-from axiom_flow.engines.base import DocumentResult, ModelLoad, PageResult
+from axiom_flow.db.repositories import BookRepository, BookSyncRow, ParseJobRepository, ParseJobRow
+from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
 
 
 class FakeEngine:
@@ -28,8 +28,9 @@ class FakeEngine:
 
     name = "mineru"
 
-    def __init__(self, *, healthy: bool = True) -> None:
+    def __init__(self, *, healthy: bool = True, fail_pages: set[int] | None = None) -> None:
         self.healthy = healthy
+        self.fail_pages = fail_pages or set()
         self.closed = False
 
     def health(self) -> bool:
@@ -63,6 +64,8 @@ class FakeEngine:
         )
 
     def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult:
+        if page_no in self.fail_pages:
+            raise EngineError(f"第 {page_no} 页解析失败")
         return PageResult(
             page=page_no,
             blocks=[{"type": "text", "text": f"第 {page_no} 页重解析", "bbox": [72, 96, 540, 132]}],
@@ -356,8 +359,35 @@ class TestParseJobsEndpoints:
         assert fetched.json()["id"] == job["id"]
 
         book = client.get("/api/v1/books/mathanalysis-b05").json()
-        assert book["parse_status"] == "completed"
+        assert book["parse_status"] == "pending", "进度列只表达有没有任务在跑（ADR 0007）"
+        assert book["last_parse_result"] == "completed"
         assert book["pages_done"] == 2
+        assert job["failed_pages"] == []
+
+    def test_partial_job_reports_failed_pages_and_keeps_pointer(self, tmp_path, monkeypatch):
+        """部分成功在契约面上不再被 `completed` 掩盖，也不夺走生效指针。"""
+        client, _ = _build(
+            tmp_path,
+            monkeypatch,
+            engine_factory=lambda name: FakeEngine(fail_pages={2}),
+        )
+        _sync_book(client)
+        _ingest(client)
+
+        completed = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [1]})
+        assert completed.json()["status"] == "completed"
+        active = client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"]
+
+        partial = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [1, 2]})
+        job = partial.json()
+        assert job["status"] == "partial"
+        assert job["failed_pages"] == [2], "失败页必须是结构化数组，可在契约面直接读"
+        assert job["progress"]["failed"] == 1
+
+        book = client.get("/api/v1/books/mathanalysis-b05").json()
+        assert book["parse_status"] == "pending"
+        assert book["last_parse_result"] == "partial"
+        assert book["active_job_id"] == active, "partial 不激活（V3 与 completed 同判据）"
 
     def test_per_page_job_repares_single_page(self, client):
         _sync_book(client)
@@ -402,6 +432,39 @@ class TestParseJobsEndpoints:
 
     def test_unknown_job_returns_404(self, client):
         assert client.get("/api/v1/parse-jobs/does-not-exist").status_code == 404
+
+    def test_startup_reconciles_leftover_active_rows_before_serving(self, tmp_path, monkeypatch):
+        """ADR 0007 决定 4：上一次进程留下的 `running` 在首次响应前就被归一，读取端看不到假活动态。"""
+        client, session_factory = _build(tmp_path, monkeypatch)
+        with session_factory() as session:
+            BookRepository(session).upsert_many(
+                [
+                    BookSyncRow(
+                        book_id="mathanalysis-b05",
+                        domain_id="math-advanced",
+                        course_id="math_analysis",
+                        title="数学分析原理",
+                        file_path="raw/math-advanced/math_analysis/book.pdf",
+                    )
+                ]
+            )
+            jobs = ParseJobRepository(session)
+            jobs.create(ParseJobRow(job_id="ghost", book_id="mathanalysis-b05", engine="mineru"))
+            jobs.mark_running("ghost")
+            BookRepository(session).update_parse(
+                "mathanalysis-b05", parse_status="parsing", pages_done=1
+            )
+            session.commit()
+
+        with client:  # 进入 TestClient 上下文才触发 lifespan（启动期归一发生在此）
+            assert client.get("/api/v1/health").status_code == 200
+            ghost = client.get("/api/v1/parse-jobs/ghost").json()
+            book = client.get("/api/v1/books/mathanalysis-b05").json()
+
+        assert ghost["status"] == "interrupted"
+        assert "服务重启中断" in ghost["error"]
+        assert book["parse_status"] == "pending"
+        assert book["last_parse_result"] == "interrupted"
 
 
 class TestParseVersions:

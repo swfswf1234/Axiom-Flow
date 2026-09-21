@@ -204,6 +204,82 @@ class TestParseJobRepository:
         assert repo.mark_running("nope") is False
         assert repo.mark_finished("nope", status="failed") is False
 
+    def test_mark_finished_stores_structured_failed_pages(self, session):
+        """ADR 0007 决定 2：失败页以数组落库，长清单不被 500 字符摘要截断。"""
+        repo = ParseJobRepository(session)
+        repo.create(ParseJobRow(job_id="job1", book_id="b05", engine="mineru"))
+        repo.mark_running("job1")
+
+        repo.mark_finished("job1", status="partial", error="失败页：7", failed_pages=[7])
+
+        job = repo.get("job1")
+        assert job is not None and job.failed_pages == [7]
+
+    def test_failed_pages_defaults_to_empty_list(self, session):
+        repo = ParseJobRepository(session)
+        repo.create(ParseJobRow(job_id="job1", book_id="b05", engine="mineru"))
+
+        job = repo.get("job1")
+        assert job is not None and job.failed_pages == []
+
+
+class TestStartupReconciliation:
+    """ADR 0007 决定 4：启动期将遗留活动态归一为 `interrupted`（单实例前提）。"""
+
+    def test_queued_and_running_rows_become_interrupted(self, session):
+        repo = ParseJobRepository(session)
+        repo.create(ParseJobRow(job_id="running-1", book_id="b05", engine="mineru"))
+        repo.mark_running("running-1")
+        repo.create(ParseJobRow(job_id="queued-1", book_id="b11", engine="mineru"))
+
+        affected = repo.reconcile_interrupted()
+
+        assert {(job.job_id, job.book_id) for job in affected} == {("running-1", "b05"), ("queued-1", "b11")}
+        assert repo.get("running-1").status == "interrupted"
+        assert repo.get("queued-1").status == "interrupted"
+        assert "服务重启中断" in repo.get("queued-1").error
+        assert repo.get("queued-1").finished_at is not None
+
+    def test_terminal_rows_are_untouched(self, session):
+        repo = ParseJobRepository(session)
+        repo.create(ParseJobRow(job_id="done-1", book_id="b05", engine="mineru"))
+        repo.mark_finished("done-1", status="partial", error="失败页：2", failed_pages=[2])
+
+        assert repo.reconcile_interrupted() == []
+
+        job = repo.get("done-1")
+        assert job.status == "partial" and job.error == "失败页：2" and job.failed_pages == [2]
+
+    def test_reconcile_is_idempotent(self, session):
+        repo = ParseJobRepository(session)
+        repo.create(ParseJobRow(job_id="running-1", book_id="b05", engine="mineru"))
+        repo.mark_running("running-1")
+
+        repo.reconcile_interrupted()
+
+        assert repo.reconcile_interrupted() == []
+
+    def test_update_parse_keeps_progress_and_result_apart(self, session):
+        """进度列与结局列分列：进度只写 pending/parsing，结局只在终态写。"""
+        repo = BookRepository(session)
+        repo.upsert_many([_row()])
+
+        repo.update_parse("mathanalysis-b05", parse_status="parsing", pages_done=3)
+        assert repo.get("mathanalysis-b05").last_parse_result == "", "运行中不产出结局"
+
+        repo.update_parse("mathanalysis-b05", parse_status="pending", pages_done=3, last_parse_result="partial")
+        book = repo.get("mathanalysis-b05")
+        assert (book.parse_status, book.last_parse_result, book.pages_done) == ("pending", "partial", 3)
+
+    def test_update_parse_without_result_preserves_previous_result(self, session):
+        repo = BookRepository(session)
+        repo.upsert_many([_row()])
+        repo.update_parse("mathanalysis-b05", parse_status="pending", pages_done=1, last_parse_result="failed")
+
+        repo.update_parse("mathanalysis-b05", parse_status="parsing", pages_done=0)
+
+        assert repo.get("mathanalysis-b05").last_parse_result == "failed"
+
 
 class TestPageRepository:
     """af_pages：页状态 upsert 与质量信号（按解析版本 job_id 作用域）。"""

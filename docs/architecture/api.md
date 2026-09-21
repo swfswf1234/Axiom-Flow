@@ -2,11 +2,11 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现；8900 透传适配待 REQ-001）
+实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现 + 任务状态六态与进度/结局分列（ADR 0007）已实现；8900 透传适配待 REQ-001）
 最后更新：2026-09-21
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
-关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)
+关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)
 
 > 本文件是 **Axiom-Flow 的固定 API 接口文档**（根仓库 ADR 0010 文档体系范本）：8902 全部对外
 > 端点的契约总表，按**接口类型**组织（REQ-046 四类）：① 生命周期与健康；② 数据查询
@@ -110,8 +110,11 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 ### GET /api/v1/books
 
 书目列表。返回 `BookOut` 列表（扩展字段 domain_id/course_id/course_name/knowledge_id/part/
-display_title/file_path/ingest_status/parse_status/pages_done/**active_job_id** 向前兼容）。
-`pages_done` 与 `active_job_id` 一致地描述**生效版本**（V3）；`active_job_id=null` 表示读根视图。
+display_title/file_path/ingest_status/parse_status/pages_done/**active_job_id**/**last_parse_result**
+向前兼容）。`pages_done` 与 `active_job_id` 一致地描述**生效版本**（V3）；`active_job_id=null` 表示读
+根视图。**进度与结局分列（ADR 0007）**：`parse_status` 只回答「做到哪」（`pending`/`parsing`），
+`last_parse_result` 只回答「上一次怎么结束」（`completed`/`partial`/`failed`/`interrupted`，`""` =
+从未有任务）——前端列表不必再看 `progress` 猜结局。
 
 ### GET /api/v1/books/{book_id}
 
@@ -147,7 +150,8 @@ display_title/file_path/ingest_status/parse_status/pages_done/**active_job_id** 
 替换的只是**根视图**（`book.json` + `pages/`），并作废根视图 `chunks.json`；`versions/` 子树
 **完整保留**（历史版本不因重新 ingest 失明）。DB 侧回置 `active_job_id=NULL`（生效指针回到根视图）、
 `parse_status=pending`、`pages_done=0`，并只清空 `job_id='legacy'` 的 `af_pages` 行（真实版本作用域
-的页行保留）；`af_parse_jobs` 历史与 `af_block_edits` 全部保留。**错误：** 404 书目不存在 / 源 PDF 缺失。
+的页行保留）；`last_parse_result` **不回置**——它记录「最近一次任务的结局」，ingest 不是任务。
+`af_parse_jobs` 历史与 `af_block_edits` 全部保留。**错误：** 404 书目不存在 / 源 PDF 缺失。
 
 ## ③ 解析结果与 PDF 对照
 
@@ -214,24 +218,42 @@ NULL → 书目录根 = 根视图 legacy）。
 提交解析任务。请求：`{book_id, pages?, engine?}`（`pages` 缺省 = 全部页，走**全本解析**；指定
 页 = 逐页页图重解析；`engine` 为 `mineru`/`paddleocr-vl`/`qwen-vl` 之一，**缺省回落
 `AXIOM_OCR_ENGINE`**，未实现的槽位返回 400、非法字面值返回 422，**绝不回落到其他引擎**）。
-202 返回 `ParseJob`（queued/running/completed/failed），任务落 `af_parse_jobs`（`engine` 存**解析后
-的实际引擎名**）并由后台执行。每个任务即**一个解析版本**：产物只写
+202 返回 `ParseJob`（状态机见下表），任务落 `af_parse_jobs`（`engine` 存**解析后的实际引擎名**）
+并由后台执行。每个任务即**一个解析版本**：产物只写
 `parsed/.../<book_id>/versions/<job_id>/`，并在运行时记录 `source_sha256`/`page_count` 自证
-（版本 ↔ 源 PDF 快照对应）。失败页跳过不中断，`progress.error` 记录进行中失败页摘要（≤200
-字符），终态摘要写 `error`（≤500 字符）。**激活门槛（V3）**：任务 `completed` 且版本产物校验通过
-才把 `af_books.active_job_id` 指向本版本；`failed` 或中断**不激活**，产物保留不删（自然回滚 = 指针
-从未动过）。**受理前门槛**（顺序固定）：书目存在 → 已 ingest 校验 → **`pages` 越界 422**（逐页判
+（版本 ↔ 源 PDF 快照对应）。失败页跳过不中断：`failed_pages` 给出**结构化、不截断**的页码数组，
+`progress.error` 记录进行中失败页摘要（≤200 字符），终态摘要写 `error`（≤500 字符）——摘要会截断，
+页码不会丢（ADR 0007 决定 2）。**激活门槛（V3）= `completed` 判据本身**：目标页齐备且清单重算成功
+才激活 `af_books.active_job_id`，同一次判定同时定 `status`，故「completed 但未激活」不可能；
+`partial`/`failed` 或中断**不激活**，产物保留不删（自然回滚 = 指针从未动过）。**受理前门槛**（顺序固定）：书目存在 → 已 ingest 校验 → **`pages` 越界 422**（逐页判
 `1 ≤ p ≤ af_books.page_count`，DEFECT-006；此前接受 `pages=[40,999]` 会在 `af_pages` 写出指向不存在
 页图的幽灵行）→ 引擎名解析 → 模型服务探活（不可用 503，**不创建任务行**）；**越界判在探活之前**，
 非法请求不打模型。**受理后不并行打模型**：执行前经单一占用闸门等待（见下）。
 
+### 任务状态机（ADR 0007 决定 1）
+
+| `status` | 判据 | 谁写 |
+| --- | --- | --- |
+| `queued` | 已受理、未开始 | 建任务行 |
+| `running` | 执行中（含排队等闸门） | 管线开始 |
+| `completed` | 目标页**全部** `parsed` 且产物在位、清单重算成功（= 版本激活判据） | 管线终态 |
+| `partial` | ≥1 页 `parsed` 但未齐备；`failed_pages` 非空 | 管线终态 |
+| `failed` | 0 页产出，或引擎整体异常/闸门超时 | 管线终态 |
+| `interrupted` | 上次进程留下 `queued`/`running` 行 → 冷启动归一 | **只有启动期归一**（单实例前提，见 [operations.md](../guides/operations.md)） |
+
+`progress` 只描述做到哪（`parsed`/`total`/`failed`/`error`），**不再兼任结局**；书目侧同一分列：
+`af_books.parse_status` ∈ `pending`/`parsing`，任务结局独立落 `last_parse_result`（`""` = 从未有任务）。
+
 ### GET /api/v1/parse-jobs/{job_id}
 
-任务状态与进度（`ParseJob`：id/book_id/pages/engine/status/progress/error）。运行中可见
-`progress.parsed` 递增（节流写入：≥1s 或每 10 页）。**`queued` 可以很久**：本机 GPU 只容得下一个
+任务状态与进度（`ParseJob`：id/book_id/pages/engine/status/progress/**failed_pages**/error）。
+运行中可见 `progress.parsed` 递增（节流写入：≥1s 或每 10 页）；终态的 `failed_pages` 是完整页码
+数组，供「只重跑失败页」直接取用。**`queued` 可以很久**：本机 GPU 只容得下一个
 解析，任务在单 worker 队列里排队、且启动前还要等模型服务空闲（`queued_tasks + processing_tasks
 == 0`，最长 900 秒）；等待期 `started_at` 为空，超时则 `failed` 且 `error` 写「模型服务被其他解析
-任务占用」，与「模型服务不可用」区分（2026-09-21 R1 窗口后成文）。
+任务占用」，与「模型服务不可用」区分（2026-09-21 R1 窗口后成文）。**`interrupted` 不是引擎失败**：
+`error` 写「服务重启中断，可重跑」，续跑方式是**用同一 `job_id` 重放**（已 `parsed` 且产物在位的页
+跳过引擎），不必新建版本。
 
 ### 错误语义
 
@@ -244,6 +266,8 @@ NULL → 书目录根 = 根视图 legacy）。
 | 模型服务不可用（**提交期探活失败**，MinerU 未起等） | 503（提示经 8900 `/models/{slot}` 启停模型或检查 `QED_OCR_MODEL_URL`（5002））；**不创建任务行** |
 | 模型服务在任务受理后故障 | 202 已受理 → job `failed`（`error` 记原因），已解析页保留 |
 | 模型服务被其他解析占用至闸门超时 | 202 已受理 → job `failed`，`error` 写「模型服务被其他解析任务占用」（**不冒充**「模型服务不可用」）；不写页行、不激活版本 |
+| 逐页任务部分页失败 | 202 已受理 → job `partial`（`failed_pages` 列页码），齐备页产物保留、**不激活版本**（激活判据未满足） |
+| 进程被杀/重启留下 `queued`/`running` 行 | 无 HTTP 侧码：**冷启动受理首个请求之前**归一为 `interrupted`，书目进度回 `pending`、结局仅在最新任务时置 `interrupted`（ADR 0007 决定 4；单实例前提见运维指南） |
 
 8902 离线/5xx 时 8900 返回 503 + `Axiom-Flow 服务不可达：…`（独立性铁律，不影响配置域端点）。
 

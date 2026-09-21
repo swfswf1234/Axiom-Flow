@@ -14,9 +14,9 @@ from pathlib import Path
 import pymupdf
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
-from axiom_flow.db.models import Base
+from axiom_flow.db.models import AfParseJob, Base
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
@@ -28,6 +28,7 @@ from axiom_flow.db.repositories import (
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
 from axiom_flow.ingest import ingest_book
 from axiom_flow.orchestrator import pipeline, run_parse_job
+from axiom_flow.orchestrator.jobs import JobRunner
 from axiom_flow.schemas import BlocksPage
 
 
@@ -192,7 +193,9 @@ class TestWholeBookJob:
         assert page.blocks[0].type.value == "heading"
 
         book = BookRepository(session).get("b05")
-        assert book is not None and book.parse_status == "completed" and book.pages_done == 2
+        assert book is not None and book.pages_done == 2
+        assert book.parse_status == "pending", "进度列不表达结局（ADR 0007 决定 3）"
+        assert book.last_parse_result == "completed"
         job = ParseJobRepository(session).get(job_id)
         assert job is not None and job.status == "completed"
         assert PageRepository(session).count_parsed("b05", job_id) == 2
@@ -270,7 +273,8 @@ class TestWholeBookJob:
         assert outcome.status == "failed"
         assert "不可达" in outcome.error
         book = BookRepository(session).get("b05")
-        assert book is not None and book.parse_status == "failed"
+        assert book is not None and book.parse_status == "pending"
+        assert book.last_parse_result == "failed"
         assert book.active_job_id is None, "失败版本不得激活（V3）"
 
     def test_unhealthy_engine_fails_job_before_calling(self, env):
@@ -455,7 +459,8 @@ class TestPerPageJob:
         assert PageRepository(session).get("b05", second, 2).status == "parsed"
         assert BookRepository(session).get("b05").active_job_id == second
 
-    def test_failed_page_does_not_abort_job(self, env):
+    def test_failed_page_marks_job_partial(self, env):
+        """ADR 0007：有失败页即 `partial`，不再由 `completed` 掩盖（DEFECT-006）。"""
         session, data_root = env
         _ingest(session, data_root)
         job_id = _create_job(session, pages=[1, 2])
@@ -469,12 +474,17 @@ class TestPerPageJob:
             data_root=data_root,
         )
 
-        assert outcome.status == "completed"
+        assert outcome.status == "partial"
         assert outcome.failed_pages == [2]
         assert "失败页：2" in outcome.error
         assert PageRepository(session).get("b05", job_id, 2).status == "failed"
+        job = ParseJobRepository(session).get(job_id)
+        assert job is not None and job.status == "partial"
+        assert job.failed_pages == [2], "失败页必须结构化落库，不只活在 error 字符串里"
+        assert job.progress["failed"] == 1
         book = BookRepository(session).get("b05")
-        assert book is not None and book.parse_status == "failed" and book.pages_done == 1
+        assert book is not None and book.parse_status == "pending" and book.pages_done == 1
+        assert book.last_parse_result == "partial"
         assert book.active_job_id is None, "目标页未齐备 → 不激活（V3）"
         assert (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").is_file(), (
             "不激活也不删产物：失败版本留在磁盘上供排查"
@@ -781,4 +791,152 @@ class TestPerPagePersistence:
         session.commit()
         with Session(engine) as reader:
             assert PageRepository(reader).count_parsed("b05", "job-1") == 2
+
+
+class TestStatusSemanticsAdr0007:
+    """ADR 0007：`completed` 与激活门槛同源、结局三态、书级进度/结局分列。"""
+    def test_completed_and_activation_are_the_same_criterion(self, env):
+        """齐备 → 同时 `completed` 与被激活；未齐备 → 同时非 `completed` 与未激活。"""
+        session, data_root = env
+        _ingest(session, data_root)
+
+        ok_job = _create_job(session, job_id="job-ok")
+        assert run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=ok_job,
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+        ).status == "completed"
+        book = BookRepository(session).get("b05")
+        assert book.active_job_id == ok_job
+
+        partial_job = _create_job(session, pages=[1, 2], job_id="job-partial")
+        assert run_parse_job(
+            session=session,
+            engine=FakeEngine(fail_pages={1}),
+            job_id=partial_job,
+            book_id="b05",
+            pages=[1, 2],
+            data_root=data_root,
+        ).status == "partial"
+        # 「completed 但未激活」不可能出现：未齐备的任务既不判 completed 也不夺走生效指针
+        assert BookRepository(session).get("b05").active_job_id == ok_job
+
+    def test_zero_success_is_failed_not_partial(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session, pages=[1, 2])
+
+        outcome = run_parse_job(
+            session=session,
+            engine=FakeEngine(fail_pages={1, 2}),
+            job_id=job_id,
+            book_id="b05",
+            pages=[1, 2],
+            data_root=data_root,
+        )
+
+        assert outcome.status == "failed", "零页成功不是「部分成功」"
+        assert outcome.failed_pages == [1, 2]
+        job = ParseJobRepository(session).get(job_id)
+        assert job is not None and job.status == "failed" and job.failed_pages == [1, 2]
+        book = BookRepository(session).get("b05")
+        assert book is not None and book.last_parse_result == "failed" and book.parse_status == "pending"
+
+    def test_running_job_keeps_progress_only(self, env):
+        """受理即 `parsing`（进度），结局列在终态前保持空值。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session)
+
+        ParseJobRepository(session).mark_running(job_id)
+        BookRepository(session).update_parse("b05", parse_status="parsing", pages_done=0)
+        session.commit()
+
+        book = BookRepository(session).get("b05")
+        assert book.parse_status == "parsing"
+        assert book.last_parse_result == "", "结局只在终态写"
+
+    def test_pipeline_never_writes_interrupted(self, env):
+        """`interrupted` 只有启动期归一会写：管线自身四种结局都不产出它。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session, pages=[1, 2])
+
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(fail_pages={2}),
+            job_id=job_id,
+            book_id="b05",
+            pages=[1, 2],
+            data_root=data_root,
+        )
+
+        job = ParseJobRepository(session).get(job_id)
+        assert job is not None and job.status != "interrupted"
+
+
+class TestStartupReconciliationRunner:
+    """ADR 0007 决定 4 的执行侧：启动期归一同时收敛书目进度，且只改最新任务书的结局。"""
+
+    def _runner(self, engine, data_root: Path) -> JobRunner:
+        return JobRunner(
+            session_factory=sessionmaker(bind=engine, future=True),
+            engine_factory=lambda name: FakeEngine(),
+            data_root=data_root,
+            background=False,
+        )
+
+    def test_interrupted_latest_job_sets_book_result(self, tmp_path):
+        engine, session, data_root = _file_env(tmp_path)
+        ParseJobRepository(session).mark_running("job-1")
+        BookRepository(session).update_parse("b05", parse_status="parsing", pages_done=1)
+        session.commit()
+        session.close()
+
+        runner = self._runner(engine, data_root)
+        normalized = runner.reconcile_on_startup()
+
+        assert normalized == [("job-1", "b05")]
+        with Session(engine) as reader:
+            job = ParseJobRepository(reader).get("job-1")
+            book = BookRepository(reader).get("b05")
+            assert job is not None and job.status == "interrupted"
+            assert book is not None and book.parse_status == "pending"
+            assert book.last_parse_result == "interrupted"
+
+    def test_terminal_latest_job_keeps_its_result(self, tmp_path):
+        """旧任务被归一时不得改写该书最近一次任务的结局（结局跟随最新任务）。"""
+        engine, session, data_root = _file_env(tmp_path)
+        jobs = ParseJobRepository(session)
+        jobs.mark_running("job-1")  # 更早的任务：上次进程被 kill 的遗留
+        jobs.create(ParseJobRow(job_id="job-2", book_id="b05", engine="mineru"))
+        jobs.mark_finished("job-2", status="partial", error="失败页：2", failed_pages=[2])
+        BookRepository(session).update_parse(
+            "b05", parse_status="parsing", pages_done=1, last_parse_result="partial"
+        )
+        session.commit()
+        session.close()
+
+        runner = self._runner(engine, data_root)
+        normalized = runner.reconcile_on_startup()
+
+        assert normalized == [("job-1", "b05")], "只归一活动行，终态行不动"
+        with Session(engine) as reader:
+            book = BookRepository(reader).get("b05")
+            assert book.parse_status == "pending", "进度收回 pending"
+            assert book.last_parse_result == "partial", "结局跟随最新任务（job-2），不被更早的中断行覆盖"
+            assert reader.get(AfParseJob, "job-2").status == "partial"
+
+    def test_startup_reconciliation_is_idempotent(self, tmp_path):
+        engine, session, data_root = _file_env(tmp_path)
+        ParseJobRepository(session).mark_running("job-1")
+        session.commit()
+        session.close()
+        runner = self._runner(engine, data_root)
+
+        assert runner.reconcile_on_startup() != []
+        assert runner.reconcile_on_startup() == []
 

@@ -16,11 +16,13 @@ from axiom_flow.schemas import (
     EditRequest,
     IngestResponse,
     JobStatus,
+    LastParseResult,
     ManifestEntry,
     PageData,
     PageState,
     ParseJob,
     ParseJobCreate,
+    ParseStatus,
     QualityMetrics,
     Source,
     Verdict,
@@ -342,3 +344,42 @@ class TestParseJob:
 
     def test_page_state_enum(self):
         assert {s.value for s in PageState} == {"pending", "parsed", "failed"}
+
+
+class TestParseStatusSemantics:
+    """ADR 0007：任务结局三态 + 书级进度/结局分列（`parse_status` 不再表达结局）。"""
+
+    def test_parse_status_only_expresses_progress(self):
+        assert {s.value for s in ParseStatus} == {"pending", "parsing"}
+
+    def test_job_status_terminal_set(self):
+        assert {s.value for s in JobStatus} == {
+            "queued",
+            "running",
+            "completed",
+            "partial",
+            "failed",
+            "interrupted",
+        }
+
+    def test_last_parse_result_set(self):
+        """枚举覆盖 `last_parse_result` 的全部取值域：`''` = 该书从未有任务。"""
+        assert {s.value for s in LastParseResult} == {"", "completed", "partial", "failed", "interrupted"}
+
+    def test_last_parse_result_none_is_empty_string(self):
+        assert LastParseResult.NONE == ""
+
+    def test_book_out_last_parse_result_defaults_empty(self):
+        assert BookOut(book_id="b05").last_parse_result == ""
+
+    def test_parse_job_failed_pages_is_structured(self):
+        job = ParseJob(id="job-1", book_id="b05", status="partial", failed_pages=[3, 1])
+        assert job.status == JobStatus.PARTIAL
+        assert job.failed_pages == [3, 1]
+
+    def test_parse_job_failed_pages_defaults_empty(self):
+        assert ParseJob(id="job-1", book_id="b05", status="completed").failed_pages == []
+
+    def test_parse_job_rejects_non_numeric_failed_page(self):
+        with pytest.raises(ValidationError):
+            ParseJob(id="job-1", book_id="b05", status="partial", failed_pages=["abc"])

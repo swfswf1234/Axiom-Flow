@@ -178,7 +178,7 @@ class TestIsolationBoundary:
         assert "alembic_version" in found
         with store.connect() as conn:
             revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "20260920_0002", "集成面必须跑在当前 head 上"
+        assert revision == "20260921_0001", "集成面必须跑在当前 head 上"
 
 
 class TestCommitBoundary:

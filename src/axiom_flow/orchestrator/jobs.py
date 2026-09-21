@@ -15,10 +15,10 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from axiom_flow.db.repositories import ParseJobRepository
+from axiom_flow.db.repositories import BookRepository, PageRepository, ParseJobRepository
 from axiom_flow.engines.base import ParseEngine
 from axiom_flow.orchestrator.pipeline import ParseOutcome, run_parse_job
-from axiom_flow.schemas import JobStatus
+from axiom_flow.schemas import JobStatus, LastParseResult, ParseStatus
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +63,46 @@ class JobRunner:
         except Exception:  # noqa: BLE001 - 后台线程异常必须记录并落库，避免任务悬挂
             logger.exception("parse job %s 执行异常", job_id)
             with self._session_factory() as session:
-                ParseJobRepository(session).mark_finished(job_id, status=JobStatus.FAILED, error="内部错误（详见服务日志）")
+                ParseJobRepository(session).mark_finished(
+                    job_id, status=JobStatus.FAILED, error="内部错误（详见服务日志）"
+                )
+                # 书目进度必须同步收敛：否则异常任务把书永久留在 `parsing`（ADR 0007 决定 3）
+                BookRepository(session).update_parse(
+                    book_id,
+                    parse_status=ParseStatus.PENDING,
+                    pages_done=PageRepository(session).count_parsed(book_id, job_id),
+                    last_parse_result=LastParseResult.FAILED,
+                )
                 session.commit()
         finally:
             close = getattr(engine, "close", None)
             if callable(close):
                 close()
+
+    def reconcile_on_startup(self) -> list[tuple[str, str]]:
+        """启动期归一（[ADR 0007](../../../docs/adr/0007-parse-status-semantics.md) 决定 4）。
+
+        把上一次进程遗留的 `queued`/`running` 任务改写为 `interrupted`，并把对应书目的进度收回
+        `pending`；结局只在「该书最新一次任务被归一」时改为 `interrupted`。**必须在开始受理请求
+        之前调用，且前提是 8902 单实例部署**：本表无跨进程所有权标记，多实例会把其他实例的活任务
+        误判为中断（多实例前须改为心跳 + 后台回收）。返回被归一的 `(job_id, book_id)` 列表。
+        """
+        with self._session_factory() as session:
+            jobs = ParseJobRepository(session)
+            books = BookRepository(session)
+            affected: list[tuple[str, str]] = []
+            for job in jobs.reconcile_interrupted():
+                latest = jobs.list_for_book(job.book_id)
+                is_latest = bool(latest) and latest[-1].job_id == job.job_id
+                books.mark_parse_idle(
+                    job.book_id,
+                    last_parse_result=LastParseResult.INTERRUPTED if is_latest else None,
+                )
+                affected.append((job.job_id, job.book_id))
+            session.commit()
+        if affected:
+            logger.warning("启动期归一：%d 个遗留活动任务改写为 interrupted", len(affected))
+        return affected
 
     def shutdown(self) -> None:
         """服务关闭：不再接收新任务，已排队任务取消。"""

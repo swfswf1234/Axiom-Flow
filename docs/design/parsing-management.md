@@ -67,12 +67,15 @@ sequenceDiagram
 
 四表（`af_books` / `af_parse_jobs` / `af_pages` / `af_block_edits`）DDL 与字段语义见
 `../architecture/database-design.md`（结构事实源）；**一次 Alembic 迁移建全**，解析版本作用域由
-迁移 `20260920_0002` 增补。要点：
+迁移 `20260920_0002` 增补，进度与结局分列由 `20260921_0001` 增补（ADR 0007）。要点：
 
 - `af_books`：已验证书快照（含 `file_path` 数据根相对路径、ingest/解析进度、notes）+
-  `active_job_id`（生效解析版本，`NULL` = 根视图 legacy）；
+  `active_job_id`（生效解析版本，`NULL` = 根视图 legacy）+ **进度与结局分列**：`parse_status`
+  只表进度（`pending`/`parsing`），`last_parse_result` 只表最近一次任务结局
+  （`completed`/`partial`/`failed`/`interrupted`，`''` = 从未有任务）；
 - `af_parse_jobs`：**一次任务 = 一个解析版本**（pages NULL=全书、engine、status、progress，
-  另有 `source_sha256`/`page_count` 自证本版解析的源文件与当时全书页数）；
+  另有 `source_sha256`/`page_count` 自证本版解析的源文件与当时全书页数，`failed_pages` 是
+  结构化、不截断的失败页码数组）；
 - `af_pages`：页级状态与质量信号，主键 `(book_id, job_id, page_no)`（同一页在不同版本可有独立状态）；
 - `af_block_edits`：块级人工编辑覆盖层（verdict/note/corrected_text/corrected_bbox），唯一键
   `(book_id, job_id, page_no, block_index)`，编辑绑定其所属版本。
@@ -87,7 +90,7 @@ sequenceDiagram
 | `GET /books`、`GET /books/{id}` | 书目列表/详情（af_books，含 `active_job_id`；空表回退文件系统） |
 | `PATCH /books/{id}`、`DELETE /books/{id}` | 修改（notes）/删除：删 `af_books` 与该书**所有版本**的 `af_pages`/`af_block_edits` 行，`?purge=true` 连整本产物目录（含 `versions/`）一并删除；`af_parse_jobs` 历史行一律保留为审计 |
 | `POST /books/{id}/ingest` | 渲染页图 + book.json（不调模型），回写 ingest_status/page_count/sha256。**重复 ingest 只替换根视图**（`book.json` + `pages/` 原子交换，`versions/` 完整保留），并置 `active_job_id=NULL`、`parse_status=pending`、`pages_done=0`，页行只清 `job_id='legacy'` 一批；历史版本状态与任务行保留，但旧版本不再对生效端点可见（源文件已变，需重新解析） |
-| `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页重解析，两者都产出一个**完整快照**版本；`pages` 越界在受理前 422，不探活不落任务行——DEFECT-006） |
+| `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页重解析，两者都产出一个**完整快照**版本；`pages` 越界在受理前 422，不探活不落任务行——DEFECT-006）。`status` 六态与判据见 [parsing-pipeline.md](parsing-pipeline.md) 条文 S1~S7；查询响应含 `failed_pages` |
 | `GET /books/{id}/versions` | 解析版本只读列举（`job_id/engine/status/page_count/parsed/source_sha256/created_at/active`）；不改生效指针 |
 | `GET /books/{id}/pages/{no}` | 单页 blocks+markdown+image_url+已合并 edits（**作用域 = 生效版本**；`active_job_id` 为空时读根视图 legacy） |
 | `PUT /books/{id}/pages/{no}/blocks/{index}/edit`、`GET .../edits` | 块编辑 upsert / 页内编辑列表（写入生效版本的 `job_id`） |
@@ -110,6 +113,7 @@ sequenceDiagram
 
 - 8902 离线 → 8900 返回 503，前端降级显示；8901 离线 → `POST /books/sync` 503（取数失败）；
 - 模型服务离线 → **提交期探活**返回 503 且不创建任务行；**已受理**任务的执行期故障记为 `failed`（error 记原因），只读端点正常；
+- 8902 自身重启 → 冷启动受理首个请求**之前**做一次状态归一：上次进程遗留的 `queued`/`running` 任务行改判 `interrupted`，书目进度回 `pending`（ADR 0007 条文 S5/S6，前提是**单实例部署**，运维口径见 [operations.md](../guides/operations.md)）；只读端点在归一完成后即刻给出确定答案，不需要人工清理僵尸态；
 - 8900 离线 → 本仓库可经根仓库脚本手动启停模型并独立解析（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
 
 ## 验证

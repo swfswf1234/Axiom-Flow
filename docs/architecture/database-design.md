@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（四表一次 Alembic 迁移 + 仓储层已实现；任务/页表语义按 PLAN-003 契约修正；**解析版本布局（`af_books.active_job_id` 生效指针 + 页/编辑表 `job_id` 作用域）由迁移 `20260920_0002` 落地，PLAN-004 / REQ-080**）
+实现状态：Current（四表一次 Alembic 迁移 + 仓储层已实现；任务/页表语义按 PLAN-003 契约修正；**解析版本布局（`af_books.active_job_id` 生效指针 + 页/编辑表 `job_id` 作用域）由迁移 `20260920_0002` 落地，PLAN-004 / REQ-080**；**进度与结局分列（`af_books.last_parse_result` + `af_parse_jobs.failed_pages`）由迁移 `20260921_0001` 落地，PLAN-006 / ADR 0007**）
 最后更新：2026-09-21
 关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
 关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_migrations.py`、`tests/contract/test_architecture_documents.py`（本文档守护）
@@ -60,7 +60,8 @@ erDiagram
         int page_count
         varchar sha256
         varchar ingest_status
-        varchar parse_status
+        varchar parse_status "进度：pending/parsing"
+        varchar last_parse_result "最近一次结局；''=从未有任务"
         int pages_done
         varchar active_job_id "生效解析版本；NULL=根视图 legacy"
         text notes
@@ -70,8 +71,9 @@ erDiagram
         varchar book_id FK
         json pages "NULL=全书"
         varchar engine "解析后显式引擎名，无默认值"
-        varchar status
+        varchar status "queued/running/completed/partial/failed/interrupted"
         json progress
+        json failed_pages "失败页码数组，不截断"
         varchar error
         varchar source_sha256 "源 PDF 快照自证"
         int page_count "建任务时全书页数快照"
@@ -117,7 +119,8 @@ CREATE TABLE af_books (
   page_count    INT          NULL,              -- ingest 时计算
   sha256        VARCHAR(64)  NOT NULL DEFAULT '',-- ingest 时计算
   ingest_status VARCHAR(16)  NOT NULL DEFAULT 'none',   -- none/ingesting/ingested/failed
-  parse_status  VARCHAR(24)  NOT NULL DEFAULT 'pending',-- pending/parsing/completed/failed
+  parse_status  VARCHAR(24)  NOT NULL DEFAULT 'pending',-- 进度：pending/parsing（结局分列）
+  last_parse_result VARCHAR(16) NOT NULL DEFAULT '', -- 最近一次任务结局；'' = 从未有任务
   pages_done    INT          NOT NULL DEFAULT 0,
   active_job_id VARCHAR(64)  NULL,              -- 生效解析版本；NULL = 根视图 legacy
   notes         TEXT         NULL,
@@ -135,6 +138,10 @@ CREATE TABLE af_books (
   不影响已同步行（快照语义）。
 - **进度自持**：`ingest_status`/`parse_status`/`pages_done` 由 Axiom-Flow 侧维护（ingest 与
   解析任务回写），不依赖 qt_books 之外的上游字段。
+- **进度与结局分列（ADR 0007 决定 1/3）**：`parse_status` 只表达进度（`pending`/`parsing`），
+  任务结局落在 `last_parse_result`（`completed`/`partial`/`failed`/`interrupted`，`''` = 从未有
+  任务）。结局**只在终态写入**，因此运行中刷新列表不会看到结局被进度覆盖（DEFECT-007）。
+  重新 ingest 只回置进度，不改结局——`last_parse_result` 记录的是「最近一次任务」的事实。
 - **重新 ingest 回置进度**：`POST /books/{id}/ingest` 成功替换产物后，把 `parse_status` 置回
   `pending`、`pages_done` 归零，并清空该书 `af_pages` 行（旧产物已作废，不保留过期页状态）。
 - **字段冗余**：课程归属（domain_id/course_id/course_name）冗余进表，前端只消费 8902
@@ -144,8 +151,10 @@ CREATE TABLE af_books (
 
 - **`active_job_id` 是「哪一版生效」的唯一事实源**：`af_parse_jobs` 上**不设布尔生效列**，同一事实
   两处存必漂移。切换/清空只经 `BookRepository.set_active_job()` 单列 UPDATE。
-- **写入门槛**：解析任务只有在 `completed` 且版本产物校验通过后才被指认为生效版本；`failed` 或
-  进程中断**不改指针**，因此「回滚到上一版」= 什么都不做（自然回滚），旧版本产物始终在盘上。
+- **写入门槛 = `completed` 判据本身**：版本产物齐备（目标页全 `parsed` 且产物在位、清单重算成功）
+  才激活指针，同一次判定同时决定 `status=completed`（ADR 0007 决定 5），故「completed 但未激活」
+  不可能出现；`partial`/`failed` 或进程中断**不改指针**，因此「回滚到上一版」= 什么都不做
+  （自然回滚），旧版本产物始终在盘上。
 - **`pages_done` 描述生效版本**：与指针同事务语义下保持一致，避免进度条与所读产物不同版本。
 - **`NULL` 不是「无数据」而是「根视图」**：迁移前的存量产物与重新 ingest 后的作废态都落在这里，
   端点按 `NULL` 读书目录根，旧产物不因升级而失明。
@@ -161,8 +170,9 @@ CREATE TABLE af_parse_jobs (
   book_id       VARCHAR(100) NOT NULL,            -- → af_books.book_id
   pages         JSON         NULL,                -- NULL = 全书；否则页码数组
   engine        VARCHAR(24)  NOT NULL,            -- 无默认值：缺引擎名必须报错（ADR 0004）
-  status        VARCHAR(16)  NOT NULL,            -- queued/running/completed/failed
-  progress      JSON         NOT NULL,            -- {"parsed":N,"total":M,"error":""}
+  status        VARCHAR(16)  NOT NULL,            -- queued/running/completed/partial/failed/interrupted
+  progress      JSON         NOT NULL,            -- {"parsed":N,"total":M,"failed":N,"error":""}
+  failed_pages  JSON         NOT NULL,            -- 失败页码数组，不截断（ADR 0007 决定 2）
   error         VARCHAR(500) NOT NULL DEFAULT '',
   source_sha256 VARCHAR(64)  NOT NULL DEFAULT '', -- 本版本解析的源 PDF 快照（自证对应）
   page_count    INT          NULL,                -- 建任务时的全书页数快照
@@ -183,7 +193,14 @@ CREATE TABLE af_parse_jobs (
 - **源快照自证（V7）**：`source_sha256` + `page_count` 在任务开始时写入，使「这一版产物对应哪一份
   源 PDF、当时全书多少页」可独立证明——重新 ingest 后 SHA 变化即可判定旧版本已不匹配当前源文件。
 - **错误双载体分工**：`error`（≤500 字符）= 终态摘要；`progress.error`（≤200 字符）= 进行中的
-  失败页摘要。两者可同时存在，任务进入终态后以 `error` 为准。
+  失败页摘要。两者可同时存在，任务进入终态后以 `error` 为准。**哪些页**失败不再只埋在文本里：
+  `failed_pages` 是结构化页码数组且不截断（ADR 0007 决定 2），`error` 摘要截断也不丢页码。
+- **`status` 六态与判据同源（ADR 0007 决定 1）**：`queued`/`running` 为活动态；终态
+  `completed`（目标页齐备——与版本激活同一判据，故不存在「completed 但未激活」）、
+  `partial`（≥1 页 `parsed` 但未齐备）、`failed`（0 页产出或引擎整体异常）、
+  `interrupted`（**唯一写入者是启动期归一**，管线自身不产出）。
+- **`progress` 与 `status` 分列**：`progress` 只描述做到哪（`parsed`/`total`/`failed`/`error`），
+  终态判定不看 `progress`；反之结局也不挤占进度列（DEFECT-007 的根因是旧 `parse_status` 两用）。
 - **`progress` 写入节流**：距上次写入 ≥1 秒或每处理满 10 页覆写一次，终态必写一次，单页失败节点
   强制写入；因此运行中 `GET /parse-jobs/{id}` 的 `progress.parsed` 单调不减但可能滞后。
 - **提交期 503 不落行**：模型服务探活失败发生在落库之前，故 503 场景不产生 `af_parse_jobs` 行；
@@ -267,6 +284,12 @@ CREATE TABLE af_block_edits (
     `af_parse_jobs.source_sha256`/`page_count`、`af_pages` 主键与 `af_block_edits` 唯一键纳入
     `job_id`、`engine` 去掉死默认值。真机执行前须备份 `af_*` 四表（见
     [operations.md](../guides/operations.md) 单窗口 runbook）。
+    **真机状态**：业务库 `qed` 已在 R1 窗口升至 `20260920_0002`；`qed_test`（本仓库自有测试库）
+    由集成夹具每次从 base 重建到 head，故新迁移的 MySQL DDL 在门禁里就被真实执行一次。
+  - `20260921_0001`：状态语义收口（PLAN-006 / ADR 0007）——`af_books.last_parse_result`
+    （存量终态值从旧 `parse_status` **平移一次**，随后进度统一归 `pending`）、
+    `af_parse_jobs.failed_pages`（存量回填 `[]`）。**不改写历史 job 状态**：旧 `completed` 行保持
+    `completed`，新三态不回溯（回填等于伪造历史）。
 - **存量迁移策略（不猜归属）**：升级时按「一本书只有一个 job → 回填该 job；否则回填哨兵
   `legacy`」给页行与编辑行定作用域，且**不把存量产物搬进 `versions/`**：`active_job_id` 保持 NULL，
   端点继续读根视图，旧产物一步不失明。
@@ -282,7 +305,11 @@ CREATE TABLE af_block_edits (
 
 - `tests/contract/test_architecture_documents.py` 全绿（本文档守护：表清单、命名空间声明）。
 - `tests/unit/test_db_migrations.py` 全绿：SQLite 临时库上「升级→降级→升级」可重复、0002 的
-  主键/唯一键形状、`legacy`/单 job 回填判据、存量 `active_job_id` 恒 NULL、`engine` 无默认值。
+  主键/唯一键形状、`legacy`/单 job 回填判据、存量 `active_job_id` 恒 NULL、`engine` 无默认值；
+  0003 的回填判据（旧终态值平移进 `last_parse_result`、进度归 `pending`、`failed_pages` 回填
+  `[]`）与**反向判据**（历史 job 状态一字不改）。
+- `tests/integration/test_parse_persistence.py`（`QED_TEST_MYSQL=1`）在真 MySQL 上从 base 升到
+  head，证明 0003 的 JSON 列「加可空 → 回填 → 收紧 NOT NULL」顺序在 MySQL 与 SQLite 上都成立。
 - `tests/unit/test_db.py` 全绿：sync 幂等（重复同步不产生重复行）、edit upsert 覆盖、
   按版本作用域读写、`delete_for_book` 清全部版本。
 - 真机侧（待单窗口）：备份 → `alembic upgrade 20260920_0002` → `GET /books/{id}/versions` 与只读

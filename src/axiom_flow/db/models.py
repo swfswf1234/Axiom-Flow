@@ -43,7 +43,12 @@ class AfBook(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     ingest_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
-    parse_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    parse_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="pending", comment="解析进度（pending/parsing）；不表达结局"
+    )
+    last_parse_result: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="", comment="最近一次任务结局；'' = 从未有任务（ADR 0007）"
+    )
     pages_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active_job_id: Mapped[str | None] = mapped_column(
         String(64),
@@ -70,6 +75,9 @@ class AfParseJob(Base):
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     progress: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    failed_pages: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list, comment="失败页码数组（不截断；ADR 0007 决定 2）"
+    )
     error: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     source_sha256: Mapped[str] = mapped_column(
         String(64), nullable=False, default="", comment="本版本解析的源 PDF 快照（自证版本与文件对应）"

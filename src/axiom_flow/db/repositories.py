@@ -141,12 +141,33 @@ class BookRepository:
         self.session.flush()
         return True
 
-    def update_parse(self, book_id: str, *, parse_status: str, pages_done: int) -> bool:
+    def update_parse(
+        self, book_id: str, *, parse_status: str, pages_done: int, last_parse_result: str | None = None
+    ) -> bool:
+        """回写书目进度；`last_parse_result` 只在终态传入（进度与结局分列，ADR 0007 决定 3）。"""
         book = self.session.get(AfBook, book_id)
         if book is None:
             return False
         book.parse_status = parse_status
         book.pages_done = pages_done
+        if last_parse_result is not None:
+            book.last_parse_result = last_parse_result
+        book.updated_at = utc_now()
+        self.session.flush()
+        return True
+
+    def mark_parse_idle(self, book_id: str, *, last_parse_result: str | None = None) -> bool:
+        """启动期归一回写进度：`parse_status` 回 `pending`，**不动 `pages_done`**（进度口径不变）。
+
+        `last_parse_result` 只在该书最新一次任务被归一时传入，否则保留上一次的真实结局
+        （ADR 0007 决定 4：结局跟随最新任务，不能被更早的中断行覆盖）。
+        """
+        book = self.session.get(AfBook, book_id)
+        if book is None:
+            return False
+        book.parse_status = "pending"
+        if last_parse_result is not None:
+            book.last_parse_result = last_parse_result
         book.updated_at = utc_now()
         self.session.flush()
         return True
@@ -208,7 +229,15 @@ class ParseJobRepository:
         return self.session.get(AfParseJob, job_id)
 
     def list_for_book(self, book_id: str) -> list[AfParseJob]:
-        stmt = select(AfParseJob).where(AfParseJob.book_id == book_id).order_by(AfParseJob.created_at)
+        """按创建时间列该书的解析版本（末位 = 最新一次任务）。
+
+        `MySQL DATETIME` 只到秒，同秒建的多任务以 `job_id` 定序，保证「最新任务」判定可重复。
+        """
+        stmt = (
+            select(AfParseJob)
+            .where(AfParseJob.book_id == book_id)
+            .order_by(AfParseJob.created_at, AfParseJob.job_id)
+        )
         return list(self.session.scalars(stmt))
 
     def mark_running(self, job_id: str) -> bool:
@@ -245,6 +274,7 @@ class ParseJobRepository:
         status: str,
         error: str = "",
         progress: dict[str, Any] | None = None,
+        failed_pages: list[int] | None = None,
     ) -> bool:
         job = self.session.get(AfParseJob, job_id)
         if job is None:
@@ -253,9 +283,27 @@ class ParseJobRepository:
         job.error = error[:500]
         if progress is not None:
             job.progress = dict(progress)
+        if failed_pages is not None:
+            job.failed_pages = list(failed_pages)
         job.finished_at = utc_now()
         self.session.flush()
         return True
+
+    def reconcile_interrupted(self) -> list[AfParseJob]:
+        """启动期归一（ADR 0007 决定 4）：把遗留 `queued`/`running` 改写为 `interrupted`。
+
+        只在服务启动、开始受理请求之前调用一次。**前提是本服务单实例部署**：本表没有跨进程
+        任务所有权标记，多实例下会把其他实例的活任务误判为中断（多实例前须改为心跳 + 回收）。
+        """
+        stmt = select(AfParseJob).where(AfParseJob.status.in_(["queued", "running"]))
+        rows = list(self.session.scalars(stmt))
+        now = utc_now()
+        for job in rows:
+            job.status = "interrupted"
+            job.error = "服务重启中断，可重跑"
+            job.finished_at = now
+        self.session.flush()
+        return rows
 
 
 class PageRepository:

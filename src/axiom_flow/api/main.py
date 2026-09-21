@@ -81,6 +81,7 @@ def _book_out(book: AfBook) -> BookOut:
         ingest_status=book.ingest_status,
         parse_status=book.parse_status,
         pages_done=book.pages_done,
+        last_parse_result=book.last_parse_result,
         active_job_id=book.active_job_id,
         notes=book.notes,
     )
@@ -144,6 +145,8 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        # 受理任何请求之前先归一遗留活动态，避免读取端看到假 running/queued（ADR 0007 决定 4）
+        runner.reconcile_on_startup()
         yield
         runner.shutdown()
         if db_engine is not None:
@@ -505,7 +508,7 @@ def create_app(
                 pages=payload.pages,
                 engine=engine_name,
                 status=JobStatus.QUEUED,
-                progress={"parsed": 0, "total": total},
+                progress={"parsed": 0, "total": total, "failed": 0},
             )
         )
         session.commit()  # 先落库，后台线程才能读到任务行
@@ -517,6 +520,7 @@ def create_app(
             engine=job.engine,
             status=job.status,
             progress=job.progress,
+            failed_pages=list(job.failed_pages or []),
         )
 
     @app.get("/api/v1/parse-jobs/{job_id}", response_model=ParseJob)
@@ -532,6 +536,7 @@ def create_app(
             engine=job.engine,
             status=job.status,
             progress=job.progress,
+            failed_pages=list(job.failed_pages or []),
             error=job.error,
         )
 

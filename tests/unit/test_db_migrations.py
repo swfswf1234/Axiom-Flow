@@ -1,12 +1,15 @@
-"""Alembic 迁移单测：四表建表 + 解析版本布局迁移可升级/降级（SQLite 临时库，不依赖 MySQL）。
+"""Alembic 迁移单测：四表建表 + 解析版本布局与状态语义迁移可升级/降级（SQLite 临时库，不依赖 MySQL）。
 
 守护面：af_* 四表 DDL 与 database-design.md 一致、迁移可重复执行、降级干净；
 `20260920_0002`（PLAN-004）额外守护版本作用域：`af_pages` 主键与 `af_block_edits` 唯一键纳入
-`job_id`、生效指针单列、存量 backfill（一书一 job 回填该 job，否则 `legacy` 哨兵）。
+`job_id`、生效指针单列、存量 backfill（一书一 job 回填该 job，否则 `legacy` 哨兵）；
+`20260921_0001`（PLAN-006 / ADR 0007）守护进度与结局分列：书目新增 `last_parse_result`、
+任务新增 `failed_pages`，存量只平移不改写历史 job 状态。
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from alembic import command
@@ -16,6 +19,7 @@ from sqlalchemy import create_engine, inspect, text
 ROOT = Path(__file__).resolve().parents[2]
 AF_TABLES = {"af_books", "af_parse_jobs", "af_pages", "af_block_edits"}
 REVISION_0001 = "20260917_0001"
+REVISION_0002 = "20260920_0002"
 LEGACY_JOB_ID = "legacy"
 
 
@@ -224,3 +228,138 @@ def test_upgrade_0002_is_repeatable_after_full_downgrade(tmp_path):
 
     inspector = inspect(create_engine(url))
     assert "job_id" in {column["name"] for column in inspector.get_columns("af_pages")}
+
+
+# ---------- 20260921_0001：进度与结局分列（PLAN-006 / ADR 0007） ----------
+
+
+def _seed_pre_semantics_rows(url: str) -> None:
+    """在 0002 形态（当前 head 前）的库上写存量：三本书分别停在 `completed`/`failed`/`parsing`。
+
+    直连 Core 写而不经 ORM：回填判据必须对旧枚举的真实存量成立。历史 job 状态一并写入，
+    用于证明迁移**不改写**任务行（改写会让「活动态只有一个写入者」的不变式失效）。
+    """
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        for book_id, parse_status in (("b_done", "completed"), ("b_fail", "failed"), ("b_run", "parsing")):
+            conn.execute(
+                text(
+                    "INSERT INTO af_books (book_id, domain_id, course_id, title, authors, file_path,"
+                    " sha256, ingest_status, parse_status, pages_done, synced_at, updated_at)"
+                    " VALUES (:book_id,'','','书名','[]','raw/x.pdf','','ingested',:parse_status,3,"
+                    " '2026-09-21 00:00:00','2026-09-21 00:00:00')"
+                ),
+                {"book_id": book_id, "parse_status": parse_status},
+            )
+        for job_id, book_id, status in (("j_done", "b_done", "completed"), ("j_fail", "b_fail", "failed")):
+            conn.execute(
+                text(
+                    "INSERT INTO af_parse_jobs (job_id, book_id, pages, engine, status, progress, error,"
+                    " created_at) VALUES (:job_id,:book_id,NULL,'mineru',:status,'{}','',:created_at)"
+                ),
+                {"job_id": job_id, "book_id": book_id, "status": status, "created_at": "2026-09-21 00:00:00"},
+            )
+        conn.execute(
+            text(
+                "INSERT INTO af_parse_jobs (job_id, book_id, pages, engine, status, progress, error, created_at)"
+                " VALUES ('j_run','b_run',NULL,'mineru','running','{\"parsed\": 1, \"total\": 3}','',"
+                " '2026-09-21 00:00:00')"
+            )
+        )
+    engine.dispose()
+
+
+def _book_states(url: str) -> dict[str, tuple[str, str]]:
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT book_id, parse_status, last_parse_result FROM af_books ORDER BY book_id")
+        ).all()
+    engine.dispose()
+    return {row[0]: (row[1], row[2]) for row in rows}
+
+
+def test_upgrade_0003_adds_result_and_failed_page_columns(tmp_path):
+    """ADR 0007 决定 1/2：结局与失败页各落一列，进度不再兼任结局。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, REVISION_0002)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(url))
+    assert "last_parse_result" in {column["name"] for column in inspector.get_columns("af_books")}
+    job_columns = {column["name"]: column for column in inspector.get_columns("af_parse_jobs")}
+    assert "failed_pages" in job_columns, "失败页必须有结构化列，不能只埋在 error 文本里"
+
+
+def test_upgrade_0003_splits_outcome_from_progress_without_touching_job_status(tmp_path):
+    """回填只做平移：旧 `parse_status` 的终态值搬进 `last_parse_result`，进度归 `pending`。
+
+    反向判据：历史 job 状态一字不改（迁移不是第二次写活动态的机会）。
+    """
+    config, url = _config(tmp_path)
+    command.upgrade(config, REVISION_0002)
+    _seed_pre_semantics_rows(url)
+
+    command.upgrade(config, "head")
+
+    assert _book_states(url) == {
+        "b_done": ("pending", "completed"),
+        "b_fail": ("pending", "failed"),
+        "b_run": ("pending", ""),
+    }
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        jobs = conn.execute(text("SELECT job_id, status FROM af_parse_jobs ORDER BY job_id")).all()
+    engine.dispose()
+    assert jobs == [("j_done", "completed"), ("j_fail", "failed"), ("j_run", "running")], (
+        "迁移不得改写历史任务状态"
+    )
+
+
+def test_upgrade_0003_backfills_failed_pages_as_empty_array(tmp_path):
+    """存量任务没有失败页记录：回填 `[]` 而非留 NULL，读取面免于两种空值语义。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, REVISION_0002)
+    _seed_pre_semantics_rows(url)
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        values = conn.execute(
+            text("SELECT failed_pages FROM af_parse_jobs ORDER BY job_id")
+        ).scalars().all()
+    engine.dispose()
+    assert [json.loads(v) if isinstance(v, str) else v for v in values] == [[], [], []]
+
+
+def test_downgrade_0003_drops_semantics_columns(tmp_path):
+    """降级干净：两列消失，0002 形态可回到 head 再升一次。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, "head")
+
+    command.downgrade(config, REVISION_0002)
+
+    inspector = inspect(create_engine(url))
+    assert "last_parse_result" not in {column["name"] for column in inspector.get_columns("af_books")}
+    assert "failed_pages" not in {column["name"] for column in inspector.get_columns("af_parse_jobs")}
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(url))
+    assert "last_parse_result" in {column["name"] for column in inspector.get_columns("af_books")}
+
+
+def test_upgrade_0003_keeps_rows_and_indexes_on_rebuild(tmp_path):
+    """SQLite 侧经重建表收敛 NOT NULL：存量行与索引不得在重建中丢失。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, REVISION_0002)
+    _seed_pre_semantics_rows(url)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(url))
+    assert "ix_af_parse_jobs_book" in {item["name"] for item in inspector.get_indexes("af_parse_jobs")}
+    columns = {column["name"]: column for column in inspector.get_columns("af_parse_jobs")}
+    assert columns["failed_pages"]["nullable"] is False

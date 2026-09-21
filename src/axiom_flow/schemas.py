@@ -67,12 +67,18 @@ class Source(StrEnum):
 
 
 class JobStatus(StrEnum):
-    """解析任务状态。"""
+    """解析任务状态（终态四值见 ADR 0007 决定 1）。
+
+    `completed` 与版本激活门槛同源（目标页齐备且产物在位）；`partial` = 至少一页成功但未齐备；
+    `interrupted` 只由启动期归一写入，管线自身不产出。
+    """
 
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"
 
 
 class PageState(StrEnum):
@@ -101,12 +107,24 @@ class IngestStatus(StrEnum):
 
 
 class ParseStatus(StrEnum):
-    """书目解析状态（af_books.parse_status）。"""
+    """书目解析**进度**（af_books.parse_status）。
+
+    ADR 0007 决定 3：本列只表达「有没有任务在跑」，不表达结局；结局在 `last_parse_result`，
+    「哪一版可读」唯一事实源是 `af_books.active_job_id`。
+    """
 
     PENDING = "pending"
     PARSING = "parsing"
+
+
+class LastParseResult(StrEnum):
+    """书目最近一次解析任务的**结局**（af_books.last_parse_result）。`NONE` = 该书从未有任务。"""
+
+    NONE = ""
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"
 
 
 # ---------- 基础类型 ----------
@@ -299,6 +317,7 @@ class BookOut(BaseModel):
     sha256: str = ""
     ingest_status: str = IngestStatus.NONE
     parse_status: str = ParseStatus.PENDING
+    last_parse_result: str = LastParseResult.NONE
     pages_done: int = 0
     active_job_id: str | None = Field(
         default=None, description="当前生效解析版本（af_books.active_job_id）；None = 根视图 legacy"
@@ -433,4 +452,5 @@ class ParseJob(BaseModel):
     engine: str = "mineru"
     status: JobStatus
     progress: dict[str, Any] = Field(default_factory=dict, description="如 {'parsed': 2, 'total': 5}")
+    failed_pages: list[int] = Field(default_factory=list, description="失败页码（ADR 0007 决定 2，不截断）")
     error: str = ""
