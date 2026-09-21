@@ -2,7 +2,7 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-11
+最后更新：2026-09-21
 治理对象：文档分类与事实边界、确认状态、文档生命周期、代码与文档追溯、写作命名索引元数据、版本末期整理、归档与删除
 依据：QED-Tracker `docs/standards/doc-governance.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)），上游参照 QED-Engine 根仓库标准
 关联测试：`tests/contract/test_document_structure.py`、`tests/contract/test_standard_governance.py`、`tests/contract/test_markdown_links.py`、`tests/contract/test_code_document_mapping.py`
@@ -37,7 +37,7 @@
 | `standards/` | 工程治理规则唯一事实源，入口[规范索引](index.md)。 |
 | `adr/` | 影响长期约束的决定、理由、后果和取代关系。 |
 | `guides/` | 当前可重复执行的开发与运维步骤。 |
-| `plans/` | 已批准且尚未关闭的短期执行合同；**待评审设计内容随计划承载**，确定后按 [ADR 0002](../adr/0002-pending-design-location.md) 迁入 `design/`。 |
+| `plans/` | 已批准且尚未关闭的短期执行合同，兼作任务行的**承载文档**（独立计划文件或 `## 承载 <ID>` 承载节，见 [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)）；**待评审设计内容随计划承载**，确定后按 [ADR 0002](../adr/0002-pending-design-location.md) 迁入 `design/`。 |
 | `trackers/` | 全部未关闭任务、关闭台账、实时状态快照与无状态能力路线图。 |
 | `history/` | 选择性保留的归档证据和旧基线。 |
 
@@ -93,7 +93,9 @@ flowchart LR
   `guides/` 与 `trackers/`。
 - `design/` 文档只有 plans/ 下评审确认完毕才晋升；迁入时设计状态标 `Accepted`，确认状态初始
   为 `暂定`，随转正评审变为 `已确认`。
-- 任务完成时**同时清理 todo 条目与对应 plans/ 文档**（见「归档与删除」的关闭计划两态判定）。
+- 任务完成时**同时清理 todo 条目与对应 plans/ 文档**（见「归档与删除」的关闭计划两态判定）；
+  收口顺序与「进度单源」（日期进度只写承载文档，todo 证据列只留最新结论）按
+  [任务生命周期](task-lifecycle.md)「任务台账与承载」执行。
 - 每次主线任务完成后梳理文档一致性：① 检查涉及模块的 `architecture/`、`design/` 文档是否需
   增改删；② 检查 todo 证据列是否完整；③ 完成任务从 todo 移入 `completed.md`；④ 主线完成或
   长期任务重大变化在 `project-status.md` 记录。
@@ -116,7 +118,8 @@ flowchart LR
 
 - 中文说明使用短句和明确主语；标识符、API 字段和外部协议名称保留英文。
 - 文件名使用小写英文和连字符；活跃架构、设计、标准和指南使用稳定名称，不绑定产品版本。
-- `plans/` 计划文件名格式：`YYYY-MM-DD-<slug>.md`（全小写连字符）。
+- `plans/` 计划文件名格式：`YYYY-MM-DD-<slug>.md`（全小写连字符）；`<slug>` 以关联请求/缺陷
+  编号开头（如 `req080-parse-version-layout`），无编号需求词直接开头（如 `parse-live-bringup`）。
 - 文档目录入口统一为小写 `index.md`；`docs/**/README.md` 禁止存在。
 - 内部链接显式指向文件或 `index.md`，不依赖托管平台目录解析。
 - Mermaid 图与说明在同一正文维护，不提交派生图片。

@@ -212,3 +212,10 @@ qwen-vl 引擎（仅预留）；不实现 RAG / Milvus / 知识图谱 / 数学�
 - 收尾：配置与解析事实并入 `design/model-integration.md`、`design/parsing-pipeline.md`、
   `architecture/api.md`、`architecture/code-map.md`；todo 任务原子迁移 `completed.md`；计划壳
   按 Retain 归档 `docs/history/plans/2026-09/`。
+
+## 台账历史归档（2026-09-21 承载契约压缩）
+
+按 [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md) 决定 4 压缩 todo 行证据列，以下为
+PLAN-002 行被移除的历史日志原文（保留原貌，不回改）。
+
+> **2026-09-20 复核收窄**：Step 1 与 Step 2-A~E 交付、门禁 245 passed + ruff 全绿，DB 与存储支线关闭；**2026-09-20 收口**：Step 3 联调与缺陷修复由 PLAN-003 承接，本计划剩余仅「标准 6/7 随 PLAN-003 关闭即判达成 + 标准 8 回执」

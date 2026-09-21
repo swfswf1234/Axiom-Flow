@@ -1,10 +1,10 @@
 """
-模块职责：验证任务 ID、活跃计划镜像、关闭证据和无状态路线图保持一致。
-设计关联（DesignRef）：docs/standards/task-lifecycle.md
+模块职责：验证任务 ID、活跃计划镜像、承载引用、列长与并发上限、关闭证据和无状态路线图保持一致。
+设计关联（DesignRef）：docs/standards/task-lifecycle.md、docs/adr/0006-ledger-plan-carrier-contract.md
 实现状态：Current
 被测代码：docs/trackers、docs/plans
 守护面：计划与任务治理
-失效后果：任务 ID 复用、计划镜像断裂或关闭证据缺失
+失效后果：任务 ID 复用、计划镜像断裂、任务无承载或台账进度膨胀、并发超限
 """
 
 import re
@@ -19,7 +19,11 @@ PLAN_LINK = re.compile(r"^\[(?P<title>[^]]+)]\(\.\./plans/(?P<path>[^)]+\.md)\)$
 ACTIVE_STATUSES = {"Accepted", "In Progress", "Blocked"}
 TERMINAL_STATUSES = {"Completed", "Cancelled", "Superseded"}
 CLOSE_RESULTS = {"Achieved", "Rejected", "Partial", "Not Applicable"}
-TODO_COLUMNS = ("ID", "类别", "优先级", "状态", "任务", "证据/下一条件")
+TODO_COLUMNS = ("ID", "类别", "优先级", "状态", "任务", "关闭条件", "证据/下一条件")
+PLAN_REF = re.compile(r"\.\./plans/([^\s)]+\.md)")
+EVIDENCE_LIMIT = 200
+CLOSE_CONDITION_LIMIT = 80
+MAX_BRANCH_IN_PROGRESS = 3
 
 
 def _rows_from(
@@ -112,6 +116,61 @@ def test_todo_plan_rows_exactly_mirror_active_plan_bodies():
         tracker = _field(content, "关联 Tracker")
         assert "docs/trackers/todo.md" in tracker
         assert row["ID"] in tracker
+
+
+def _expand_ids(text: str) -> set[str]:
+    """把「ARCH-003/004/016」这类斜杠列表展开为完整 ID 集合（ADR 0006 承载/聚合判定用）。"""
+    ids = set(TASK_ID.findall(text))
+    for match in re.finditer(r"([A-Z][A-Z0-9]*)-(\d+(?:/\d+)+)", text):
+        prefix, numbers = match.group(1), match.group(2).split("/")
+        ids.update(f"{prefix}-{number}" for number in numbers)
+    return ids
+
+
+def test_rows_declare_bounded_columns_and_carrier_reference():
+    """ADR 0006：关闭条件/证据列有界；支线行必须有计划承载（关联 Tracker 登记或承载节）。"""
+    for row in _todo_rows():
+        assert len(row["关闭条件"]) <= CLOSE_CONDITION_LIMIT, row["ID"]
+        assert len(row["证据/下一条件"]) <= EVIDENCE_LIMIT, row["ID"]
+        if row["类别"] in {"主线", "长期"}:
+            continue
+        cell = f"{row['任务']} {row['证据/下一条件']}"
+        refs = PLAN_REF.findall(cell)
+        assert refs, f"{row['ID']}: 支线行缺 ../plans/ 承载引用"
+        carried = False
+        for ref in refs:
+            path = PLANS / ref
+            assert path.exists(), f"{row['ID']}: 承载计划不存在 {ref}"
+            content = path.read_text(encoding="utf-8")
+            tracker_ids = _expand_ids(_field(content, "关联 Tracker"))
+            if row["ID"] in tracker_ids or re.search(
+                rf"^## 承载 {re.escape(row['ID'])}", content, re.MULTILINE
+            ):
+                carried = True
+        assert carried, f"{row['ID']}: 承载计划未登记本行（关联 Tracker 或 ## 承载 节）"
+
+
+def test_branch_in_progress_within_concurrency_limit():
+    """ADR 0006：支线行同时 In Progress ≤ 3（主线/长期行不计）。"""
+    rows = [row for row in _todo_rows() if row["类别"] == "支线"]
+    in_progress = [row["ID"] for row in rows if row["状态"] == "In Progress"]
+    assert len(in_progress) <= MAX_BRANCH_IN_PROGRESS, in_progress
+
+
+def test_main_aggregate_rows_list_branch_children():
+    """主线聚合行（非计划链接任务）必须列全支线行 ID。"""
+    branches = [row["ID"] for row in _todo_rows() if row["类别"] == "支线"]
+    aggregates = [
+        row
+        for row in _todo_rows()
+        if row["类别"] == "主线" and PLAN_LINK.fullmatch(row["任务"]) is None
+    ]
+    assert aggregates
+    listed = _expand_ids(
+        " ".join(f"{row['任务']} {row['证据/下一条件']}" for row in aggregates)
+    )
+    for task_id in branches:
+        assert task_id in listed, task_id
 
 
 def test_completed_rows_have_terminal_state_result_date_and_evidence():
