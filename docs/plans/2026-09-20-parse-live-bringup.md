@@ -5,7 +5,7 @@
 最后更新：2026-09-22
 关联 ADR：[ADR 0002](../adr/0002-pending-design-location.md)（待评审设计先入 plans/）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（引擎由配置选择、不设自动兜底）、[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（MySQL 集成测试隔离边界）
 关联设计：[model-integration.md](../design/model-integration.md)、[parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)
-关联 Tracker：docs/trackers/todo.md（PLAN-003、ARCH-001/003/004/005/006/009/016/017、REQ-001、REQ-075、REQ-080、REQ-081、REQ-083、REQ-084、REQ-085、REQ-036/057/074/086/087、DEFECT-001/002/003 与本轮新登 DEFECT-004/005/006/007/008）
+关联 Tracker：docs/trackers/todo.md（PLAN-003、ARCH-001/003/004/005/006/009/016/017/018/019、REQ-001、REQ-075、REQ-080、REQ-081、REQ-083、REQ-084、REQ-085、REQ-036/057/074/086/087、DEFECT-001/002/003 与本轮新登 DEFECT-004/005/006/007/008）
 归档判定：Retain（契约条文晋升 design/architecture、实现收口后，计划壳归档 `docs/history/plans/2026-09/`）
 
 > **2026-09-20 收尾范围（用户裁决）**：本计划的执行面收窄为「**解析真机打通（小样止）** + **数据库
@@ -1127,6 +1127,122 @@ DEFECT-007（假 `running`）未成语义，先开列表端点等于把错误语
 **关闭结果 Achieved**（判据 1 达成 + 判据 2 移交并被 ARCH-009 完整覆盖），行已原子移入
 [completed.md](../trackers/completed.md)；`title`/`table` 取证缺口写入 ARCH-009 行与上方条文。
 
+## 承载 ARCH-003 / ARCH-009 / ARCH-018 / ARCH-019（2026-09-22 真机窗口 R2：三件一次做完）
+
+**目的**：把上一轮遗留的三项真机欠账在同一排他窗口内收掉——ARCH-003 的状态语义冒烟复跑（含业务库
+`qed` 升 `20260921_0001` 与孤儿行归一）、PLAN-003 的 D3 删除演练、ARCH-009 代表书抽查口径验收。
+
+**关闭条件**：① ARCH-003 的「语义经真机冒烟复跑通过」；② PLAN-003 的「D3 真机删除演练执行并登记」；
+③ ARCH-009 的「两本代表书各 20 页：公式可渲染 ≥90% + 类型分布取证登记（`_TYPE_MAP` 每键至少命中一次
+或出现即零丢弃）」（范围按用户 2026-09-22 裁决改为**抽查口径**，不做 723 页全量）。
+
+**用户裁决（本轮）**：ARCH-009 用抽查口径（每本 20 页：首/中/尾 + 公式密集）；「KaTeX 可渲染」用
+**程序化结构可解析 + 人工留档**，不引入渲染依赖；D3 演练对象用**合成 5 页探针书**，真实书目一律不动。
+
+### 窗口前置与规程执行
+
+- 备份：`data/backups/window-20260922/af_backup_20260922.sql`（184371 字节，5 表，
+  `alembic_version='20260920_0002'`）——回滚按备份还原，不用有损 `alembic downgrade`。
+- 排他（C-0）：每次提交前读 `5002/health` 的 `queued_tasks + processing_tasks` 与本机 `queued` 行，
+  全部为 0 才提交；两本轮次**串行**（用户 2026-09-21 资源裁决）。留档
+  `data/probes/window-20260922/preflight-0{1,2,3}.json` 与各 job 的 `P0_exclusive.json`。
+- 窗口工具一律 `httpx.Client(trust_env=False)`：注册表代理会把回环探测伪装成 502（条文 11 同源）。
+
+### W-A：ARCH-003 状态语义真机复跑（Achieved）
+
+`qed` 业务库 `20260920_0002 → 20260921_0001`（升级前红灯本身即证据：新 ORM 读不到未迁移库），
+换代码重启 8902 后：① 孤儿行 `5f43593a12cc`（`running`、idle 数万秒）由 `reconcile_on_startup()`
+归一为 `interrupted` + `error="服务重启中断，可重跑"`、`failed_pages=[]`、`parse_status=pending`
+（`A5_orphan_job_after.json`）；② `QED_SMOKE_LIVE=1 pytest tests/smoke` → **2 passed**
+（`A6_live_smoke.log`/`A6_live_smoke_rerun.log`，两次跑各 5.1s/5.0s）。
+
+红灯先行：冒烟首跑 `1 failed`——两处断言停在 PLAN-006 之前的旧契约（`progress` 缺 `failed` 键、
+`parse_status` 兼任结局）。按 api.md:244 与 ADR 0007 决定 3 对齐测试而非改实现。**根因是冒烟层默认
+skip、PLAN-006 收口时未跑** ⇒ 这正是 ARCH-003 判据要求真机复跑的理由，执行时机口径已写入
+`guides/development.md` 的冒烟层说明（`standards/testing.md` 属实质规则变更，未单独立 ADR 故不动）。
+
+### W-B：PLAN-003 D3 真机删除与审计演练（Achieved）
+
+探针书 `probe-d3-20260922`（合成 5 页 PDF，`parsed/probe/d3-20260922/`）：同步 → ingest → 解析
+（job `006e244b1966`，5/5 completed）→ 写入 1 条 `af_block_edits` → `DELETE /books/{id}`。
+
+| 判据 | 删除前（`B1_before_delete.json`） | 删除后（`B2_after_delete.json`） |
+| --- | --- | --- |
+| `af_pages` 页行 | 5 | 0 |
+| `af_block_edits` 编辑行 | 1 | 0 |
+| 书目录 | 存在，`versions/` 1 个、页文件 5 | 不存在 |
+| `GET /books/{id}` | 200 | 404 |
+| `af_parse_jobs` 历史 | 1 | **1（保留为审计）**，`GET /parse-jobs/{id}` 仍 200 |
+| `af_books` 总数 | 18（含探针） | 17（回到起点） |
+
+`failures: []`（`B3_summary.json`），探针源 PDF 由脚本自行 unlink。**口径备注（不判失败）**：`DELETE`
+契约只承诺书目录，因此**删除不裁剪空的父级目录 `parsed/probe/d3-20260922/`**——留空目录
+属既定行为，如需裁剪须先改 `parsing-management.md` 的删除契约（未来若做旧版本磁盘清理的 D 类计划可顺带裁决）。
+删除面的落库/磁盘与回滚口径已运维成文于 [operations.md](../guides/operations.md)
+「书目删除的落库与磁盘口径（2026-09-22 D3 真机演练测定）」节。
+
+### W-C：ARCH-009 代表书抽查验收（判据达成，过程中发现并修复 ARCH-018）
+
+代表书 = **b05《数学分析原理》（Rudin 中译，317 页）+ b11《吉米多维奇数学分析习题集题解》（406 页）**。
+
+1. **选页**（`C2_pages_b05.json`/`C2_pages_b11.json`）：首 3 + 中 7 + 尾 5 = 15 页定位页，另加 5 页
+   「公式密集」。**两本 PDF 均无文本层**（0 字符/页全是图像），文本层记号密度恒 0 会让密集页退化成
+   随机页，故 `live_pick_sample_pages.py` 增加**墨度模式**（0.3 缩放的深色像素占比排序）并在留档里
+   记录 `density_mode`。质量信号 `text_length_ratio` 对扫描件恒跳过，本窗口不取其结论。
+2. **解析**（串行）：b11 首次 ingest（406 页）→ job `383b44f14aaf` 20/20 完成并激活；b05 走既有生效
+   版本 `7af72c68180e`（312/317 页，最近任务结局 `failed`，缺 48/98/136/162/282 五页，样本页与之无交集）。
+3. **取证判据首跑双双变红**（`C4_forensic_*.json`）：b11 公式段 516 段可解析率 **87.79%**、
+   b05 646 段 **91.95%**，且 63/52 处失败全部是 `md` 来源的 `unbalanced_inline`，形态一致为
+   `$$$…$$$`；块级 `latex` 反而「结构自平衡」而漏检 ⇒ 定位为**归一层定界符缺陷 ARCH-018**，
+   不是公式识别质量问题。检查器自身带 `--selftest` 反向判据（4 类人为缺陷必须变红），防止恒 PASS。
+4. **修复 + 真机复验**：`split_math_delimiters` 落 `normalize/blocks.py`，6 例单元先红（4 failed，
+   红得正是真机形态）后绿；重启 8902 后**同一批 20 页**重解析（b11 `bbe0d401ce83`、b05
+   `185a37d55985`，均 completed 且激活）→ 公式段可解析率 **100% / 100%**，`$$$` 出现数 b11
+   126 → 0，b05 采样 20 页归零（版本内 17 个完全落在样本页的 chunk 亦 0 命中）。
+   修复规模对照：b05 旧版 1919 块 `latex` 全带定界符、`display` 恒 False；新版采样页 52 块转裸 + `display=true`。
+5. **分块判据**：`live_check_chunk_formula_integrity.py` 对两个修复后版本 **PASS**（公式整块出现、
+   溯源无悬空、非噪声块全覆盖）。同脚本对**修复前**的 b11 版本 `383b44f14aaf` 同样判 PASS，而该版本
+   `chunks.json` 实测含 126 处 `$$$`（留档 `C8_chunk_prefix_b11.json`）⇒ 记录一条**判据边界**：四项判据
+   看块边界与 `$` 奇偶，不看定界符包裹层级，故渲染前的定界符契约由 `normalize/` 单测与代表书取证把住。
+
+**ARCH-009 逐条判定**：
+
+| 判据（parsing-pipeline「验收标准」） | 结论 |
+| --- | --- |
+| ① 代表书全流程跑通（同步→ingest→解析→分块→落盘） | PASS（两本；b05 借既有版本 + 采样页新 job，b11 本窗口首次 ingest + 两次解析） |
+| ② 抽查每本 20 页公式可渲染 ≥90% | PASS（100% / 100%，修复 ARCH-018 后） |
+| ③ 分块无腰斩、可回跳页/块 | PASS（chunk 完整性检查两版本全绿） |
+| ④ API 契约与 schemas 一致 | PASS（40 页页端点 + 版本/清单端点全部 200，契约测试层在门禁内） |
+| ⑤ kill 后重启续跑 | 已由 PLAN-003 W8/L6 交付并有网（本窗口未重复消耗真机） |
+| 类型分布取证（ARCH-016 移交） | **未达成 ⇒ 重开为 ARCH-019**：b05 第 313/314 页有 26 块按可见丢弃计入，原始字面值 `ref_text`（参考文献条目）未入 `_TYPE_MAP`；`heading`/`list` 两键在代表书样本中从未命中。已观测分布（两本各 20 页，修复后版本）：b05 `paragraph 227 / formula 52 / header 16 / page_number 12 / footer 1 / image 4 / table 1`；b11 `paragraph 227 / formula 63 / header 16 / page_number 13 / footer 4 / table 3 / image 2 / caption 1` |
+
+### 本窗口产出（实现与文档）
+
+- **ARCH-018 修复**：`normalize/blocks.py` 新增 `split_math_delimiters()` 并接入 FORMULA 分支
+  （裸 `latex` + 由定界符决定 `display`）；`tests/unit/test_normalize.py::TestFormulaDelimiters` 6 例；
+  契约成文于 [parsing-pipeline.md](../design/parsing-pipeline.md)「公式定界符契约」。
+  影响面：`pages/*.md`、`chunks.json`、API `blocks[].latex` 与块编辑回显同时被修复。
+- 窗口工具新增：`live_window_preflight.py`（只读快照，原生 SQL ∩ `SHOW COLUMNS` 故迁移前后可跑）、
+  `live_d3_delete_drill.py`、`live_pick_sample_pages.py`（含墨度模式）、
+  `live_forensic_representative.py`（含 `--selftest` 反向判据）、`live_parse_sample.py`（单任务串行 +
+  C-0 自证 + 激活取证）。
+- 门禁：`pytest tests -q` **411 passed / 10 skipped**（窗口前基线 405 + 本轮 6 例）、
+  `ruff check src tests scripts` 全绿。**两个显式层在收口轮重跑**（`G1_mysql_layer.log`
+  `QED_TEST_MYSQL=1 pytest tests/integration` → 8 passed；`G2_smoke_closeout.log`
+  `QED_SMOKE_LIVE=1 pytest tests/smoke -m smoke` → 2 passed，5.06s），且二者都跑在 **ARCH-018 修复后**的
+  代码上——W-A 期间那次冒烟还是修复前的实现，只覆盖状态语义面。
+
+### 遗留与后续（不因本窗口关闭而消失）
+
+1. **ARCH-019**：`ref_text` 字面值丢弃 26 块（映射目标待裁决）；`heading`/`list` 两键在两本抽样页内
+   均未命中（`caption` 仅 b11 出现 1 块），属取证事实、非缺陷。
+2. b05 生效版本 `185a37d55985` 是**混合版本**：20 页为 ARCH-018 修复后产物、292 页继承自修复前基线，
+   其 `$$$` 残留 485/525 chunk（跨旧页的混合块）——只有整本重解析（ARCH-011 批次）才能全量重生。
+3. b05 的 5 个缺页（48/98/136/162/282）与最近任务结局 `failed` 未在本窗口处理（不在抽查口径内）。
+4. 真机冒烟/集成层默认 skip，**收口轮必须显式开 `QED_SMOKE_LIVE`/`QED_TEST_MYSQL` 跑一次**，
+   否则契约漂移只会在下个真机窗口暴露（本轮实证）。**本轮已按此口径执行**（`G1`/`G2` 两份日志，
+   均在 ARCH-018 修复后的代码上），长期口径写入 `guides/development.md`。
+
 ## 关闭与归档
 
 - **口径优先级**：实际关闭判据以上节「关闭条件修订（2026-09-20 裁决后重排）」为准；S1~S7 中涉及
@@ -1139,6 +1255,13 @@ DEFECT-007（假 `running`）未成语义，先开列表端点等于把错误语
   [ADR 0007](../adr/0007-parse-status-semantics.md)，其实施与 ARCH-003 收口一并由
   PLAN-006 承载（该计划同日关闭并按 Delete 删壳，正文见锚点 `9034a19`）⇒ 本计划剩余关闭依赖收窄为
   **D3 真机删除演练（需批准）+ REQ-001 根侧登记**，不再含状态语义裁决。
+  **2026-09-22 R2 窗口：两项剩余依赖全部达成** —— D3 已执行并登记（见「W-B」），REQ-001 随六个
+  跨项目行关闭 ⇒ **本计划自列的关闭条件已全部满足**。但正文此刻仍是三条**活行**的承载
+  （REQ-086 / REQ-087 / ARCH-019，且 REQ-086/087 各含未实施的 B 类工作项）：按
+  [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)「一任务一承载」，Retain 归档会把活承载
+  一起搬进 `history/` 并使其脱离活跃计划集合（契约测试的镜像判定只扫 `plans/`）⇒ **故本计划保持
+  In Progress，关闭与否作为待用户裁决项**：(A) 先为 REQ-086/087 另立 B 类计划、把 ARCH-019 挂到其下，
+  再关本计划（Retain）；(B) 维持现状直到这三行全部关闭。默认取 (B)，不动。
 - **归档判定 Retain**：W0 冻结清单与留档哈希、偏差台账、契约条文（晋升前的推导依据）需保留，
   故计划壳归档 `docs/history/plans/2026-09/`，不删除。
 - 收尾动作：todo 关闭任务原子迁移 `completed.md`；`project-status.md` 现状与断点续跑措辞按事实

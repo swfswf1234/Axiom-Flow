@@ -36,7 +36,7 @@ from axiom_flow.ingest import ingest_book
 from axiom_flow.ingest.artifacts import book_dir_for, png_size, version_dir_for
 from axiom_flow.normalize.blocks import normalize_page
 from axiom_flow.orchestrator.pipeline import run_parse_job
-from axiom_flow.schemas import JobStatus
+from axiom_flow.schemas import JobStatus, LastParseResult, ParseStatus
 
 pytestmark = pytest.mark.skipif(
     os.getenv("QED_SMOKE_LIVE") != "1",
@@ -246,14 +246,16 @@ def test_smoke_full_document_five_pages(tmp_path, smoke_session, live_engine) ->
     job = smoke_session.get(AfParseJob, job_id)
     assert job.status == JobStatus.COMPLETED.value
     assert job.engine == "mineru"
-    assert job.progress == {"parsed": 5, "total": 5, "error": ""}
+    assert job.progress == {"parsed": 5, "total": 5, "failed": 0, "error": ""}
 
     rows = list(smoke_session.scalars(select(AfPage).where(AfPage.book_id == book_id).order_by(AfPage.page_no)))
     assert [row.status for row in rows] == ["parsed"] * 5
     assert all(row.job_id == job_id for row in rows), "页行必须落在本 job 的版本作用域内（PLAN-004 V7）"
     assert PageRepository(smoke_session).count_parsed(book_id, job_id) == 5
-    assert smoke_session.get(AfBook, book_id).parse_status == JobStatus.COMPLETED.value
-    assert smoke_session.get(AfBook, book_id).active_job_id == job_id, (
+    book = smoke_session.get(AfBook, book_id)
+    assert book.parse_status == ParseStatus.PENDING.value, "进度字段不得兼任结局（ADR 0007 决定 3 / 条文 S3）"
+    assert book.last_parse_result == LastParseResult.COMPLETED.value
+    assert book.active_job_id == job_id, (
         "completed 且目标页齐备必须激活生效指针（PLAN-004 V3）"
     )
 

@@ -160,8 +160,11 @@ class Block(BaseModel):
     text: str | None = None
     level: int | None = Field(default=None, ge=1, le=6, description="heading 层级 1-6")
     # formula
-    latex: str | None = Field(default=None, description="LaTeX 源码（数学解析器探索入口）")
-    display: bool = False
+    latex: str | None = Field(
+        default=None,
+        description="裸 LaTeX 源码，不含 $/$$ 等数学定界符（数学解析器探索入口）",
+    )
+    display: bool = Field(default=False, description="行间式（true）或行内式（false）")
     confidence: float | None = Field(default=None, ge=0.0, le=1.0, description="识别置信度")
     # table
     html: str | None = Field(default=None, description="表格 HTML")

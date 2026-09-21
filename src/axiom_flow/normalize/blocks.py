@@ -108,6 +108,33 @@ def _list_items(raw: dict[str, Any]) -> list[str]:
     return [line.strip("-* \t") for line in text.splitlines() if line.strip("-* \t")]
 
 
+#: 数学定界符 → 是否行间式（长定界符在前，`$$` 必须先于 `$` 判定）
+_MATH_DELIMITERS: tuple[tuple[str, str, bool], ...] = (
+    ("$$", "$$", True),
+    (r"\[", r"\]", True),
+    ("$", "$", False),
+    (r"\(", r"\)", False),
+)
+
+
+def split_math_delimiters(value: str) -> tuple[str, bool | None]:
+    """剥掉引擎自带的数学定界符，返回 `(裸 LaTeX, display 判定或 None)`。
+
+    MinerU 3.4.4 的 `equation` 条目把 `$$…$$` 连定界符一起塞进 `latex`，而契约（parsing-pipeline
+    的 `formula.latex` 示例）与两个 Markdown 写出方都假定**裸源码**：不剥就会二次包裹成
+    `$$$…$$$`，KaTeX 无法渲染（ARCH-018）。定界符成对且内部不再含同种定界符才剥——两段公式拼在
+    一个条目里时剥掉会把它们吞成一段，宁可保留可见异常等人工判定。
+    """
+    body = value.strip()
+    for open_token, close_token, display in _MATH_DELIMITERS:
+        if not body.startswith(open_token) or not body.endswith(close_token):
+            continue
+        inner = body[len(open_token): len(body) - len(close_token)].strip()
+        if inner and open_token not in inner and close_token not in inner:
+            return inner, display
+    return body, None
+
+
 def block_from_raw(
     raw: dict[str, Any],
     *,
@@ -149,8 +176,12 @@ def block_from_raw(
         latex = _as_text(raw.get("latex")) or text
         if not latex:
             return None
+        # 定界符自带 display 语义时以它为准：真机 3.4.4 的行间式走 `equation` 字面值，类型判不出行间
+        latex, display_from_delim = split_math_delimiters(latex)
         payload["latex"] = latex
-        payload["display"] = str(raw.get("type", "")).lower() == "interline_equation" or bool(raw.get("display"))
+        payload["display"] = (
+            str(raw.get("type", "")).lower() == "interline_equation" or bool(raw.get("display"))
+        ) if display_from_delim is None else display_from_delim
     elif block_type is BlockType.TABLE:
         html = _as_text(raw.get("table_body")) or _as_text(raw.get("html"))
         if not html:

@@ -198,6 +198,55 @@ class TestBBoxCoordinateSpace:
         assert page.blocks[0].bbox == (0, 0, *IMAGE_SIZE)
 
 
+class TestFormulaDelimiters:
+    """ARCH-018：真机 MinerU 3.4.4 的 `equation` 条目 `latex` 自带定界符，归一必须剥出裸源码。
+
+    契约见 `docs/design/parsing-pipeline.md`（`formula.latex` 示例为 `x + y = y + x`，行间/行内
+    由 `display` 表达）。定界符留在 `latex` 里会让 `blocks_to_markdown` 与分块再包一层，页级
+    Markdown 出现 `$$$…$$$`，KaTeX 无法渲染（2026-09-22 代表书取证：b05 52 段 / b11 63 段全红）。
+    """
+
+    def test_display_dollars_stripped_and_display_true(self):
+        page = _normalize([{"type": "equation", "latex": "$$\nx + y = z\n$$", "bbox": [0, 0, 10, 10]}])
+        block = page.blocks[0]
+        assert block.latex == "x + y = z"
+        assert block.display is True
+
+    def test_inline_dollars_stripped_and_display_false(self):
+        page = _normalize([{"type": "equation", "latex": "$\\alpha$", "bbox": [0, 0, 10, 10]}])
+        block = page.blocks[0]
+        assert block.latex == "\\alpha"
+        assert block.display is False
+
+    def test_bracket_delimiters_map_to_display_flag(self):
+        page = _normalize(
+            [
+                {"type": "equation", "latex": r"\[a=b\]", "bbox": [0, 0, 10, 10]},
+                {"type": "equation", "latex": r"\(c=d\)", "bbox": [0, 0, 10, 10]},
+            ]
+        )
+        assert page.blocks[0].latex == "a=b"
+        assert page.blocks[0].display is True
+        assert page.blocks[1].latex == "c=d"
+        assert page.blocks[1].display is False
+
+    def test_bare_latex_untouched(self):
+        page = _normalize([{"type": "equation", "latex": "\\frac{1}{2}", "bbox": [0, 0, 10, 10]}])
+        assert page.blocks[0].latex == "\\frac{1}{2}"
+
+    def test_inner_delimiter_pair_not_stripped(self):
+        """两段公式拼在一个条目里时不剥：剥了会把 `$$` 吞成一段（宁可保留可见异常）。"""
+        raw = "$$a$$\n$$b$$"
+        page = _normalize([{"type": "equation", "latex": raw, "bbox": [0, 0, 10, 10]}])
+        assert page.blocks[0].latex == raw
+
+    def test_markdown_never_emits_triple_dollar(self):
+        page = _normalize([{"type": "equation", "latex": "$$\nI = I _ { 0 }\n$$", "bbox": [0, 0, 10, 10]}])
+        markdown = blocks_to_markdown(page.blocks)
+        assert "$$$" not in markdown
+        assert markdown.strip() == "$$\nI = I _ { 0 }\n$$"
+
+
 class TestMarkdown:
     """页级 Markdown 组装：公式与结构保留，页眉/页脚/页码跳过。"""
 

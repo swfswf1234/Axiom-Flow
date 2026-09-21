@@ -43,8 +43,13 @@ from axiom_flow.schemas import JobStatus  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 BOOK_ID = "linearalgebra-b01"
-EXPECTED_REVISION = "20260920_0002"
-TERMINAL = {JobStatus.COMPLETED.value, JobStatus.FAILED.value}
+EXPECTED_REVISION = "20260921_0001"
+TERMINAL = {
+    JobStatus.COMPLETED.value,
+    JobStatus.PARTIAL.value,
+    JobStatus.FAILED.value,
+    JobStatus.INTERRUPTED.value,
+}
 
 # 本地流量恒为**直连**：Windows 注册表代理不豁免 127.0.0.1，交给代理就是 502/0 字节的「端点坏了」
 # 假象（与 MinerU 适配器条文 11 同源；2026-09-21 20:2x 窗口实证——代理被打开后本脚本探针全变 502，
@@ -141,8 +146,12 @@ def main() -> int:
         _log(f"ABORT：8902 无该书（{book_http.status_code}）；先由 8900 同步书目")
         return 2
     book = book_http.json()
-    if "active_job_id" not in book or revision != EXPECTED_REVISION:
-        _log(f"ABORT：部署未就绪（alembic={revision}，active_job_id 字段={'有' if 'active_job_id' in book else '无'}）")
+    if "active_job_id" not in book or "last_parse_result" not in book or revision != EXPECTED_REVISION:
+        _log(
+            f"ABORT：部署未就绪（alembic={revision}，"
+            f"active_job_id={'有' if 'active_job_id' in book else '无'}，"
+            f"last_parse_result={'有' if 'last_parse_result' in book else '无'}）"
+        )
         _log(f"      期望 {EXPECTED_REVISION} + 新代码同窗口发布，见 operations.md runbook")
         return 2
 

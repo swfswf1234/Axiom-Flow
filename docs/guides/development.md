@@ -66,6 +66,10 @@ $env:QED_TEST_MYSQL = "1"
 > `af_*` 四表与 `alembic_version`（夹具 DROP 前逐名断言，绝不 `DROP DATABASE`），数据根用 `tmp_path`。
 > **执行时机**：改动 `orchestrator/` 或 `db/` 的提交/持久化语义后必须跑一次该层，默认门禁的 skip
 > 不等于这条路径已验证。
+>
+> **冒烟层同理（2026-09-22 实证）**：改动 `schemas` 契约字段、任务状态机或落库语义后，收口轮必须
+> 显式开 `QED_SMOKE_LIVE=1` 跑一次 `tests/smoke/`。PLAN-006 收口时未跑该层，两处断言停在旧契约
+> （`progress` 缺 `failed` 键、`parse_status` 兼任结局），漂移直到下个真机窗口才暴露。
 
 ## 门禁
 

@@ -2,8 +2,14 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（预处理/引擎适配/归一化/分块/编排/落盘全链路已实现；2026-09-20 真机小样打通（整本 + 逐页 + 失败注入 + kill 续跑）；**bbox 坐标空间契约已于 2026-09-21 实现并真机复验（DEFECT-004 关闭）**；**块类型字面值映射与可见丢弃计数同日实现（DEFECT-005 关闭，真机复验待 MinerU 起服务）**；**解析产物按版本划分（`versions/<job_id>/` + 生效指针）已于 2026-09-21 实现并在本地闭环取证（PLAN-004 / REQ-080），真机取证待 B→C→D 单窗口**；486 页全量与代表书质量验收待 ARCH-009）
-最后更新：2026-09-21
+实现状态：Current（预处理/引擎适配/归一化/分块/编排/落盘全链路已实现并真机验证；2026-09-20 小样打通
+（整本 + 逐页 + 失败注入 + kill 续跑）；2026-09-21 三项契约落地并真机复验——bbox 坐标空间（DEFECT-004）、
+块类型字面值映射与可见丢弃（DEFECT-005）、解析产物按版本划分（PLAN-004 / REQ-080，R1 窗口真机首次激活）；
+**2026-09-22 R2 窗口代表书抽查口径验收达成**（ARCH-009 判据 ①~⑤ PASS：两本各 20 页公式段可解析率 100%、
+b11 零丢弃、chunk 完整性 PASS；判据为程序化结构可解析 + 人工留档），同轮发现并修复**公式定界符缺陷**
+（ARCH-018，见下「公式定界符契约」条）。**未随本轮消失**：b05 的 `ref_text` 映射丢弃缺口另立 ARCH-019、
+b05 混合版本产物的全量重生归 ARCH-011 批量批次）
+最后更新：2026-09-22
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_engines.py`、`tests/unit/test_normalize.py`、`tests/unit/test_chunking.py`、`tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：`docs/adr/0001-v2-exploration-direction.md`、`docs/adr/0004-model-boundary-and-pipeline-ownership.md`、`docs/adr/0007-parse-status-semantics.md`
@@ -164,6 +170,16 @@ flowchart LR
   结构化条目**时铺满全页的单个 paragraph 块）只在 `content_list` 为空时触发：回了条目却全部未能归一
   时**不回退**，否则映射缺口会被伪装成一个正文块。由此对账不变式恒成立：
   `原始条目数 = 存活块数 + dropped_block_count`。
+- **公式定界符契约（2026-09-22 代表书取证发现，同日实现）**：`formula.latex` 恒为**裸 LaTeX 源码**，
+  行间/行内只由 `display` 表达。引擎可能把定界符连内容一起返回（MinerU 3.4.4 的 `equation` 条目
+  `latex` 自带 `$$…$$`，且行间式不走 `interline_equation` 字面值，靠类型判不出行间），故
+  `normalize/blocks.split_math_delimiters` 在归一时剥掉成对定界符并让它决定 `display`：`$$…$$` 与
+  `\[…\]` → `display=true`，`$…$` 与 `\(…\)` → `display=false`；剥后内部仍含同种定界符（两段公式
+  拼进一个条目）时**不剥**，保留可见异常等人工判定。理由：`blocks_to_markdown` 与
+  `chunking.block_text` 都按「裸源码 + `display`」再包一层，定界符漏进 `latex` 就产出 `$$$…$$$`，
+  KaTeX 无法渲染并污染 `chunks.json`（修复前真机规模：b05 生效版本 312 页 3838 处、b11 首版 20 页
+  126 处；修复后两本各 20 页的公式段可解析率 91.95% / 87.79% → **100%**，见
+  `data/probes/window-20260922/C4_forensic_*.json` 与 `C6_forensic_*_postfix.json`）。
 - **映射表变更的追溯影响**：`af_block_edits` 以 `(book_id, job_id, page_no, block_index)` 为唯一
   定位键，而 `index` 是归一化后数组下标 —— 映射表增删字面值会改变同页存活块的下标含义。因此
   **映射表版本与产物必须成对**，且编辑绑定它核对时所在的那个解析版本：换版本后旧编辑不自动套用

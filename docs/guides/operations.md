@@ -137,7 +137,22 @@
   `python -m alembic upgrade 20260921_0001` → 校验 `alembic_version` 与
   `SELECT book_id, parse_status, last_parse_result FROM af_books`（预期进度全 `pending`、
   存量终态值平移进 `last_parse_result`）→ 起服。**降级有损**：`partial` 在旧结构无对应值，
-  回滚时按旧语义归 `completed`。
+  回滚时按旧语义归 `completed`。**已于 2026-09-22 R2 窗口在真机 `qed` 执行完毕**（备份
+  `data/backups/window-20260922/af_backup_20260922.sql`，起服后启动期归一把孤儿行
+  `5f43593a12cc` 改判 `interrupted`，见 PLAN-003 R2 W-A）。
+
+## 书目删除的落库与磁盘口径（2026-09-22 D3 真机演练测定）
+
+`DELETE /books/{book_id}` 是 D 类数据操作（不可逆），演练判据（合成 5 页探针书，真实书目零改动）：
+
+- **删除**：`af_pages` 页行、`af_block_edits` 编辑行、`af_books` 书行，以及整棵书目录
+  （`versions/` 全部版本 + 根视图页图）；`GET /books/{id}` 随后 404。
+- **保留（审计）**：`af_parse_jobs` 的历史任务行**不删**，`GET /parse-jobs/{id}` 删除后仍 200 ——
+  任务历史是跨书目的运营留痕，不随书目生命周期消失。
+- **不裁剪空父级目录**：如 `parsed/probe/d3-20260922/` 删除后其父 `parsed/probe/` 留在盘上。
+  契约只承诺书目录，空目录不算残留缺陷；若要裁剪须先改 `design/parsing-management.md` 的删除契约。
+- **回滚**：无「撤销删除」路径，只能按备份还原 `af_*` + 重新 ingest/解析重建产物；执行前必须先
+  导出 `af_books/af_pages/af_block_edits/af_parse_jobs` 四表并核对行数。
 
 ## 故障排查
 
