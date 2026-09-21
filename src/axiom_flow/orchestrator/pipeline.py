@@ -5,6 +5,11 @@
 - 单页失败（重试 1 次仍失败）→ 该页 `failed`，任务继续，汇总报告列出失败页；
 - 整本解析失败（引擎异常）→ 任务 `failed`，已解析页保留（可重跑）。
 
+版本布局（PLAN-004 / REQ-080）：一次任务 = 一个解析版本，产物只写 `<book_dir>/versions/<job_id>/`，
+**不回写根视图**（根视图的页图仍由 ingest 拥有，版本目录以硬链接接入）。页状态行按
+`(book_id, job_id, page_no)` 作用域，故同一 job 重跑是**续跑**：已 `parsed` 且产物在位的页跳过引擎。
+生效指针只在目标页齐备且清单重算成功后置位（`af_books.active_job_id`），失败版本文件保留不删。
+
 持久化不变式（PLAN-003 条文 3）：**产物写先于页行提交**，故「有页行必有产物」；每页成功/失败即
 提交，使非 `EngineError` 异常穿透后台线程时前序页不被回滚吞掉；`progress` 按「距上次写入 ≥1s
 或每 10 页」节流，终态必写一次。`persist_per_page=False` 仅供性能排查，退回调用方统一提交。
@@ -21,15 +26,24 @@ from pathlib import Path
 import pymupdf
 from sqlalchemy.orm import Session
 
-from axiom_flow.db.repositories import BookRepository, PageRepository, ParseJobRepository
+from axiom_flow.db.repositories import (
+    LEGACY_JOB_ID,
+    BookRepository,
+    PageRepository,
+    ParseJobRepository,
+)
 from axiom_flow.engines.base import DocumentResult, EngineError, PageResult, ParseEngine
 from axiom_flow.ingest import (
     atomic_write_bytes,
     book_dir_for,
     ensure_within,
+    link_pages_into,
     png_size,
     read_book_meta,
     resolve_source_pdf,
+    seed_version_from,
+    sha256_file,
+    version_dir_for,
     write_json,
     write_manifest,
     write_page_markdown,
@@ -88,9 +102,9 @@ def _image_size(book_dir: Path, page_no: int, geometry, dpi: int) -> tuple[int, 
     return (1, 1)
 
 
-def _store_images(book_dir: Path, images: dict[str, bytes]) -> None:
-    """文档内嵌图片落盘到 `pages/<相对路径>`（拒绝目录穿越，与 ingest 同一道数据根闸）。"""
-    pages_root = book_dir / "pages"
+def _store_images(version_dir: Path, images: dict[str, bytes]) -> None:
+    """文档内嵌图片落盘到版本目录的 `pages/<相对路径>`（拒绝目录穿越，与 ingest 同一道数据根闸）。"""
+    pages_root = version_dir / "pages"
     for relative, payload in images.items():
         try:
             target = ensure_within(pages_root, pages_root / relative)
@@ -100,9 +114,9 @@ def _store_images(book_dir: Path, images: dict[str, bytes]) -> None:
         atomic_write_bytes(target, payload)
 
 
-def _write_page_artifacts(book_dir: Path, page: BlocksPage) -> None:
-    write_json(book_dir / "pages" / f"p{page.page:04d}.blocks.json", page.model_dump_json(indent=2))
-    write_page_markdown(book_dir, page.page, blocks_to_markdown(page.blocks))
+def _write_page_artifacts(version_dir: Path, page: BlocksPage) -> None:
+    write_json(version_dir / "pages" / f"p{page.page:04d}.blocks.json", page.model_dump_json(indent=2))
+    write_page_markdown(version_dir, page.page, blocks_to_markdown(page.blocks))
 
 
 def _parse_page_with_retry(engine: ParseEngine, image_path: Path, page_no: int) -> PageResult:
@@ -116,17 +130,44 @@ def _parse_page_with_retry(engine: ParseEngine, image_path: Path, page_no: int) 
     raise last_error
 
 
-def rebuild_chunks(book_dir: Path, book_id: str, params: ChunkParams | None = None) -> ChunkSet:
-    """从页产物重建书级分块（派生文件，可重复执行）。"""
+def rebuild_chunks(artifact_dir: Path, book_id: str, params: ChunkParams | None = None) -> ChunkSet:
+    """从页产物重建书级分块（派生文件，可重复执行）。
+
+    `artifact_dir` 为**一个产物作用域**的目录：解析写入时是版本目录，读取端在生效版本缺失时
+    可传根视图目录。两者结构相同（`pages/p*.blocks.json` + `chunks.json`）。
+    """
     pages: list[BlocksPage] = []
-    for path in sorted((book_dir / "pages").glob("p*.blocks.json")):
+    for path in sorted((artifact_dir / "pages").glob("p*.blocks.json")):
         try:
             pages.append(BlocksPage.model_validate_json(path.read_text(encoding="utf-8")))
         except ValueError:
             logger.warning("跳过损坏的页产物：%s", path)
     chunk_set = build_chunks(pages, book_id=book_id, params=params)
-    write_json(book_dir / "chunks.json", chunk_set_payload(chunk_set))
+    write_json(artifact_dir / "chunks.json", chunk_set_payload(chunk_set))
     return chunk_set
+
+
+def _resumed_pages(
+    page_repo: PageRepository, book_id: str, job_id: str, version_dir: Path, requested: list[int]
+) -> set[int]:
+    """本版本内可续跑的页：状态 `parsed` **且**产物在位。
+
+    只认页行不够——`parsed` 行必然有产物是条文 3 的不变式，但历史库（迁移前的 legacy 行）
+    与人工清理过的目录都可能破坏它，产物缺失时宁可重解析也不给出空版本。
+    """
+    parsed = {row.page_no for row in page_repo.list_for_book(book_id, job_id) if row.status == "parsed"}
+    return {
+        page_no
+        for page_no in requested
+        if page_no in parsed and (version_dir / "pages" / f"p{page_no:04d}.blocks.json").is_file()
+    }
+
+
+def _version_is_complete(
+    page_repo: PageRepository, book_id: str, job_id: str, version_dir: Path, requested: list[int]
+) -> bool:
+    """激活门槛的「页数齐备」判据：本次任务目标页全部 `parsed` 且产物在位。"""
+    return len(_resumed_pages(page_repo, book_id, job_id, version_dir, requested)) == len(requested)
 
 
 def _fail(
@@ -155,6 +196,35 @@ def _fail(
     return ParseOutcome(job_id=job_id, status=JobStatus.FAILED, parsed=pages_done, total=0, error=message)
 
 
+def _inherit_page_rows(
+    page_repo: PageRepository,
+    book_id: str,
+    baseline_job_id: str,
+    job_id: str,
+    version_dir: Path,
+    requested: list[int],
+) -> int:
+    """把基线作用域里产物已被继承的页行复制进本版本，返回复制条数。
+
+    页行必须与版本产物同构：否则逐页重解析出的版本「文件齐、状态缺」，`pages_done` 与
+    续跑判据都会低估真实内容。只复制产物确实在位的页，保持「有页行必有产物」不变式。
+    """
+    copied = 0
+    skipped = set(requested)
+    for row in page_repo.list_for_book(book_id, baseline_job_id):
+        if row.status != "parsed" or row.page_no in skipped:
+            continue
+        if not (version_dir / "pages" / f"p{row.page_no:04d}.blocks.json").is_file():
+            continue
+        if page_repo.get(book_id, job_id, row.page_no) is not None:
+            continue
+        page_repo.upsert(
+            book_id, job_id, row.page_no, status=row.status, source=row.source, quality=row.quality
+        )
+        copied += 1
+    return copied
+
+
 def run_parse_job(
     *,
     session: Session,
@@ -175,6 +245,7 @@ def run_parse_job(
     if book is None:
         return _fail(session, job_id, book_id, f"书目不存在：{book_id}", persist=persist_per_page)
     book_dir = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
+    version_dir = version_dir_for(data_root, book.domain_id, book.course_id, book_id, job_id)
     try:
         meta = read_book_meta(book_dir)
     except (OSError, ValueError):
@@ -203,12 +274,28 @@ def run_parse_job(
         session.commit()
 
     source_pdf = resolve_source_pdf(data_root, book.file_path or meta.source_file)
+    jobs.record_source_snapshot(job_id, source_sha256=sha256_file(source_pdf), page_count=meta.page_count)
+    # 版本基线：新版本从当前生效作用域继承产物（active 为空 = 根视图/legacy 作用域）
+    baseline_dir = book_dir
+    baseline_job_id = LEGACY_JOB_ID
+    if book.active_job_id and book.active_job_id != job_id:
+        candidate = version_dir_for(data_root, book.domain_id, book.course_id, book_id, book.active_job_id)
+        if candidate.is_dir():
+            baseline_dir = candidate
+            baseline_job_id = book.active_job_id
+    seed_version_from(baseline_dir, version_dir)
+
     geometry = _pdf_geometry(source_pdf)
-    target_pages = list(pages) if pages else list(range(1, meta.page_count + 1))
-    total = len(target_pages)
-    parsed = 0
+    requested_pages = list(pages) if pages else list(range(1, meta.page_count + 1))
+    _inherit_page_rows(page_repo, book_id, baseline_job_id, job_id, version_dir, requested_pages)
+    resumed = _resumed_pages(page_repo, book_id, job_id, version_dir, requested_pages)
+    target_pages = [page_no for page_no in requested_pages if page_no not in resumed]
+    if resumed:
+        logger.info("parse job %s 续跑：跳过 %d 个已解析页", job_id, len(resumed))
+    total = len(requested_pages)
+    parsed = len(resumed)
     failed: list[int] = []
-    progress: dict[str, object] = {"parsed": 0, "total": total, "error": ""}
+    progress: dict[str, object] = {"parsed": parsed, "total": total, "error": ""}
     last_progress_at = time.monotonic()
 
     def _commit() -> None:
@@ -228,7 +315,7 @@ def run_parse_job(
 
     def _mark_failed(page_no: int, error: str) -> None:
         failed.append(page_no)
-        page_repo.upsert(book_id, page_no, status="failed", error=error)
+        page_repo.upsert(book_id, job_id, page_no, status="failed", error=error)
         progress["error"] = f"失败页：{','.join(str(no) for no in failed)}"[:200]
         _commit()
         _flush_progress(force=True)
@@ -243,9 +330,11 @@ def run_parse_job(
             image_size=image_size,
             native_text_length=native_text_length,
         )
-        _write_page_artifacts(book_dir, page)  # 产物写先于页行提交：有页行必有产物
+        # 页图由版本基线继承（见 `seed_version_from`），此处只需写归一化产物
+        _write_page_artifacts(version_dir, page)  # 产物写先于页行提交：有页行必有产物
         page_repo.upsert(
             book_id,
+            job_id,
             page_no,
             status="parsed",
             source=engine.name,
@@ -259,7 +348,7 @@ def run_parse_job(
     try:
         if pages is None:
             document: DocumentResult = engine.parse_document(source_pdf.read_bytes(), source_pdf.name)
-            _store_images(book_dir, document.images)
+            _store_images(version_dir, document.images)
             by_page = {result.page: result for result in document.pages}
             for page_no in target_pages:
                 result = by_page.get(page_no)
@@ -269,8 +358,8 @@ def run_parse_job(
                 _handle(page_no, result)
         else:
             for page_no in target_pages:
-                image_path = book_dir / "pages" / f"p{page_no:04d}.png"
-                if not image_path.is_file():
+                image_path = link_pages_into(book_dir / "pages", version_dir / "pages", page_no)
+                if image_path is None:
                     _mark_failed(page_no, "页图缺失")
                     continue
                 try:
@@ -285,16 +374,21 @@ def run_parse_job(
             job_id,
             book_id,
             str(exc)[:500],
-            page_repo.count_parsed(book_id),
+            page_repo.count_parsed(book_id, job_id),
             progress,
             persist=persist_per_page,
         )
 
-    rebuild_chunks(book_dir, book_id)
-    write_manifest(book_dir)
+    rebuild_chunks(version_dir, book_id)
+    write_manifest(version_dir)
 
-    pages_done = page_repo.count_parsed(book_id)
+    pages_done = page_repo.count_parsed(book_id, job_id)
     parse_status = ParseStatus.COMPLETED if not failed else ParseStatus.FAILED
+    # 激活只在终态判定之后：目标页齐备才把生效指针交给这个版本，否则读取端继续走原作用域
+    if not failed and _version_is_complete(page_repo, book_id, job_id, version_dir, requested_pages):
+        books.set_active_job(book_id, job_id)
+    else:
+        logger.warning("parse job %s 未激活：目标页未齐备（失败页 %s）", job_id, failed or "-")
     books.update_parse(book_id, parse_status=parse_status, pages_done=pages_done)
     jobs.mark_finished(
         job_id,

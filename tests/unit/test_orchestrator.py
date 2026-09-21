@@ -17,7 +17,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from axiom_flow.db.models import Base
-from axiom_flow.db.repositories import BookRepository, BookSyncRow, PageRepository, ParseJobRepository, ParseJobRow
+from axiom_flow.db.repositories import (
+    LEGACY_JOB_ID,
+    BookRepository,
+    BookSyncRow,
+    PageRepository,
+    ParseJobRepository,
+    ParseJobRow,
+)
 from axiom_flow.engines.base import DocumentResult, EngineError, PageResult
 from axiom_flow.ingest import ingest_book
 from axiom_flow.orchestrator import pipeline, run_parse_job
@@ -103,9 +110,8 @@ def env(tmp_path):
         yield session, data_root
 
 
-def _create_job(session: Session, *, pages: list[int] | None = None) -> str:
-    job_id = "job-1"
-    ParseJobRepository(session).create(ParseJobRow(job_id=job_id, book_id="b05", pages=pages))
+def _create_job(session: Session, *, pages: list[int] | None = None, job_id: str = "job-1") -> str:
+    ParseJobRepository(session).create(ParseJobRow(job_id=job_id, book_id="b05", engine="mineru", pages=pages))
     session.commit()
     return job_id
 
@@ -127,8 +133,12 @@ def _book_dir(data_root: Path) -> Path:
     return data_root / "parsed" / "math-advanced" / "math_analysis" / "b05"
 
 
+def _version_dir(data_root: Path, job_id: str) -> Path:
+    return _book_dir(data_root) / "versions" / job_id
+
+
 class TestWholeBookJob:
-    """默认全本：一次整本解析 → 逐页产物 + 分块 + manifest + 回写。"""
+    """默认全本：一次整本解析 → 逐页产物 + 分块 + manifest + 回写（产物落版本目录）。"""
 
     def test_completes_and_writes_artifacts(self, env):
         session, data_root = env
@@ -147,13 +157,18 @@ class TestWholeBookJob:
         assert outcome.status == "completed"
         assert (outcome.parsed, outcome.total, outcome.failed_pages) == (2, 2, [])
         book_dir = _book_dir(data_root)
-        assert (book_dir / "pages" / "p0001.blocks.json").is_file()
-        assert (book_dir / "pages" / "p0001.md").is_file()
-        assert (book_dir / "chunks.json").is_file()
-        assert (book_dir / "manifest.json").is_file()
-        chunk_set = json.loads((book_dir / "chunks.json").read_text(encoding="utf-8"))
+        version_dir = _version_dir(data_root, job_id)
+        assert (version_dir / "pages" / "p0001.blocks.json").is_file()
+        assert (version_dir / "pages" / "p0001.md").is_file()
+        assert (version_dir / "chunks.json").is_file()
+        assert (version_dir / "manifest.json").is_file()
+        assert not (book_dir / "pages" / "p0001.blocks.json").exists(), "版本产物不得写根视图（V1）"
+        assert (book_dir / "pages" / "p0001.png").is_file(), "页图仍由 ingest 拥有，版本目录只接入"
+        chunk_set = json.loads((version_dir / "chunks.json").read_text(encoding="utf-8"))
         assert chunk_set["chunks"][0]["block_refs"][0]["page"] == 1
-        page = BlocksPage.model_validate_json((book_dir / "pages" / "p0001.blocks.json").read_text(encoding="utf-8"))
+        page = BlocksPage.model_validate_json(
+            (version_dir / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
         assert page.source == "mineru"
         assert page.blocks[0].type.value == "heading"
 
@@ -161,7 +176,63 @@ class TestWholeBookJob:
         assert book is not None and book.parse_status == "completed" and book.pages_done == 2
         job = ParseJobRepository(session).get(job_id)
         assert job is not None and job.status == "completed"
-        assert PageRepository(session).count_parsed("b05") == 2
+        assert PageRepository(session).count_parsed("b05", job_id) == 2
+
+    def test_completion_activates_the_version(self, env):
+        """齐备且落盘成功 → 生效指针指向本版本（V3 的唯一激活时点）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session)
+
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=job_id,
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+        )
+
+        assert BookRepository(session).get("b05").active_job_id == job_id
+
+    def test_job_row_self_proves_its_source_snapshot(self, env):
+        """版本 ↔ 源文件对应关系落在任务行（V7）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session)
+
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=job_id,
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+        )
+
+        job = ParseJobRepository(session).get(job_id)
+        book = BookRepository(session).get("b05")
+        assert job is not None
+        assert job.source_sha256 == book.sha256 and job.source_sha256 != ""
+        assert job.page_count == 2
+
+    def test_no_intermediates_written_into_data_root(self, env):
+        """V10：编排不在数据根留临时目录（历史踩坑：tmp 污染产物树）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session)
+
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=job_id,
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+        )
+
+        assert not (data_root / "tmp").exists()
+        assert sorted(p.name for p in data_root.iterdir()) == ["parsed", "raw"]
 
     def test_engine_error_fails_job(self, env):
         session, data_root = env
@@ -181,6 +252,7 @@ class TestWholeBookJob:
         assert "不可达" in outcome.error
         book = BookRepository(session).get("b05")
         assert book is not None and book.parse_status == "failed"
+        assert book.active_job_id is None, "失败版本不得激活（V3）"
 
     def test_unhealthy_engine_fails_job_before_calling(self, env):
         session, data_root = env
@@ -252,9 +324,40 @@ class TestPerPageJob:
         assert outcome.status == "completed"
         assert outcome.parsed == 1
         page = BlocksPage.model_validate_json(
-            (_book_dir(data_root) / "pages" / "p0002.blocks.json").read_text(encoding="utf-8")
+            (_version_dir(data_root, job_id) / "pages" / "p0002.blocks.json").read_text(encoding="utf-8")
         )
         assert page.blocks[0].text == "第 2 页"
+        assert PageRepository(session).count_parsed("b05", job_id) == 1
+
+    def test_two_versions_coexist_without_overwrite(self, env):
+        """两个版本各写各的目录：后一次解析不抹掉前一次产物（REQ-080 的立项目标）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        first = _create_job(session, pages=[1], job_id="job-a")
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=first,
+            book_id="b05",
+            pages=[1],
+            data_root=data_root,
+        )
+        second = _create_job(session, pages=[2], job_id="job-b")
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=second,
+            book_id="b05",
+            pages=[2],
+            data_root=data_root,
+        )
+
+        assert (_version_dir(data_root, first) / "pages" / "p0001.blocks.json").is_file()
+        assert not (_version_dir(data_root, first) / "pages" / "p0002.blocks.json").exists()
+        assert (_version_dir(data_root, second) / "pages" / "p0002.blocks.json").is_file()
+        assert PageRepository(session).get("b05", first, 2) is None
+        assert PageRepository(session).get("b05", second, 2).status == "parsed"
+        assert BookRepository(session).get("b05").active_job_id == second
 
     def test_failed_page_does_not_abort_job(self, env):
         session, data_root = env
@@ -273,9 +376,13 @@ class TestPerPageJob:
         assert outcome.status == "completed"
         assert outcome.failed_pages == [2]
         assert "失败页：2" in outcome.error
-        assert PageRepository(session).get("b05", 2).status == "failed"
+        assert PageRepository(session).get("b05", job_id, 2).status == "failed"
         book = BookRepository(session).get("b05")
         assert book is not None and book.parse_status == "failed" and book.pages_done == 1
+        assert book.active_job_id is None, "目标页未齐备 → 不激活（V3）"
+        assert (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").is_file(), (
+            "不激活也不删产物：失败版本留在磁盘上供排查"
+        )
 
     def test_missing_page_image_marks_failed(self, env):
         session, data_root = env
@@ -293,7 +400,104 @@ class TestPerPageJob:
         )
 
         assert outcome.failed_pages == [2]
-        assert PageRepository(session).get("b05", 2).error == "页图缺失"
+        assert PageRepository(session).get("b05", job_id, 2).error == "页图缺失"
+
+    def test_per_page_version_is_a_complete_snapshot(self, env):
+        """逐页重解析的版本是**完整快照**：未碰的页从上一生效版本继承产物与页行。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        first = _create_job(session, job_id="job-a")
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=first,
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+        )
+        second = _create_job(session, pages=[2], job_id="job-b")
+
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=second,
+            book_id="b05",
+            pages=[2],
+            data_root=data_root,
+        )
+
+        version_dir = _version_dir(data_root, second)
+        inherited = BlocksPage.model_validate_json(
+            (version_dir / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
+        refreshed = BlocksPage.model_validate_json(
+            (version_dir / "pages" / "p0002.blocks.json").read_text(encoding="utf-8")
+        )
+        assert inherited.blocks[0].type.value == "heading", "第 1 页沿用上一版内容"
+        assert refreshed.blocks[0].text == "第 2 页"
+        assert PageRepository(session).get("b05", second, 1).status == "parsed", "页行随版本走"
+        assert PageRepository(session).count_parsed("b05", second) == 2
+        assert BookRepository(session).get("b05").pages_done == 2, "pages_done 描述生效版本，不是本次跑了几页"
+
+    def test_legacy_root_view_pages_are_inherited_into_the_first_version(self, env):
+        """迁移后的真机形态：根视图（legacy）页行 + 根目录产物 → 首个新版本按页继承。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        _book_dir(data_root).joinpath("pages", "p0001.blocks.json").write_text(
+            BlocksPage(page=1, source="mineru", image_size=(595, 842), blocks=[]).model_dump_json(),
+            encoding="utf-8",
+        )
+        PageRepository(session).upsert("b05", LEGACY_JOB_ID, 1, status="parsed", source="mineru")
+        job_id = _create_job(session, pages=[2])
+
+        run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=job_id,
+            book_id="b05",
+            pages=[2],
+            data_root=data_root,
+        )
+
+        assert PageRepository(session).get("b05", job_id, 1).status == "parsed"
+        assert PageRepository(session).get("b05", LEGACY_JOB_ID, 1).status == "parsed", "旧作用域不被改写"
+        assert (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").is_file()
+
+    def test_rerunning_same_job_resumes_parsed_pages(self, env, monkeypatch):
+        """同 job 重跑 = 续跑：已 `parsed` 且产物在位的页不再送引擎（真机 kill 后重启的路径）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session, pages=[1, 2])
+        called: list[int] = []
+        original = pipeline._parse_page_with_retry
+
+        def spy(engine, image_path, page_no):
+            called.append(page_no)
+            return original(engine, image_path, page_no)
+
+        monkeypatch.setattr(pipeline, "_parse_page_with_retry", spy)
+        PageRepository(session).upsert("b05", job_id, 1, status="parsed", source="mineru")
+        version_dir = _version_dir(data_root, job_id)
+        (version_dir / "pages").mkdir(parents=True)
+        (version_dir / "pages" / "p0001.blocks.json").write_text(
+            BlocksPage(page=1, source="mineru", image_size=(595, 842), blocks=[]).model_dump_json(),
+            encoding="utf-8",
+        )
+
+        outcome = run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=job_id,
+            book_id="b05",
+            pages=[1, 2],
+            data_root=data_root,
+        )
+
+        assert called == [2], "续跑页不得重复送引擎"
+        assert outcome.failed_pages == []
+        assert (outcome.parsed, outcome.total) == (2, 2), "续跑页计入 parsed，否则 progress 低估"
+        assert (version_dir / "pages" / "p0002.blocks.json").is_file()
+        assert BookRepository(session).get("b05").active_job_id == job_id
 
 
 def _file_env(tmp_path: Path, pages: int = 2):
@@ -329,24 +533,25 @@ def _file_env(tmp_path: Path, pages: int = 2):
             title="数学分析原理",
         )
         BookRepository(session).update_ingest("b05", page_count=pages, sha256="x" * 64)
-        ParseJobRepository(session).create(ParseJobRow(job_id="job-1", book_id="b05"))
+        ParseJobRepository(session).create(ParseJobRow(job_id="job-1", book_id="b05", engine="mineru"))
         session.commit()
         return engine, session, data_root
 
 
 class _ProbingEngine(FakeEngine):
-    """在每次调用引擎前用独立读连接快照已提交的 parsed 页数。"""
+    """在每次调用引擎前用独立读连接快照本版本已提交的 parsed 页数。"""
 
-    def __init__(self, engine, *, explode_page: int | None = None, explode: type[Exception] = ValueError):
+    def __init__(self, engine, *, job_id: str = "job-1", explode_page: int | None = None, explode: type[Exception] = ValueError):
         super().__init__()
         self._engine = engine
+        self._job_id = job_id
         self.explode_page = explode_page
         self.explode = explode
         self.snapshots: list[int] = []
 
     def _probe(self) -> None:
         with Session(self._engine) as reader:
-            self.snapshots.append(PageRepository(reader).count_parsed("b05"))
+            self.snapshots.append(PageRepository(reader).count_parsed("b05", self._job_id))
 
     def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult:
         self._probe()
@@ -378,7 +583,7 @@ class TestPerPagePersistence:
 
         assert probe.snapshots == [0, 1]
         with Session(engine) as reader:
-            assert PageRepository(reader).count_parsed("b05") == 2
+            assert PageRepository(reader).count_parsed("b05", "job-1") == 2
 
     def test_progress_written_every_ten_pages(self, tmp_path):
         engine, session, data_root = _file_env(tmp_path, pages=12)
@@ -425,9 +630,10 @@ class TestPerPagePersistence:
             )
 
         with Session(engine) as reader:
-            assert PageRepository(reader).get("b05", 1).status == "parsed"
-            assert PageRepository(reader).get("b05", 2) is None
-        assert (_book_dir(data_root) / "pages" / "p0001.blocks.json").is_file()
+            assert PageRepository(reader).get("b05", "job-1", 1).status == "parsed"
+            assert PageRepository(reader).get("b05", "job-1", 2) is None
+            assert BookRepository(reader).get("b05").active_job_id is None, "异常中断不激活（V3）"
+        assert (_version_dir(data_root, "job-1") / "pages" / "p0001.blocks.json").is_file()
 
     def test_whole_book_failure_keeps_parsed_pages(self, tmp_path, monkeypatch):
         """整本失败（EngineError 中途穿透）时已解析页保留，且 progress 记录已完成页。"""
@@ -452,7 +658,8 @@ class TestPerPagePersistence:
 
         assert outcome.status == "failed" and "落盘失败" in outcome.error
         with Session(engine) as reader:
-            assert PageRepository(reader).get("b05", 1).status == "parsed"
+            assert PageRepository(reader).get("b05", "job-1", 1).status == "parsed"
+            assert BookRepository(reader).get("b05").active_job_id is None
             job = ParseJobRepository(reader).get("job-1")
             book = BookRepository(reader).get("b05")
         assert job is not None and job.status == "failed"
@@ -477,5 +684,5 @@ class TestPerPagePersistence:
         assert probe.snapshots == [0, 0]
         session.commit()
         with Session(engine) as reader:
-            assert PageRepository(reader).count_parsed("b05") == 2
+            assert PageRepository(reader).count_parsed("b05", "job-1") == 2
 

@@ -2,7 +2,8 @@
 
 守护面：PLAN-003 W8 8.1——把一次性取证脚本（`scripts/tmp/live_probe_*.py`）固化为可重跑用例；
 逐页路径覆盖 `parse_page` 的 PNG 提交形状与归一化产出，整本路径覆盖 `run_parse_job` 的
-`pages=None` 分支、页级持久化与产物落盘。
+`pages=None` 分支、页级持久化与**版本目录落盘 + 终态激活**（PLAN-004：产物只写
+`versions/<job_id>/`，根视图不得被解析写回）。
 
 隔离：合成 PDF 与数据根/数据库全部位于 pytest `tmp_path`，不读写真实 `QED_DATA_ROOT`、
 不写共享 `qed` 库；只连本机回环上的模型服务。默认门禁跳过，需 `QED_SMOKE_LIVE=1` 显式开启
@@ -32,7 +33,7 @@ from axiom_flow.db.repositories import (
 )
 from axiom_flow.engines.factory import build_engine
 from axiom_flow.ingest import ingest_book
-from axiom_flow.ingest.artifacts import book_dir_for, png_size
+from axiom_flow.ingest.artifacts import book_dir_for, png_size, version_dir_for
 from axiom_flow.normalize.blocks import normalize_page
 from axiom_flow.orchestrator.pipeline import run_parse_job
 from axiom_flow.schemas import JobStatus
@@ -191,6 +192,14 @@ def test_smoke_single_page_png_shape(tmp_path, smoke_session, live_engine) -> No
     page = normalize_page(result, source="mineru", image_size=image_size)
     assert page.image_size == image_size
     assert page.blocks, "归一化后无块：引擎原始块全部被丢弃"
+    # 归一化对账不变式（DEFECT-005）：原始条目数 = 存活块数 + 可见丢弃数。
+    assert len(result.blocks) == len(page.blocks) + page.quality.dropped_block_count, (
+        f"原始 {len(result.blocks)} 项 ≠ 存活 {len(page.blocks)} 块 + 丢弃 "
+        f"{page.quality.dropped_block_count} 块：归一化对账不成立"
+    )
+    assert page.quality.dropped_block_count == 0, (
+        f"真机字面值未被映射表覆盖，需人工判定映射缺口：{page.quality.dropped_types}"
+    )
     assert any("SMOKE" in (block.text or "").upper() for block in page.blocks)
     for block in page.blocks:
         x0, y0, x1, y1 = block.bbox
@@ -241,13 +250,20 @@ def test_smoke_full_document_five_pages(tmp_path, smoke_session, live_engine) ->
 
     rows = list(smoke_session.scalars(select(AfPage).where(AfPage.book_id == book_id).order_by(AfPage.page_no)))
     assert [row.status for row in rows] == ["parsed"] * 5
-    assert PageRepository(smoke_session).count_parsed(book_id) == 5
+    assert all(row.job_id == job_id for row in rows), "页行必须落在本 job 的版本作用域内（PLAN-004 V7）"
+    assert PageRepository(smoke_session).count_parsed(book_id, job_id) == 5
     assert smoke_session.get(AfBook, book_id).parse_status == JobStatus.COMPLETED.value
+    assert smoke_session.get(AfBook, book_id).active_job_id == job_id, (
+        "completed 且目标页齐备必须激活生效指针（PLAN-004 V3）"
+    )
 
+    # 产物只写版本目录（PLAN-004 V1）；根目录只留 ingest 级页图正本，不写 blocks/md/chunks
+    version_dir = version_dir_for(tmp_path, DOMAIN_ID, COURSE_ID, book_id, job_id)
     book_dir = book_dir_for(tmp_path, DOMAIN_ID, COURSE_ID, book_id)
+    assert not (book_dir / "chunks.json").exists(), "解析产物不得写回根视图"
     for page_no in range(1, 6):
-        assert (book_dir / "pages" / f"p{page_no:04d}.md").is_file()
-        blocks_file = book_dir / "pages" / f"p{page_no:04d}.blocks.json"
+        assert (version_dir / "pages" / f"p{page_no:04d}.md").is_file()
+        blocks_file = version_dir / "pages" / f"p{page_no:04d}.blocks.json"
         assert blocks_file.is_file()
         payload = json.loads(blocks_file.read_text(encoding="utf-8"))
         assert_heading_aligned(
@@ -256,8 +272,8 @@ def test_smoke_full_document_five_pages(tmp_path, smoke_session, live_engine) ->
             page_no=page_no,
             image_size=tuple(payload["image_size"]),
         )
-    assert (book_dir / "chunks.json").is_file()
-    manifest = book_dir / "manifest.json"
+    assert (version_dir / "chunks.json").is_file()
+    manifest = version_dir / "manifest.json"
     assert manifest.is_file()
 
     manifest_entries = json.loads(manifest.read_text(encoding="utf-8"))

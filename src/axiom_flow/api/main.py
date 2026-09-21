@@ -3,6 +3,8 @@
 实现状态：Current（af_* 持久化 + 异步 parse-jobs + 分块预览；对照编辑为覆盖层合并）。
 只读端点不依赖模型服务与凭据；仅解析任务经引擎适配器直连模型服务（ADR 0004），且提交期
 探活（不可用 503，不落任务行）、引擎名按 `AXIOM_OCR_ENGINE`/请求体显式分派（无自动兜底）。
+读取面按**生效解析版本**解析目录（`af_books.active_job_id`，PLAN-004 / REQ-080）：指针唯一入口
+是 `_read_scope`，URL、响应结构与 `image_url` 字面量对根仓库前端保持不变。
 """
 
 import shutil
@@ -22,6 +24,7 @@ from axiom_flow.config import Settings, load_settings
 from axiom_flow.db.engine import create_engine_for
 from axiom_flow.db.models import AfBlockEdit, AfBook
 from axiom_flow.db.repositories import (
+    LEGACY_JOB_ID,
     BookRepository,
     BookSyncRow,
     EditRepository,
@@ -31,7 +34,7 @@ from axiom_flow.db.repositories import (
 )
 from axiom_flow.engines.base import ParseEngine
 from axiom_flow.engines.factory import EngineSelectionError, build_engine, resolve_engine_name
-from axiom_flow.ingest import book_dir_for, ingest_book, write_manifest
+from axiom_flow.ingest import book_dir_for, ingest_book, version_dir_for, write_manifest
 from axiom_flow.normalize.chunking import build_chunks, read_chunk_set
 from axiom_flow.orchestrator import MODEL_UNAVAILABLE, JobRunner, rebuild_chunks
 from axiom_flow.schemas import (
@@ -53,6 +56,7 @@ from axiom_flow.schemas import (
     ParseJob,
     ParseJobCreate,
     ParseStatus,
+    ParseVersionOut,
     SyncResponse,
 )
 
@@ -77,6 +81,7 @@ def _book_out(book: AfBook) -> BookOut:
         ingest_status=book.ingest_status,
         parse_status=book.parse_status,
         pages_done=book.pages_done,
+        active_job_id=book.active_job_id,
         notes=book.notes,
     )
 
@@ -85,6 +90,7 @@ def _edit_record(edit: AfBlockEdit) -> EditRecord:
     return EditRecord(
         edit_id=edit.edit_id,
         book_id=edit.book_id,
+        job_id=edit.job_id,
         page_no=edit.page_no,
         block_index=edit.block_index,
         block_type=edit.block_type,
@@ -173,15 +179,35 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"书目不存在或产物缺失：{book_id}")
         return book_dir
 
-    def _load_page(book_dir: Path, page_no: int) -> BlocksPage:
-        path = book_dir / "pages" / f"p{page_no:04d}.blocks.json"
+    def _read_scope(session: Session, book_id: str) -> tuple[Path, str]:
+        """生效解析版本解析的唯一入口（V6）：返回 `(产物目录, job_id 作用域)`。
+
+        `active_job_id` 非空 → 该版本目录；为空 → 书目录根（legacy 根视图，迁移前存量产物与
+        重 ingest 后的目录都走这里，故根仓库前端不需迁移即可继续读取）。生效目录缺失时显式
+        404 而不回落根视图：静默回落会让读者把旧产物当成新版本核对。
+        """
+        book = BookRepository(session).get(book_id)
+        book_dir = _require_book_dir(session, book_id)
+        if book is None or not book.active_job_id:
+            return book_dir, LEGACY_JOB_ID
+        version_dir = version_dir_for(
+            data_root, book.domain_id, book.course_id, book_id, book.active_job_id
+        )
+        if not version_dir.is_dir():
+            raise HTTPException(
+                status_code=404, detail=f"生效版本产物缺失：{book_id} @ {book.active_job_id}"
+            )
+        return version_dir, book.active_job_id
+
+    def _load_page(artifact_dir: Path, page_no: int) -> BlocksPage:
+        path = artifact_dir / "pages" / f"p{page_no:04d}.blocks.json"
         if not path.is_file():
             raise HTTPException(status_code=404, detail=f"页产物缺失：第 {page_no} 页")
         return BlocksPage.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def _load_pages(book_dir: Path) -> list[BlocksPage]:
+    def _load_pages(artifact_dir: Path) -> list[BlocksPage]:
         pages: list[BlocksPage] = []
-        for path in sorted((book_dir / "pages").glob("p*.blocks.json")):
+        for path in sorted((artifact_dir / "pages").glob("p*.blocks.json")):
             try:
                 pages.append(BlocksPage.model_validate_json(path.read_text(encoding="utf-8")))
             except ValueError:
@@ -247,7 +273,8 @@ def create_app(
 
     @app.delete("/api/v1/books/{book_id}")
     def delete_book(book_id: SafeBookId, session: SessionDep, purge: bool = False) -> dict:
-        """删除 af_books 行与 af_pages 页行；`?purge=true` 同时删除 `parsed/` 产物。
+        """删除 af_books 行与该书**所有解析版本**的 af_pages / af_block_edits 行；
+        `?purge=true` 同时删除整本产物目录（含 `versions/` 历史版本）。
 
         af_parse_jobs 历史行保留为审计线索（不随书目删除，条文 9）。
         """
@@ -256,7 +283,8 @@ def create_app(
         if book is None:
             raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
         book_dir = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
-        PageRepository(session).reset_for_book(book_id)
+        PageRepository(session).delete_for_book(book_id)
+        EditRepository(session).delete_for_book(book_id)
         repo.delete(book_id)
         if purge and book_dir.is_dir():
             shutil.rmtree(book_dir)
@@ -293,8 +321,9 @@ def create_app(
     def ingest(book_id: SafeBookId, session: SessionDep) -> IngestResponse:
         """渲染页图 + book.json / manifest.json（不调模型），回写 ingest 进度。
 
-        重复 ingest 会原子替换产物目录（旧页 blocks/markdown/chunks 一并作废），故解析状态
-        回置为 `pending`、`pages_done=0`，并清空 af_pages 页行（条文 8）；历史任务行保留。
+        重复 ingest 替换的只是**根视图**（`book.json` + `pages/`）：解析版本目录完整保留，
+        生效指针回到 `NULL`（根视图），`af_pages` 只清 legacy 行、版本作用域行不动（条文 8 +
+        V8）。源文件变了之后旧版本仍可从 `versions/` 直读，但不再对生效端点可见，需重新解析。
         """
         repo = BookRepository(session)
         book = repo.get(book_id)
@@ -315,27 +344,31 @@ def create_app(
             code = 404 if "源 PDF 不存在" in str(exc) else 400
             raise HTTPException(status_code=code, detail=str(exc)) from exc
         repo.update_ingest(book_id, page_count=result.page_count, sha256=result.sha256)
+        repo.set_active_job(book_id, None)
         repo.update_parse(book_id, parse_status=ParseStatus.PENDING, pages_done=0)
-        PageRepository(session).reset_for_book(book_id)
+        PageRepository(session).reset_legacy(book_id)
         return IngestResponse(book_id=book_id, page_count=result.page_count, sha256=result.sha256)
 
     # ---------- ③ 解析结果与 PDF 对照 ----------
 
     @app.get("/api/v1/books/{book_id}/manifest", response_model=list[ManifestEntry])
     def get_manifest(book_id: SafeBookId, session: SessionDep) -> list[ManifestEntry]:
-        """产物清单：文件路径 + 大小 + SHA-256（防篡改/增量）。"""
-        book_dir = _require_book_dir(session, book_id)
-        return write_manifest(book_dir)
+        """生效版本的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对版本目录。"""
+        artifact_dir, _ = _read_scope(session, book_id)
+        return write_manifest(artifact_dir)
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}", response_model=PageData)
     def get_page(book_id: SafeBookId, page_no: int, session: SessionDep) -> PageData:
         """单页完整数据：结构化 blocks + 页级 markdown + 原页图 URL + 已合并人工编辑。"""
         if page_no < 1:
             raise HTTPException(status_code=400, detail=f"页码非法：{page_no}")
-        book_dir = _require_book_dir(session, book_id)
-        blocks = _load_page(book_dir, page_no)
-        markdown_path = book_dir / "pages" / f"p{page_no:04d}.md"
-        edits = [_edit_record(edit) for edit in EditRepository(session).list_for_page(book_id, page_no)]
+        artifact_dir, job_id = _read_scope(session, book_id)
+        blocks = _load_page(artifact_dir, page_no)
+        markdown_path = artifact_dir / "pages" / f"p{page_no:04d}.md"
+        edits = [
+            _edit_record(edit)
+            for edit in EditRepository(session).list_for_page(book_id, job_id, page_no)
+        ]
         return PageData(
             blocks=blocks,
             markdown=markdown_path.read_text(encoding="utf-8") if markdown_path.is_file() else "",
@@ -346,8 +379,8 @@ def create_app(
     @app.get("/api/v1/books/{book_id}/pages/{page_no}/image")
     def get_page_image(book_id: SafeBookId, page_no: int, session: SessionDep) -> FileResponse:
         """原页高清图（对照左栏）。"""
-        book_dir = _require_book_dir(session, book_id)
-        image_path = book_dir / "pages" / f"p{page_no:04d}.png"
+        artifact_dir, _ = _read_scope(session, book_id)
+        image_path = artifact_dir / "pages" / f"p{page_no:04d}.png"
         if not image_path.is_file():
             raise HTTPException(status_code=404, detail=f"页图缺失：第 {page_no} 页")
         return FileResponse(image_path, media_type="image/png")
@@ -359,14 +392,19 @@ def create_app(
     def edit_block(
         book_id: SafeBookId, page_no: int, index: int, payload: EditRequest, session: SessionDep
     ) -> EditRecord:
-        """块编辑 upsert（落 af_block_edits，同块重复编辑覆盖更新）。"""
-        book_dir = _require_book_dir(session, book_id)
-        page = _load_page(book_dir, page_no)
+        """块编辑 upsert（落 af_block_edits，绑定**生效版本**的 `job_id`，同版本同块覆盖更新）。
+
+        块下标只在解析版本内有意义（映射表/归一化规则一变语义就变），故编辑必须记在它核对
+        的那个版本上；换版本后旧编辑不自动套用。
+        """
+        artifact_dir, job_id = _read_scope(session, book_id)
+        page = _load_page(artifact_dir, page_no)
         if not 0 <= index < len(page.blocks):
             raise HTTPException(status_code=400, detail=f"块下标越界：{index}")
         block: Block = page.blocks[index]
         edit = EditRepository(session).upsert(
             book_id,
+            job_id,
             page_no,
             index,
             block_type=block.type.value,
@@ -379,9 +417,33 @@ def create_app(
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}/edits", response_model=list[EditRecord])
     def list_edits(book_id: SafeBookId, page_no: int, session: SessionDep) -> list[EditRecord]:
-        """页内编辑列表（对照视图回显）。"""
-        _require_book_dir(session, book_id)
-        return [_edit_record(edit) for edit in EditRepository(session).list_for_page(book_id, page_no)]
+        """页内编辑列表（对照视图回显，作用域 = 生效版本）。"""
+        _, job_id = _read_scope(session, book_id)
+        return [
+            _edit_record(edit)
+            for edit in EditRepository(session).list_for_page(book_id, job_id, page_no)
+        ]
+
+    @app.get("/api/v1/books/{book_id}/versions", response_model=list[ParseVersionOut])
+    def list_versions(book_id: SafeBookId, session: SessionDep) -> list[ParseVersionOut]:
+        """解析版本列举（只读，不改生效指针）：按任务创建时间给出每版自证信息。"""
+        book = BookRepository(session).get(book_id)
+        if book is None:
+            raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
+        pages = PageRepository(session)
+        return [
+            ParseVersionOut(
+                job_id=job.job_id,
+                engine=job.engine,
+                status=job.status,
+                page_count=job.page_count,
+                parsed=pages.count_parsed(book_id, job.job_id),
+                source_sha256=job.source_sha256,
+                created_at=job.created_at,
+                active=job.job_id == book.active_job_id,
+            )
+            for job in ParseJobRepository(session).list_for_book(book_id)
+        ]
 
     @app.get("/api/v1/books/{book_id}/chunks", response_model=ChunkSet)
     def get_chunks(
@@ -390,10 +452,10 @@ def create_app(
         max_chars: Annotated[int | None, Query(ge=1)] = None,
         overlap_blocks: Annotated[int | None, Query(ge=0)] = None,
     ) -> ChunkSet:
-        """分块预览：读 chunks.json；带参数时基于页产物实时重算（不落盘）。"""
-        book_dir = _require_book_dir(session, book_id)
+        """分块预览：读生效版本的 chunks.json；带参数时基于该版本页产物实时重算（不落盘）。"""
+        artifact_dir, _ = _read_scope(session, book_id)
         if max_chars is not None or overlap_blocks is not None:
-            pages = _load_pages(book_dir)
+            pages = _load_pages(artifact_dir)
             if not pages:
                 raise HTTPException(status_code=404, detail=f"分块未生成：{book_id}")
             params = ChunkParams(
@@ -401,11 +463,11 @@ def create_app(
                 overlap_blocks=overlap_blocks if overlap_blocks is not None else ChunkParams().overlap_blocks,
             )
             return build_chunks(pages, book_id=book_id, params=params)
-        chunk_path = book_dir / "chunks.json"
+        chunk_path = artifact_dir / "chunks.json"
         if chunk_path.is_file():
             return read_chunk_set(chunk_path)
-        chunk_set = rebuild_chunks(book_dir, book_id)
-        if not chunk_set.chunks and not _load_pages(book_dir):
+        chunk_set = rebuild_chunks(artifact_dir, book_id)
+        if not chunk_set.chunks and not _load_pages(artifact_dir):
             raise HTTPException(status_code=404, detail=f"分块未生成：{book_id}")
         return chunk_set
 

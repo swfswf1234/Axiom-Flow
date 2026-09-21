@@ -1,7 +1,9 @@
-"""af_* 表仓储层：幂等 upsert 与状态回写。
+"""af_* 表仓储层：幂等 upsert 与状态回写（页状态与块编辑按解析版本作用域）。
 
 设计事实源：`docs/design/parsing-management.md`、`docs/architecture/database-design.md`。
 仓储只做数据访问；事务边界由调用方（orchestrator/api）控制，`flush` 后可读回同一 Session。
+作用域约束：`af_pages` 与 `af_block_edits` 的键都包含 `job_id`，因此**所有读写必须显式给出解析
+版本**——省略作用域会让一个版本的产物污染另一个版本的状态与人工编辑。
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from axiom_flow.db.engine import utc_now
-from axiom_flow.db.models import AfBlockEdit, AfBook, AfPage, AfParseJob
+from axiom_flow.db.models import LEGACY_JOB_ID, AfBlockEdit, AfBook, AfPage, AfParseJob
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,19 +46,29 @@ class SyncResult:
 
 @dataclass(frozen=True, slots=True)
 class ParseJobRow:
-    """一次解析任务的输入行。"""
+    """一次解析任务（= 一个解析版本）的输入行。
+
+    `engine` 无默认值且必填：引擎名由提交期解析（`AXIOM_OCR_ENGINE`/请求体）后显式传入，
+    缺名应在建任务时就失败，而不是静默写成一个具体引擎（ADR 0004 无自动兜底）。
+    """
 
     job_id: str
     book_id: str
+    engine: str
     pages: list[int] | None = None
-    engine: str = "mineru"
     status: str = "queued"
     progress: dict[str, Any] = field(default_factory=dict)
+    source_sha256: str = ""
+    page_count: int | None = None
 
 
-def edit_id_for(book_id: str, page_no: int, block_index: int) -> str:
-    """编辑记录主键：`ed_<md5(book_id:page_no:block_index)>`（同块幂等键）。"""
-    digest = hashlib.md5(f"{book_id}:{page_no}:{block_index}".encode()).hexdigest()
+def edit_id_for(book_id: str, job_id: str, page_no: int, block_index: int) -> str:
+    """编辑记录主键：`ed_<md5(book_id:job_id:page_no:block_index)>`（同版本同块幂等键）。
+
+    主键只是幂等标识；定位已存在的编辑一律走唯一键（见 `EditRepository.upsert`），因为
+    迁移前的存量行保留旧摘要（不含 `job_id`），重算主键会让这些人工编辑变成孤儿。
+    """
+    digest = hashlib.md5(f"{book_id}:{job_id}:{page_no}:{block_index}".encode()).hexdigest()
     return f"ed_{digest}"
 
 
@@ -139,6 +151,19 @@ class BookRepository:
         self.session.flush()
         return True
 
+    def set_active_job(self, book_id: str, job_id: str | None) -> bool:
+        """激活解析版本（唯一入口，单列 UPDATE）；`None` 表示回到根视图。
+
+        只在版本目录校验通过后调用：生效指针一旦切换，读取端立即按新版本目录出数据。
+        """
+        book = self.session.get(AfBook, book_id)
+        if book is None:
+            return False
+        book.active_job_id = job_id
+        book.updated_at = utc_now()
+        self.session.flush()
+        return True
+
     def update_notes(self, book_id: str, notes: str | None) -> bool:
         book = self.session.get(AfBook, book_id)
         if book is None:
@@ -171,6 +196,8 @@ class ParseJobRepository:
             engine=row.engine,
             status=row.status,
             progress=dict(row.progress),
+            source_sha256=row.source_sha256,
+            page_count=row.page_count,
             created_at=utc_now(),
         )
         self.session.add(job)
@@ -190,6 +217,16 @@ class ParseJobRepository:
             return False
         job.status = "running"
         job.started_at = utc_now()
+        self.session.flush()
+        return True
+
+    def record_source_snapshot(self, job_id: str, *, source_sha256: str, page_count: int) -> bool:
+        """回写本版本解析的源文件指纹（版本 ↔ 源 PDF 对应关系的自证）。"""
+        job = self.session.get(AfParseJob, job_id)
+        if job is None:
+            return False
+        job.source_sha256 = source_sha256
+        job.page_count = page_count
         self.session.flush()
         return True
 
@@ -222,7 +259,7 @@ class ParseJobRepository:
 
 
 class PageRepository:
-    """af_pages：页状态与质量信号（book_id + page_no 幂等 upsert）。"""
+    """af_pages：一页在**一个解析版本内**的状态与质量信号。"""
 
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -230,6 +267,7 @@ class PageRepository:
     def upsert(
         self,
         book_id: str,
+        job_id: str,
         page_no: int,
         *,
         status: str,
@@ -237,9 +275,9 @@ class PageRepository:
         quality: dict[str, Any] | None = None,
         error: str = "",
     ) -> AfPage:
-        page = self.session.get(AfPage, (book_id, page_no))
+        page = self.session.get(AfPage, (book_id, job_id, page_no))
         if page is None:
-            page = AfPage(book_id=book_id, page_no=page_no)
+            page = AfPage(book_id=book_id, job_id=job_id, page_no=page_no)
             self.session.add(page)
         page.status = status
         page.source = source
@@ -249,35 +287,69 @@ class PageRepository:
         self.session.flush()
         return page
 
-    def get(self, book_id: str, page_no: int) -> AfPage | None:
-        return self.session.get(AfPage, (book_id, page_no))
+    def get(self, book_id: str, job_id: str, page_no: int) -> AfPage | None:
+        return self.session.get(AfPage, (book_id, job_id, page_no))
 
-    def list_for_book(self, book_id: str) -> list[AfPage]:
-        stmt = select(AfPage).where(AfPage.book_id == book_id).order_by(AfPage.page_no)
+    def list_for_book(self, book_id: str, job_id: str) -> list[AfPage]:
+        stmt = (
+            select(AfPage)
+            .where(AfPage.book_id == book_id, AfPage.job_id == job_id)
+            .order_by(AfPage.page_no)
+        )
         return list(self.session.scalars(stmt))
 
-    def count_parsed(self, book_id: str) -> int:
+    def count_parsed(self, book_id: str, job_id: str) -> int:
         stmt = select(func.count()).select_from(AfPage).where(
-            AfPage.book_id == book_id, AfPage.status == "parsed"
+            AfPage.book_id == book_id, AfPage.job_id == job_id, AfPage.status == "parsed"
         )
         return int(self.session.scalar(stmt) or 0)
 
-    def reset_for_book(self, book_id: str) -> int:
-        """清空整本书的页行（重新 ingest 后产物已作废，页状态需回到无行 = pending）。"""
+    def reset_legacy(self, book_id: str) -> int:
+        """只清根视图（`job_id = 'legacy'`）页行：重新 ingest 替换的是根视图产物。
+
+        真实版本作用域的行**必须保留**——它们对应磁盘上仍然存在的历史版本目录，
+        按全书删除会让历史版本的状态与人工编辑失去依据（V8）。
+        """
+        deleted = self.session.execute(
+            delete(AfPage).where(AfPage.book_id == book_id, AfPage.job_id == LEGACY_JOB_ID)
+        ).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+    def delete_for_job(self, book_id: str, job_id: str) -> int:
+        """删除指定解析版本的页行（该版本目录被清理时与其文件同步发生）。"""
+        deleted = self.session.execute(
+            delete(AfPage).where(AfPage.book_id == book_id, AfPage.job_id == job_id)
+        ).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+    def delete_for_book(self, book_id: str) -> int:
+        """删除整本书的页行（legacy 根视图 + 所有真实版本）：书目级删除没有「保留哪个版本」的语义。"""
         deleted = self.session.execute(delete(AfPage).where(AfPage.book_id == book_id)).rowcount
         self.session.flush()
         return int(deleted or 0)
 
 
 class EditRepository:
-    """af_block_edits：块级人工编辑覆盖层（同块重复编辑覆盖更新）。"""
+    """af_block_edits：块级人工编辑覆盖层（编辑绑定其所属解析版本）。"""
 
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def _find(self, book_id: str, job_id: str, page_no: int, block_index: int) -> AfBlockEdit | None:
+        stmt = select(AfBlockEdit).where(
+            AfBlockEdit.book_id == book_id,
+            AfBlockEdit.job_id == job_id,
+            AfBlockEdit.page_no == page_no,
+            AfBlockEdit.block_index == block_index,
+        )
+        return self.session.scalars(stmt).first()
+
     def upsert(
         self,
         book_id: str,
+        job_id: str,
         page_no: int,
         block_index: int,
         *,
@@ -287,13 +359,13 @@ class EditRepository:
         corrected_text: str | None = None,
         corrected_bbox: list[int] | None = None,
     ) -> AfBlockEdit:
-        edit_id = edit_id_for(book_id, page_no, block_index)
-        edit = self.session.get(AfBlockEdit, edit_id)
+        edit = self._find(book_id, job_id, page_no, block_index)
         now = utc_now()
         if edit is None:
             edit = AfBlockEdit(
-                edit_id=edit_id,
+                edit_id=edit_id_for(book_id, job_id, page_no, block_index),
                 book_id=book_id,
+                job_id=job_id,
                 page_no=page_no,
                 block_index=block_index,
                 edited_at=now,
@@ -309,21 +381,31 @@ class EditRepository:
         self.session.flush()
         return edit
 
-    def get(self, book_id: str, page_no: int, block_index: int) -> AfBlockEdit | None:
-        return self.session.get(AfBlockEdit, edit_id_for(book_id, page_no, block_index))
+    def get(self, book_id: str, job_id: str, page_no: int, block_index: int) -> AfBlockEdit | None:
+        return self._find(book_id, job_id, page_no, block_index)
 
-    def list_for_page(self, book_id: str, page_no: int) -> list[AfBlockEdit]:
+    def list_for_page(self, book_id: str, job_id: str, page_no: int) -> list[AfBlockEdit]:
         stmt = (
             select(AfBlockEdit)
-            .where(AfBlockEdit.book_id == book_id, AfBlockEdit.page_no == page_no)
+            .where(
+                AfBlockEdit.book_id == book_id,
+                AfBlockEdit.job_id == job_id,
+                AfBlockEdit.page_no == page_no,
+            )
             .order_by(AfBlockEdit.block_index)
         )
         return list(self.session.scalars(stmt))
 
-    def list_for_book(self, book_id: str) -> list[AfBlockEdit]:
+    def list_for_book(self, book_id: str, job_id: str) -> list[AfBlockEdit]:
         stmt = (
             select(AfBlockEdit)
-            .where(AfBlockEdit.book_id == book_id)
+            .where(AfBlockEdit.book_id == book_id, AfBlockEdit.job_id == job_id)
             .order_by(AfBlockEdit.page_no, AfBlockEdit.block_index)
         )
         return list(self.session.scalars(stmt))
+
+    def delete_for_book(self, book_id: str) -> int:
+        """删除整本书的编辑行（所有版本）：书目删除不留孤儿覆盖层，页行与文件同一作用域。"""
+        deleted = self.session.execute(delete(AfBlockEdit).where(AfBlockEdit.book_id == book_id)).rowcount
+        self.session.flush()
+        return int(deleted or 0)

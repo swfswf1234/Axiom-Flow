@@ -8,7 +8,7 @@
 """
 
 from axiom_flow.db.engine import create_engine_for, mysql_url, utc_now
-from axiom_flow.db.models import AF_TABLES, AfBlockEdit, AfBook, AfPage, AfParseJob, Base
+from axiom_flow.db.models import AF_TABLES, LEGACY_JOB_ID, AfBlockEdit, AfBook, AfPage, AfParseJob, Base
 from axiom_flow.db.repositories import (
     BookRepository,
     BookSyncRow,
@@ -30,6 +30,7 @@ __all__ = [
     "BookRepository",
     "BookSyncRow",
     "EditRepository",
+    "LEGACY_JOB_ID",
     "PageRepository",
     "ParseJobRepository",
     "ParseJobRow",

@@ -2,8 +2,9 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 四表 + 同步/CRUD/ingest/异步解析/对照编辑/分块端点已实现）
-最后更新：2026-09-20
+实现状态：Current（af_* 四表 + 同步/CRUD/ingest/异步解析/对照编辑/分块端点已实现；2026-09-21 起
+读取面按生效解析版本解析目录，块编辑绑定其所属版本）
+最后更新：2026-09-21
 关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`
 关联 ADR：`docs/adr/0004-model-boundary-and-pipeline-ownership.md`、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)
@@ -27,12 +28,16 @@ af_* 四表**一次迁移建全**（DDL 已冻结，编辑端点后置不影响�
 1. **解耦**：af_* 表为 Axiom-Flow 私有（qed 库 af_* 命名空间），只从 qt_books 同步已验证
    书行的只读元数据；QED-Tracker 任何故障/变更不影响本表读取。
 2. **幂等**：同步以 `book_id`（同源 qt_books.book_id）为幂等键；编辑以
-   `(book_id, page_no, block_index)` 为唯一键，重复提交覆盖更新。
-3. **进度自持**：`ingest_status`/`parse_status`/`pages_done` 由本仓库维护。
+   `(book_id, job_id, page_no, block_index)` 为唯一键，重复提交覆盖更新。
+3. **进度自持**：`ingest_status`/`parse_status`/`pages_done` 由本仓库维护，且 `pages_done` 描述的是
+   **生效版本**的已解析页数（不是全书历史累计）。
 4. **覆盖层**：解析产物文件为模型产物事实源，人工编辑落 `af_block_edits`，API 返回时合并；
    分块为派生文件（`chunks.json`），**不入库**、可重建。
 5. **模型无感知**：解析经引擎适配器（[model-integration.md](model-integration.md)），本闭环
    不感知具体模型与调参。
+6. **版本隔离**：一次解析任务 = 一个解析版本（产物目录 `versions/<job_id>/` + 页状态/编辑的
+   `job_id` 作用域），「哪一版生效」只由 `af_books.active_job_id` 单列决定；本闭环不做旧版本
+   清理，也不做跨版本的人工编辑继承（块下标语义随版本变化，套用即污染）。
 
 ## 数据流
 
@@ -49,7 +54,8 @@ sequenceDiagram
     GW->>AX: 渲染页图 + book.json（parsed 区）
     FE->>GW: 解析（POST /parse-jobs）
     GW->>AX: 202 任务受理（af_parse_jobs）
-    AX->>AX: 引擎解析 + 归一化 + 分块 + 落盘 + af_pages
+    AX->>AX: 播种版本基线 + 引擎解析 + 归一化 + 分块 → versions/<job_id>/
+    AX->>AX: 页行按 (book_id, job_id, page_no) 落 af_pages；校验通过后置 af_books.active_job_id
     FE->>GW: 对照（GET /books/{id}/pages/{no}）
     FE->>GW: 编辑（PUT /books/{id}/pages/{no}/blocks/{index}/edit）
     GW->>AX: upsert af_block_edits
@@ -60,12 +66,16 @@ sequenceDiagram
 ## 表结构
 
 四表（`af_books` / `af_parse_jobs` / `af_pages` / `af_block_edits`）DDL 与字段语义见
-`../architecture/database-design.md`（结构事实源）；**一次 Alembic 迁移建全**。要点：
+`../architecture/database-design.md`（结构事实源）；**一次 Alembic 迁移建全**，解析版本作用域由
+迁移 `20260920_0002` 增补。要点：
 
-- `af_books`：已验证书快照（含 `file_path` 数据根相对路径、ingest/解析进度、notes）；
-- `af_parse_jobs`：解析任务（pages NULL=全书、engine、status、progress）；
-- `af_pages`：页级状态与质量信号（book_id+page_no 主键）；
-- `af_block_edits`：块级人工编辑覆盖层（verdict/note/corrected_text/corrected_bbox）。
+- `af_books`：已验证书快照（含 `file_path` 数据根相对路径、ingest/解析进度、notes）+
+  `active_job_id`（生效解析版本，`NULL` = 根视图 legacy）；
+- `af_parse_jobs`：**一次任务 = 一个解析版本**（pages NULL=全书、engine、status、progress，
+  另有 `source_sha256`/`page_count` 自证本版解析的源文件与当时全书页数）；
+- `af_pages`：页级状态与质量信号，主键 `(book_id, job_id, page_no)`（同一页在不同版本可有独立状态）；
+- `af_block_edits`：块级人工编辑覆盖层（verdict/note/corrected_text/corrected_bbox），唯一键
+  `(book_id, job_id, page_no, block_index)`，编辑绑定其所属版本。
 
 ## API 契约（8902）
 
@@ -74,16 +84,19 @@ sequenceDiagram
 | 端点 | 语义 |
 | --- | --- |
 | `POST /books/sync` | 幂等 upsert af_books（请求 `[{book_id, domain_id, course_id, course_name, knowledge_id, title, part, authors, file_path}]`）；`book_id`/`domain_id`/`course_id` 必须是安全路径段、`file_path` 为数据根相对路径（≤512 字符、禁前导 `/`），违规 422 |
-| `GET /books`、`GET /books/{id}` | 书目列表/详情（af_books；空表回退文件系统） |
-| `PATCH /books/{id}`、`DELETE /books/{id}` | 修改（notes）/删除：删 `af_books` 与该书 `af_pages` 行，`?purge=true` 连产物目录一并删除；`af_parse_jobs` 历史行一律保留为审计 |
-| `POST /books/{id}/ingest` | 渲染页图 + book.json（不调模型），回写 ingest_status/page_count/sha256。**重复 ingest 幂等**：原子替换产物目录（旧 blocks/markdown/chunks 一并作废），并回置 `parse_status=pending`、`pages_done=0` 且删除该书 `af_pages` 行；`af_parse_jobs` 历史与 `af_block_edits` 保留 |
-| `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页） |
-| `GET /books/{id}/pages/{no}` | 单页 blocks+markdown+image_url+已合并 edits |
-| `PUT /books/{id}/pages/{no}/blocks/{index}/edit`、`GET .../edits` | 块编辑 upsert / 页内编辑列表 |
-| `GET /books/{id}/chunks` | 分块预览（读 chunks.json；`?max_chars=&overlap_blocks=` 可实时重算） |
+| `GET /books`、`GET /books/{id}` | 书目列表/详情（af_books，含 `active_job_id`；空表回退文件系统） |
+| `PATCH /books/{id}`、`DELETE /books/{id}` | 修改（notes）/删除：删 `af_books` 与该书**所有版本**的 `af_pages`/`af_block_edits` 行，`?purge=true` 连整本产物目录（含 `versions/`）一并删除；`af_parse_jobs` 历史行一律保留为审计 |
+| `POST /books/{id}/ingest` | 渲染页图 + book.json（不调模型），回写 ingest_status/page_count/sha256。**重复 ingest 只替换根视图**（`book.json` + `pages/` 原子交换，`versions/` 完整保留），并置 `active_job_id=NULL`、`parse_status=pending`、`pages_done=0`，页行只清 `job_id='legacy'` 一批；历史版本状态与任务行保留，但旧版本不再对生效端点可见（源文件已变，需重新解析） |
+| `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页重解析，两者都产出一个**完整快照**版本） |
+| `GET /books/{id}/versions` | 解析版本只读列举（`job_id/engine/status/page_count/parsed/source_sha256/created_at/active`）；不改生效指针 |
+| `GET /books/{id}/pages/{no}` | 单页 blocks+markdown+image_url+已合并 edits（**作用域 = 生效版本**；`active_job_id` 为空时读根视图 legacy） |
+| `PUT /books/{id}/pages/{no}/blocks/{index}/edit`、`GET .../edits` | 块编辑 upsert / 页内编辑列表（写入生效版本的 `job_id`） |
+| `GET /books/{id}/chunks` | 分块预览（读生效版本 `chunks.json`；`?max_chars=&overlap_blocks=` 可实时重算） |
+| `GET /books/{id}/manifest` | 生效版本的产物清单，路径相对该版本目录（不含 `versions/<job_id>/` 前缀） |
 
-**错误语义**：400 参数非法（含引擎槽位未实现）；404 book/page/job 不存在；422 入参 schema 违规
-（安全路径段、引擎字面值）；503 模型服务不可用（仅提交期探活失败，且不创建任务行）。
+**错误语义**：400 参数非法（含引擎槽位未实现）；404 book/page/job 不存在**或生效版本目录缺失**
+（显式报错，不回落根视图）；422 入参 schema 违规（安全路径段、引擎字面值）；503 模型服务不可用
+（仅提交期探活失败，且不创建任务行）。
 
 **引擎选择**：`POST /parse-jobs` 的 `engine` 可选，缺省回落 `AXIOM_OCR_ENGINE`；未实现/未知名称
 一律显式报错，**绝不回落到其他引擎**（见 [model-integration](model-integration.md)）。

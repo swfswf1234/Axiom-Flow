@@ -17,6 +17,10 @@ class Base(DeclarativeBase):
     """af_* 表族声明基类。"""
 
 
+#: 「根视图」哨兵 job_id：迁移前存量产物的归属版本，也是 `active_job_id IS NULL` 时的读取作用域。
+LEGACY_JOB_ID = "legacy"
+
+
 class AfBook(Base):
     """af_books：已验证书快照 + ingest/解析进度（本侧维护）。"""
 
@@ -41,13 +45,19 @@ class AfBook(Base):
     ingest_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     parse_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     pages_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    active_job_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        default=None,
+        comment="当前生效解析版本（NULL = 根视图 legacy）；生效指针唯一事实源",
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class AfParseJob(Base):
-    """af_parse_jobs：一次解析任务（逐页/全本，状态与进度）。"""
+    """af_parse_jobs：一次解析任务即一个解析版本（状态、进度与源快照自证）。"""
 
     __tablename__ = "af_parse_jobs"
     __table_args__ = (Index("ix_af_parse_jobs_book", "book_id"),)
@@ -55,21 +65,30 @@ class AfParseJob(Base):
     job_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     book_id: Mapped[str] = mapped_column(String(100), nullable=False)
     pages: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    engine: Mapped[str] = mapped_column(String(24), nullable=False, default="mineru")
+    engine: Mapped[str] = mapped_column(
+        String(24), nullable=False, comment="解析后显式引擎名；无默认值（缺引擎名应报错而非静默回落 MinerU）"
+    )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     progress: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     error: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    source_sha256: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", comment="本版本解析的源 PDF 快照（自证版本与文件对应）"
+    )
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="建任务时的全书页数快照")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AfPage(Base):
-    """af_pages：一页解析状态与质量信号。"""
+    """af_pages：一页在一个解析版本内的状态与质量信号。"""
 
     __tablename__ = "af_pages"
 
     book_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    job_id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=LEGACY_JOB_ID, comment="所属解析版本；'legacy' = 根视图存量"
+    )
     page_no: Mapped[int] = mapped_column(Integer, primary_key=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     source: Mapped[str] = mapped_column(String(24), nullable=False, default="")
@@ -79,13 +98,20 @@ class AfPage(Base):
 
 
 class AfBlockEdit(Base):
-    """af_block_edits：块级人工编辑覆盖层（同块重复编辑覆盖更新）。"""
+    """af_block_edits：块级人工编辑覆盖层（编辑绑定其所属解析版本）。"""
 
     __tablename__ = "af_block_edits"
-    __table_args__ = (UniqueConstraint("book_id", "page_no", "block_index", name="uq_af_block_edits_pos"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "book_id", "job_id", "page_no", "block_index", name="uq_af_block_edits_pos"
+        ),
+    )
 
     edit_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     book_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    job_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=LEGACY_JOB_ID, comment="编辑绑定的解析版本；'legacy' = 根视图存量"
+    )
     page_no: Mapped[int] = mapped_column(Integer, nullable=False)
     block_index: Mapped[int] = mapped_column(Integer, nullable=False)
     block_type: Mapped[str] = mapped_column(String(24), nullable=False, default="")

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import uuid
 from collections.abc import Mapping, Sequence
@@ -54,6 +55,29 @@ def _normalize_authors(authors: Sequence[Author | Mapping[str, str]]) -> list[Au
     return [author if isinstance(author, Author) else Author.model_validate(author) for author in authors]
 
 
+def _swap_root_view(book_dir: Path, staging_dir: Path) -> None:
+    """原子替换**根视图**：只交换 `book.json` 与 `pages/`，`versions/` 完整保留（V8/L3）。
+
+    解析版本目录里的页图是根页图的硬链接，旧实现整本 `rmtree` 会把历史版本一并删掉——
+    那等于不可逆地删除已解析结果。中途失败时把旧 `pages/` 换回原位，不留半成品。
+    """
+    book_dir.mkdir(parents=True, exist_ok=True)
+    old_pages = book_dir / "pages"
+    trash = book_dir.parent / f".{book_dir.name}.old-{uuid.uuid4().hex[:8]}"
+    if old_pages.is_dir():
+        old_pages.rename(trash)
+    try:
+        os.replace(staging_dir / "book.json", book_dir / "book.json")
+        (staging_dir / "pages").rename(book_dir / "pages")
+    except Exception:
+        if trash.is_dir() and not old_pages.exists():
+            trash.rename(old_pages)
+        raise
+    shutil.rmtree(trash, ignore_errors=True)
+    # 旧扁平布局的解析产物属于上一个视图：根视图被替换后必须一起作废，否则读取端拿到陈旧分块
+    (book_dir / "chunks.json").unlink(missing_ok=True)
+
+
 def ingest_book(
     *,
     book_id: str,
@@ -66,7 +90,7 @@ def ingest_book(
     engine: str = "mineru",
     dpi: int = DEFAULT_DPI,
 ) -> IngestResult:
-    """渲染页图并生成 book.json / manifest.json，返回 ingest 结果。
+    """渲染页图并生成 book.json / manifest.json（根视图），返回 ingest 结果。
 
     - 源 PDF 只读（`raw/` 语义），不复制；sha256 记录源文件校验值；
     - 幂等覆盖：同 book_id 重导入时先写同层临时目录再原子替换；
@@ -107,14 +131,11 @@ def ingest_book(
             ingested_at=utc_now(),
         )
         write_book_meta(tmp_dir, meta)
-        write_manifest(tmp_dir)
-        if book_dir.exists():
-            shutil.rmtree(book_dir)
-        tmp_dir.rename(book_dir)
+        _swap_root_view(book_dir, tmp_dir)
+        write_manifest(book_dir)
         return IngestResult(book_id=book_id, page_count=page_count, sha256=digest, book_dir=book_dir)
-    except Exception:
+    finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
 
 
 def write_page_markdown(book_dir: Path, page_no: int, markdown: str) -> Path:

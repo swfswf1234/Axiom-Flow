@@ -2,8 +2,8 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览已实现；8900 透传适配待 REQ-001）
-最后更新：2026-09-20
+实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现；8900 透传适配待 REQ-001）
+最后更新：2026-09-21
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)
@@ -30,8 +30,15 @@
 | --- | --- | --- |
 | ① 生命周期与健康 | `GET /health` + `scripts/axiom_flow_service.py {start\|stop\|restart\|status}` | 服务启停/重启/健康检测 |
 | ② 数据查询（af_*） | `GET /books`、`GET/PATCH/DELETE /books/{id}`、`POST /books/sync`、`POST /books/{id}/ingest` | 书目同步与 CRUD、页图 ingest |
-| ③ 解析结果与 PDF 对照 | `GET /books/{id}/manifest`、`/pages/{no}`、`/pages/{no}/image`、`PUT /blocks/{index}/edit`、`GET /pages/{no}/edits`、`GET /books/{id}/chunks`、`POST /parse-jobs`、`GET /parse-jobs/{id}` | 解析进度、对照供给、块编辑、分块预览 |
+| ③ 解析结果与 PDF 对照 | `GET /books/{id}/manifest`、`/pages/{no}`、`/pages/{no}/image`、`PUT /blocks/{index}/edit`、`GET /pages/{no}/edits`、`GET /books/{id}/chunks`、`GET /books/{id}/versions`、`POST /parse-jobs`、`GET /parse-jobs/{id}` | 解析进度、对照供给、块编辑、分块预览、版本列举 |
 | ④ 未来 RAG·知识图谱预留 | 见「④ 预留分类」节 | Milvus 接入占位、检索端点设计 |
+
+**生效解析版本（2026-09-21，PLAN-004 / REQ-080）**：一本书的解析产物按版本落在
+`parsed/<domain>/<course>/<book_id>/versions/<job_id>/`，「哪一版生效」的唯一事实源是
+`af_books.active_job_id`（NULL = 根视图 legacy）。**所有读取端点（manifest/pages/image/chunks/
+edits）经该指针解析产物目录**，因此：① URL、响应结构与 `image_url` 字面量**零变化**，根仓库前端
+不需要适配；② 切版 = 单列 UPDATE，不改文件；③ 生效指针指向的版本目录缺失时**显式 404**，
+不静默回落根视图（ADR 0004 无自动兜底）。历史版本仅经 `GET /books/{id}/versions` 可见（只读列举）。
 
 ## 服务信息
 
@@ -48,10 +55,10 @@ sequenceDiagram
     participant AX as Axiom-Flow 8902
     participant MD as 本地模型服务（MinerU 等）
     FE->>GW: 书目同步 / 解析 / 对照 / 编辑
-    GW->>AX: /api/v1/books|sync|ingest|pages|edit|parse-jobs
+    GW->>AX: /api/v1/books|sync|ingest|pages|edit|chunks|versions|parse-jobs
     AX->>MD: 引擎适配器直连（页图 / PDF）
     MD-->>AX: 模型原始输出（markdown + 坐标）
-    AX->>AX: 归一化为统一 blocks + 落盘 parsed/
+    AX->>AX: 归一化为统一 blocks + 落盘 parsed/…/versions/<job_id>/
     AX-->>GW: 统一响应
     GW-->>FE: 统一响应
 ```
@@ -102,22 +109,24 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 
 ### GET /api/v1/books
 
-书目列表。返回 `BookMeta` 列表（扩展字段 domain_id/course_id/course_name/knowledge_id/part/
-display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
+书目列表。返回 `BookOut` 列表（扩展字段 domain_id/course_id/course_name/knowledge_id/part/
+display_title/file_path/ingest_status/parse_status/pages_done/**active_job_id** 向前兼容）。
+`pages_done` 与 `active_job_id` 一致地描述**生效版本**（V3）；`active_job_id=null` 表示读根视图。
 
 ### GET /api/v1/books/{book_id}
 
-单书目元数据（`BookMeta`）。**错误：** 404 书目不存在。
+单书目元数据（`BookOut`）。**错误：** 404 书目不存在。
 
 ### PATCH /api/v1/books/{book_id}
 
 修改书目（Axiom-Flow 自有字段，如 `notes`）。请求：`{notes?: string}`；响应：更新后
-`BookMeta`。**错误：** 404。
+`BookOut`。**错误：** 404。
 
 ### DELETE /api/v1/books/{book_id}
 
-删除 af_books 行与该书 `af_pages` 页行（`?purge=true` 时同时删除 `parsed/` 产物目录）。
-`af_parse_jobs` 历史行保留为审计，不随删除清理。**错误：** 404。
+删除 af_books 行、该书**全部解析版本**的 `af_pages` 页行与 `af_block_edits` 编辑行（`?purge=true`
+时同时删除 `parsed/` 产物目录，含 `versions/` 子树）。`af_parse_jobs` 历史行保留为审计，不随删除
+清理。**错误：** 404。
 
 ### POST /api/v1/books/sync
 
@@ -131,22 +140,29 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 
 渲染页图 + 生成 book.json（**不调模型**）：源 PDF（`QED_DATA_ROOT/<file_path>` 只读）→
 `parsed/<domain>/<course>/<book_id>/pages/p<NNNN>.png` + `book.json`（page_count/sha256）。
-响应：`{book_id, page_count, sha256, ingest_status}`。**重复 ingest 幂等**：原子替换产物目录
-（旧 blocks/markdown/chunks 一并作废），并回置 `parse_status=pending`、`pages_done=0`、清空该书
-`af_pages` 行（`af_parse_jobs` 与 `af_block_edits` 保留）。**错误：** 404 书目不存在 / 源 PDF 缺失。
+响应：`{book_id, page_count, sha256, ingest_status}`。**重复 ingest 幂等且版本安全（V8）**：原子
+替换的只是**根视图**（`book.json` + `pages/`），并作废根视图 `chunks.json`；`versions/` 子树
+**完整保留**（历史版本不因重新 ingest 失明）。DB 侧回置 `active_job_id=NULL`（生效指针回到根视图）、
+`parse_status=pending`、`pages_done=0`，并只清空 `job_id='legacy'` 的 `af_pages` 行（真实版本作用域
+的页行保留）；`af_parse_jobs` 历史与 `af_block_edits` 全部保留。**错误：** 404 书目不存在 / 源 PDF 缺失。
 
 ## ③ 解析结果与 PDF 对照
 
 块编辑端点（`PUT .../blocks/{index}/edit`）为 af_* 四表契约，**取代** 8900 现用的 `/review`
 （ok/bad）；8900 侧适配（`/review`→`/edit`、补 ingest/chunks 透传）由本仓库 `REQ-001` 请求承载。
 
+本节全部端点以**生效解析版本**为读取作用域（`af_books.active_job_id` → `versions/<job_id>/`；
+NULL → 书目录根 = 根视图 legacy）。
+
 ### GET /api/v1/books/{book_id}/manifest
 
-产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），响应为 `ManifestEntry` 列表。
+**生效版本**的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对该版本目录自身，响应为
+`ManifestEntry` 列表。根视图清单**排除 `versions/` 子树**（历史版本不混入当前版对账）。
 
 ### GET /api/v1/books/{book_id}/pages/{page_no}
 
-单页完整数据（对照主数据源）：结构化 blocks + 页级 markdown + 原页图 URL + 已合并的人工编辑。
+单页完整数据（对照主数据源）：**生效版本**的结构化 blocks + 页级 markdown + 原页图 URL + 已合并的
+人工编辑（编辑作用域与生效 `job_id` 一致）。
 
 ```json
 {
@@ -154,29 +170,41 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
              "blocks": [{"index": 0, "type": "paragraph", "text": "...", "bbox": [72, 96, 540, 132], "order": 0}]},
   "markdown": "# Page 1\n\n...（$$...$$ 内嵌公式）",
   "image_url": "/api/v1/books/{book_id}/pages/{page_no}/image",
-  "edits": [{"block_index": 0, "verdict": "ok", "note": "", "corrected_text": null, "corrected_bbox": null}]
+  "edits": [{"block_index": 0, "job_id": "pj_...", "verdict": "ok", "note": "", "corrected_text": null, "corrected_bbox": null}]
 }
 ```
 
+**`image_url` 是字面量常量**（`/api/v1/books/{book_id}/pages/{page_no}/image`）：版本化不引入版本
+段或查询参数，切版对前端透明（契约测试 S4 以常量钉住）。
+
 ### GET /api/v1/books/{book_id}/pages/{page_no}/image
 
-原页高清图（`image/png`，对照左栏），产物 `pages/p<NNNN>.png`。
+原页高清图（`image/png`，对照左栏），取**生效版本**目录下的 `pages/p<NNNN>.png`（版本内页图为根
+视图页图的硬链接，见 [parsing-pipeline.md](../design/parsing-pipeline.md)）。**错误：** 404 页图缺失。
 
 ### PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit
 
-块编辑 upsert（落 af_block_edits，同块重复编辑覆盖更新）。请求：
-`{verdict?: "ok"|"bad", note?: string, corrected_text?: string, corrected_bbox?: [x0,y0,x1,y1]}`；
-响应：编辑记录。
+块编辑 upsert（落 af_block_edits，**唯一键含生效版本 `job_id`**，同版本同块重复编辑覆盖更新）。
+请求：`{verdict?: "ok"|"bad", note?: string, corrected_text?: string, corrected_bbox?: [x0,y0,x1,y1]}`；
+响应：编辑记录（`EditRecord`，含 `job_id`）。编辑绑定其核对时的版本：块下标 `index` 只在版本内有意义，
+换版本后旧编辑不自动套用。
 
 ### GET /api/v1/books/{book_id}/pages/{page_no}/edits
 
-页内编辑列表（对照视图回显）。响应：`EditRecord[]`。
+页内编辑列表（对照视图回显）。作用域 = 生效版本；响应：`EditRecord[]`。
+
+### GET /api/v1/books/{book_id}/versions
+
+解析版本列举（**只读**，不切换生效指针）：按任务创建时间返回该书每次解析任务的自证信息，响应为
+`ParseVersionOut[]`（`job_id/engine/status/page_count/parsed/source_sha256/created_at/active`）。
+`active=true` 的行即 `af_books.active_job_id` 指向的版本；`parsed` 为该版本已解析页数。**错误：**
+404 书目不存在。
 
 ### GET /api/v1/books/{book_id}/chunks
 
-分块预览（blocks → chunk，派生数据，不入库）：读 `chunks.json`；带 `?max_chars=&overlap_blocks=`
-时基于页级 blocks 实时重算（不落盘）。响应：`ChunkSet`（book_id/params/chunks）。**错误：** 404
-书目不存在 / 分块未生成。
+分块预览（blocks → chunk，派生数据，不入库）：读**生效版本**的 `chunks.json`；带
+`?max_chars=&overlap_blocks=` 时基于该版本页产物实时重算（不落盘）。响应：`ChunkSet`
+（book_id/params/chunks）。**错误：** 404 书目不存在 / 分块未生成。
 
 ### POST /api/v1/parse-jobs
 
@@ -184,8 +212,12 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 页 = 逐页页图重解析；`engine` 为 `mineru`/`paddleocr-vl`/`qwen-vl` 之一，**缺省回落
 `AXIOM_OCR_ENGINE`**，未实现的槽位返回 400、非法字面值返回 422，**绝不回落到其他引擎**）。
 202 返回 `ParseJob`（queued/running/completed/failed），任务落 `af_parse_jobs`（`engine` 存**解析后
-的实际引擎名**）并由后台执行。失败页跳过不中断，`progress.error` 记录进行中失败页摘要（≤200
-字符），终态摘要写 `error`（≤500 字符）。**受理前门槛**：书目/产物校验 → 引擎名解析 → 模型服务
+的实际引擎名**）并由后台执行。每个任务即**一个解析版本**：产物只写
+`parsed/.../<book_id>/versions/<job_id>/`，并在运行时记录 `source_sha256`/`page_count` 自证
+（版本 ↔ 源 PDF 快照对应）。失败页跳过不中断，`progress.error` 记录进行中失败页摘要（≤200
+字符），终态摘要写 `error`（≤500 字符）。**激活门槛（V3）**：任务 `completed` 且版本产物校验通过
+才把 `af_books.active_job_id` 指向本版本；`failed` 或中断**不激活**，产物保留不删（自然回滚 = 指针
+从未动过）。**受理前门槛**：书目/产物校验 → 引擎名解析 → 模型服务
 探活（不可用 503，**不创建任务行**）。
 
 ### GET /api/v1/parse-jobs/{job_id}
@@ -199,6 +231,7 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 | --- | --- |
 | 参数非法（页码越界、verdict 非枚举、引擎槽位未实现等） | 400 |
 | book / page / job / 产物不存在 | 404（中文 detail，如「书目不存在：{id}」） |
+| **生效版本产物目录缺失** | 404 `生效版本产物缺失：{book_id} @ {job_id}`（指针所指版本目录被外部删除等；**不回落根视图**，ADR 0004 无自动兜底） |
 | 入参 schema 违规（安全路径段、引擎字面值、file_path 形态） | 422 |
 | 模型服务不可用（**提交期探活失败**，MinerU 未起等） | 503（提示经 8900 `/models/{slot}` 启停模型或检查 `QED_OCR_MODEL_URL`（5002））；**不创建任务行** |
 | 模型服务在任务受理后故障 | 202 已受理 → job `failed`（`error` 记原因），已解析页保留 |
@@ -220,15 +253,18 @@ display_title/file_path/ingest_status/parse_status/pages_done 向前兼容）。
 
 - 响应结构以 `src/axiom_flow/schemas.py` 为单一事实源；本文件与契约测试
   （`tests/contract/test_api_v1_contract.py`）同步守护。
-- 只读端点（books/pages/manifest/image/chunks/health）不依赖模型服务与凭据（独立性降级）；
+- 只读端点（books/pages/manifest/image/chunks/versions/health）不依赖模型服务与凭据（独立性降级）；
   仅提交解析任务时按需初始化引擎适配器，并只做**提交期探活**（不可用 503，不落任务行）。
+- **读取面的版本作用域只有一个入口**（`api/main.py:_read_scope`）：新增只读端点必须经它取
+  `(产物目录, job_id)`，不得自行拼 `book_dir`——否则会绕过生效指针、把 legacy 与版本视图混读。
 - 错误响应不泄漏堆栈与凭据；模型服务不可达映射为可读中文错误信息。
 - 新增/变更端点：先更新本文件与契约测试，再实现（根仓库 REQ-002 文档治理）。
 
 ## 验证
 
 - 契约测试 `tests/contract/test_api_v1_contract.py` 全绿（health/books/pages/image/manifest/
-  parse-jobs 返回结构与 schemas 一致）。
+  parse-jobs 返回结构与 schemas 一致；`TestParseVersions` 守护版本化：两版本并存读生效版、
+  `image_url` 字面量不变、重 ingest 后历史版本可直读、生效目录缺失 404）。
 - 全量门禁 `pytest tests -q` + `ruff check src tests`。
 - 手动冒烟：`python scripts/axiom_flow_service.py start --wait` → `GET /api/v1/health` 200 →
   `GET /api/v1/books` 返回书目 → `status` → `stop` → `status stopped`。

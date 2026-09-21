@@ -2,12 +2,22 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pymupdf
 import pytest
 
-from axiom_flow.ingest import book_dir_for, ingest_book, resolve_source_pdf
+from axiom_flow.ingest import (
+    book_dir_for,
+    build_manifest,
+    ingest_book,
+    link_pages_into,
+    resolve_source_pdf,
+    seed_version_from,
+    version_dir_for,
+    write_json,
+)
 from axiom_flow.schemas import BookMeta
 
 
@@ -96,6 +106,32 @@ class TestIngestBook:
         assert len(list(book_dir.glob("pages/*.png"))) == 5
         assert not list(book_dir.parent.glob(".b1.tmp-*"))  # 临时目录已清理
 
+    def test_reingest_preserves_versions_directory(self, tmp_path):
+        """V8/L3：重新 ingest 只替换根视图（`book.json` + `pages/`），历史解析版本目录保留。
+
+        旧实现 `rmtree(book_dir)` 会连 `versions/` 一起删掉——那等于把已解析结果永久删除。
+        """
+        data_root = tmp_path / "data"
+        book_dir = ingest_book(
+            book_id="b1", source_file=_source_pdf(tmp_path, name="first.pdf", pages=2), data_root=data_root
+        ).book_dir
+        version_dir = book_dir / "versions" / "job-a"
+        (version_dir / "pages").mkdir(parents=True)
+        (version_dir / "pages" / "p0001.blocks.json").write_text("{}", encoding="utf-8")
+        (book_dir / "chunks.json").write_text('{"book_id": "b1"}', encoding="utf-8")
+
+        ingest_book(
+            book_id="b1",
+            source_file=_source_pdf(tmp_path, name="second.pdf", pages=3, text="version two"),
+            data_root=data_root,
+        )
+
+        assert (version_dir / "pages" / "p0001.blocks.json").is_file()
+        assert len(list(book_dir.glob("pages/*.png"))) == 3
+        assert not (book_dir / "chunks.json").exists(), "旧根视图的派生文件一并作废"
+        assert not list(book_dir.parent.glob(".b1.tmp-*"))
+        assert not list(book_dir.parent.glob(".b1.old-*"))
+
     def test_rejects_non_pdf(self, tmp_path):
         data_root = tmp_path / "data"
         raw = data_root / "raw" / "fake.pdf"
@@ -135,3 +171,146 @@ class TestIngestBook:
         source_file = _source_pdf(tmp_path)
 
         assert resolve_source_pdf(tmp_path / "data", source_file).is_file()
+
+
+class TestVersionDir:
+    """解析版本目录（PLAN-004 / REQ-080）：`<book_dir>/versions/<job_id>/` 与页图硬链接。"""
+
+    def test_version_dir_lands_under_book_dir(self, tmp_path):
+        root = tmp_path / "data"
+
+        version_dir = version_dir_for(root, "d", "c", "b05", "job1")
+
+        assert version_dir == root / "parsed" / "d" / "c" / "b05" / "versions" / "job1"
+
+    def test_version_dir_rejects_unsafe_job_id(self, tmp_path):
+        """job_id 来自任务行但仍可能是历史脏值：与 book_id 同一道段规则闸。"""
+        with pytest.raises(ValueError, match="非法 job_id"):
+            version_dir_for(tmp_path / "data", "d", "c", "b05", "../../escape")
+
+    def test_root_manifest_excludes_versions_subtree(self, tmp_path):
+        """根清单只描述根视图：不递归历史版本，否则每次解析都重算全部旧产物（L6）。"""
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        version_dir = result.book_dir / "versions" / "job1"
+        (version_dir / "pages").mkdir(parents=True)
+        (version_dir / "pages" / "p0001.blocks.json").write_text("{}", encoding="utf-8")
+
+        paths = [entry.path for entry in build_manifest(result.book_dir)]
+
+        assert "book.json" in paths
+        assert not [p for p in paths if p.startswith("versions/")], paths
+
+    def test_version_manifest_is_relative_to_version_dir(self, tmp_path):
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        version_dir = result.book_dir / "versions" / "job1"
+        (version_dir / "pages").mkdir(parents=True)
+        (version_dir / "pages" / "p0001.blocks.json").write_text("{}", encoding="utf-8")
+
+        paths = [entry.path for entry in build_manifest(version_dir)]
+
+        assert paths == ["pages/p0001.blocks.json"]
+
+    def test_link_pages_into_hardlinks_root_page_image(self, tmp_path):
+        """页图硬链接而非复制：N 个版本不应让磁盘上的页图成倍增长（V4）。"""
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        version_dir = result.book_dir / "versions" / "job1"
+
+        linked = link_pages_into(result.book_dir / "pages", version_dir / "pages", 1)
+
+        assert linked == version_dir / "pages" / "p0001.png"
+        assert linked.is_file()
+        if linked.stat().st_nlink > 1:  # 平台支持硬链接时校验同一 inode
+            assert linked.stat().st_ino == (result.book_dir / "pages" / "p0001.png").stat().st_ino
+
+    def test_link_pages_into_falls_back_to_copy(self, tmp_path, monkeypatch):
+        """不支持硬链接的平台：回落到复制，产物仍可读（跨平台契约）。"""
+
+        def _no_link(*_args, **_kwargs):
+            raise OSError("link not supported")
+
+        monkeypatch.setattr(os, "link", _no_link)
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        version_dir = result.book_dir / "versions" / "job9"
+
+        linked = link_pages_into(result.book_dir / "pages", version_dir / "pages", 2)
+
+        assert linked.read_bytes() == (result.book_dir / "pages" / "p0002.png").read_bytes()
+
+    def test_link_pages_into_missing_root_image_returns_none(self, tmp_path):
+        """根视图没有该页图时不造空文件：让上层按页失败，而不是产出损坏版本。"""
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+
+        linked = link_pages_into(
+            result.book_dir / "pages", result.book_dir / "versions" / "j" / "pages", 99
+        )
+
+        assert linked is None
+        assert not (result.book_dir / "versions" / "j" / "pages" / "p0099.png").exists()
+
+
+class TestSeedVersion:
+    """版本基线写时复制：新版本从上一生效作用域继承产物，缺一页就永远不齐（V3 激活门槛的前提）。"""
+
+    def test_seed_links_previous_artifacts(self, tmp_path):
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        (result.book_dir / "pages" / "p0001.blocks.json").write_text("{}", encoding="utf-8")
+        version_dir = result.book_dir / "versions" / "job2"
+
+        seeded = seed_version_from(result.book_dir, version_dir)
+
+        assert (version_dir / "book.json").is_file()
+        assert (version_dir / "pages" / "p0001.png").is_file()
+        assert (version_dir / "pages" / "p0001.blocks.json").is_file()
+        assert seeded == 5  # book.json + 3 页图 + 1 页 blocks
+        if (version_dir / "pages" / "p0001.png").stat().st_nlink > 1:
+            assert (version_dir / "pages" / "p0001.png").stat().st_ino == (
+                result.book_dir / "pages" / "p0001.png"
+            ).stat().st_ino
+
+    def test_seed_skips_derived_and_previous_versions(self, tmp_path):
+        """manifest/chunks 由本次重算；`versions/` 子树不递归继承（否则版本指数级嵌套）。"""
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        old = result.book_dir / "versions" / "job1"
+        (old / "pages").mkdir(parents=True)
+        (old / "pages" / "p0001.blocks.json").write_text("{}", encoding="utf-8")
+        (old / "manifest.json").write_text("[]", encoding="utf-8")
+        (old / "chunks.json").write_text("{}", encoding="utf-8")
+
+        seeded = seed_version_from(old, result.book_dir / "versions" / "job2")
+
+        paths = sorted(p.relative_to(result.book_dir / "versions" / "job2").as_posix() for p in (result.book_dir / "versions" / "job2").rglob("*") if p.is_file())
+        assert paths == ["pages/p0001.blocks.json"]
+        assert seeded == 1
+
+    def test_seed_is_idempotent_and_tolerates_missing_source(self, tmp_path):
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        version_dir = result.book_dir / "versions" / "job3"
+
+        first = seed_version_from(result.book_dir, version_dir)
+        second = seed_version_from(result.book_dir, version_dir)
+
+        assert first == 4
+        assert second == 0, "重跑同一版本不重复接入（幂等）"
+        assert seed_version_from(result.book_dir / "nope", result.book_dir / "versions" / "job4") == 0
+
+    def test_overwriting_a_seeded_file_leaves_the_original_intact(self, tmp_path):
+        """原子替换只换目录项：新版本写 blocks 不会污染上一版本（硬链接继承的前提）。"""
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        source_blocks = result.book_dir / "pages" / "p0001.blocks.json"
+        source_blocks.write_text("旧内容", encoding="utf-8")
+        version_dir = result.book_dir / "versions" / "job5"
+        seed_version_from(result.book_dir, version_dir)
+
+        write_json(version_dir / "pages" / "p0001.blocks.json", "新内容")
+
+        assert source_blocks.read_text(encoding="utf-8") == "旧内容"
+        assert (version_dir / "pages" / "p0001.blocks.json").read_text(encoding="utf-8").strip() == "新内容"

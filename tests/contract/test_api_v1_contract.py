@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pymupdf
@@ -379,16 +380,200 @@ class TestParseJobsEndpoints:
         assert client.get("/api/v1/parse-jobs/does-not-exist").status_code == 404
 
 
+class TestParseVersions:
+    """PLAN-004 / REQ-080 读取面：生效版本唯一指针、URL 契约不变、版本列举与重 ingest 共存。"""
+
+    #: S4：根仓库前端硬编码的字面量模板——版本化改造后必须逐字不变。
+    IMAGE_URL_TEMPLATE = "/api/v1/books/{book_id}/pages/{page_no}/image"
+
+    def _book_dir(self, tmp_path) -> Path:
+        return tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05"
+
+    def test_book_out_exposes_active_job_id(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            assert client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"] is None
+
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+
+            assert client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"] == job_id
+            listed = client.get("/api/v1/books").json()[0]
+            assert listed["active_job_id"] == job_id
+
+    def test_page_urls_and_image_url_literal_unchanged(self, tmp_path, monkeypatch):
+        """S4：读取端点换的是目录，不是 URL；页图字面量模板逐字不变。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+
+            payload = client.get("/api/v1/books/mathanalysis-b05/pages/1").json()
+
+            assert payload["image_url"] == self.IMAGE_URL_TEMPLATE.format(book_id="mathanalysis-b05", page_no=1)
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1/image").status_code == 200
+
+    def test_second_version_replaces_the_effective_one(self, tmp_path, monkeypatch):
+        """S1：两版本并存，端点只出生效版；历史版留在磁盘上可读。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            first = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            second = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [2]}
+            ).json()["id"]
+
+            assert second != first
+            assert client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"] == second
+            page2 = client.get("/api/v1/books/mathanalysis-b05/pages/2").json()
+            assert page2["blocks"]["blocks"][0]["text"] == "第 2 页重解析"
+            # 未重解析的第 1 页由版本基线继承，端点继续可读（生效版本是完整快照）
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 200
+            book_dir = self._book_dir(tmp_path)
+            assert (book_dir / "versions" / first / "pages" / "p0002.blocks.json").is_file()
+            assert (book_dir / "versions" / second / "pages" / "p0002.blocks.json").is_file()
+            assert "重解析" in (book_dir / "versions" / second / "pages" / "p0002.md").read_text(
+                encoding="utf-8"
+            )
+            assert "重解析" not in (book_dir / "versions" / first / "pages" / "p0002.md").read_text(
+                encoding="utf-8"
+            )
+
+    def test_manifest_serves_the_effective_version(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+
+            entries = client.get("/api/v1/books/mathanalysis-b05/manifest").json()
+
+            paths = {entry["path"] for entry in entries}
+            assert {"book.json", "chunks.json", "pages/p0001.png", "pages/p0001.blocks.json"} <= paths
+            assert not [p for p in paths if p.startswith("versions/")], "根清单不递归历史版本"
+            assert all("manifest.json" != p for p in paths)
+            # 指纹对得上生效版本目录里的真实文件
+            version_dir = self._book_dir(tmp_path) / "versions" / job_id
+            entry = next(item for item in entries if item["path"] == "pages/p0001.blocks.json")
+            assert entry["size"] == (version_dir / "pages" / "p0001.blocks.json").stat().st_size
+
+    def test_versions_endpoint_lists_parse_versions(self, tmp_path, monkeypatch):
+        """V9：版本列举供对照视图切换/审计（只读，不改变生效指针）。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            first = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            second = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [2]}
+            ).json()["id"]
+
+            versions = client.get("/api/v1/books/mathanalysis-b05/versions").json()
+
+            assert [item["job_id"] for item in versions] == [first, second]
+            assert [item["active"] for item in versions] == [False, True]
+            assert versions[0]["engine"] == "mineru"
+            assert versions[0]["status"] == "completed"
+            assert versions[0]["page_count"] == 2
+            assert versions[0]["parsed"] == 2
+            assert len(versions[0]["source_sha256"]) == 64
+            assert versions[0]["created_at"] is not None
+            assert versions[1]["parsed"] == 2, "继承页计入该版本的已解析页数"
+
+    def test_edits_are_written_against_the_effective_version(self, tmp_path, monkeypatch):
+        """块编辑绑定其所属版本：换版本后旧编辑不污染新解析结果（V7）。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            first = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            edited = client.put(
+                "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+                json={"verdict": "bad", "note": "旧版判错"},
+            )
+            assert edited.status_code == 200, edited.text
+            assert edited.json()["job_id"] == first
+
+            second = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [1]}
+            ).json()["id"]
+
+            merged = client.get("/api/v1/books/mathanalysis-b05/pages/1").json()
+            assert merged["edits"] == [], "新版本的块下标语义不同，旧编辑不得直接套用"
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1/edits").json() == []
+            assert client.get(f"/api/v1/parse-jobs/{second}").status_code == 200
+
+    def test_missing_effective_version_directory_returns_404(self, tmp_path, monkeypatch):
+        """生效指针指向已被删掉的目录：显式 404，不静默回落根视图（ADR 0004 无兜底）。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            shutil.rmtree(self._book_dir(tmp_path) / "versions" / job_id)
+
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 404
+            assert client.get("/api/v1/books/mathanalysis-b05/manifest").status_code == 404
+            assert client.get("/api/v1/books/mathanalysis-b05/chunks").status_code == 404
+
+    def test_reingest_preserves_versions_and_falls_back_to_root_view(self, tmp_path, monkeypatch):
+        """S6：重 ingest 只替换根视图；历史版本目录与页行保留，读取回到根视图。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            book_dir = self._book_dir(tmp_path)
+
+            _ingest(client)
+
+            assert client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"] is None
+            assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 404
+            assert (book_dir / "versions" / job_id / "pages" / "p0001.blocks.json").is_file()
+            with session_factory() as session:
+                rows = session.scalars(select(AfPage).where(AfPage.job_id == job_id)).all()
+            assert len(rows) == 2, "版本作用域页行不随重 ingest 删除（V8）"
+            # 页图数量不翻倍（V4 回归钉）：重 ingest 重建根视图，版本目录共享同一批 inode
+            root_pngs = sorted((book_dir / "pages").glob("p*.png"))
+            assert len(root_pngs) == 2
+            version_pngs = sorted((book_dir / "versions" / job_id / "pages").glob("p*.png"))
+            assert len(version_pngs) == 2
+
+    def test_purge_deletes_the_whole_book_tree(self, tmp_path, monkeypatch):
+        """purge 删整本书（含 versions/），非 purge 只删行不动文件。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            book_dir = self._book_dir(tmp_path)
+            assert client.delete("/api/v1/books/mathanalysis-b05").status_code == 200
+            assert book_dir.is_dir(), "非 purge 不删产物"
+
+            _sync_book(client)
+            _ingest(client)
+            client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+            assert client.delete("/api/v1/books/mathanalysis-b05?purge=true").status_code == 200
+
+            assert not book_dir.exists()
+            with session_factory() as session:
+                assert session.scalars(select(AfPage).where(AfPage.job_id == job_id)).all() == []
+
+
 def test_manifest_json_is_readable_on_disk(client, tmp_path):
-    """产物事实源：chunks.json 为合法 JSON 且含溯源字段。"""
+    """产物事实源：生效版本的 chunks.json 为合法 JSON 且含溯源字段。"""
     _sync_book(client)
     _ingest(client)
-    assert client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).status_code == 202
+    job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
 
     book_dir = tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05"
-    payload = json.loads((book_dir / "chunks.json").read_text(encoding="utf-8"))
+    payload = json.loads((book_dir / "versions" / job_id / "chunks.json").read_text(encoding="utf-8"))
     assert payload["book_id"] == "mathanalysis-b05"
     assert payload["chunks"][0]["block_refs"]
+
 
 
 class TestEngineDispatch:
@@ -501,7 +686,7 @@ class TestDataBoundary:
 
 
 class TestIngestIdempotency:
-    """W6：重复 ingest 回置解析状态并清页行；purge 删页行留任务行（条文 8）。"""
+    """W6：重复 ingest 回置解析状态并只清根视图页行；purge 删页行留任务行（条文 8 + V8）。"""
 
     def test_reingest_resets_parse_state_and_keeps_job_history(self, tmp_path, monkeypatch):
         test_client, session_factory = _build(tmp_path, monkeypatch)
@@ -513,7 +698,7 @@ class TestIngestIdempotency:
             assert created.json()["status"] == "completed"
             assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 200
 
-            _ingest(client)  # 重复 ingest：产物目录原子替换
+            _ingest(client)  # 重复 ingest：只原子替换根视图
 
             book = client.get("/api/v1/books/mathanalysis-b05").json()
             assert book["parse_status"] == "pending"
@@ -521,7 +706,17 @@ class TestIngestIdempotency:
             assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 404
             assert client.get(f"/api/v1/parse-jobs/{job_id}").status_code == 200
             with session_factory() as session:
-                assert session.scalars(select(AfPage).where(AfPage.book_id == "mathanalysis-b05")).all() == []
+                assert (
+                    session.scalars(
+                        select(AfPage).where(AfPage.book_id == "mathanalysis-b05", AfPage.job_id == "legacy")
+                    ).all()
+                    == []
+                )
+                assert len(
+                    session.scalars(
+                        select(AfPage).where(AfPage.book_id == "mathanalysis-b05", AfPage.job_id == job_id)
+                    ).all()
+                ) == 2
 
     def test_purge_deletes_page_rows(self, tmp_path, monkeypatch):
         test_client, session_factory = _build(tmp_path, monkeypatch)

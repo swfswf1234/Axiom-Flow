@@ -2,20 +2,29 @@
 
 规则（docs/design/parsing-pipeline.md）：临时文件 → 校验 → 原子替换，不留半成品；
 manifest 排除自身与隐藏临时文件；路径一律 POSIX 相对路径（跨平台契约稳定）。
+解析产物按版本划分（PLAN-004）：一次解析任务的全部产物落在 `<book_dir>/versions/<job_id>/`，
+页图从根视图硬链接而来（多版本共图不翻倍占盘）。
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
+import shutil
 import uuid
 from pathlib import Path
 
 from axiom_flow.schemas import SAFE_SEGMENT_PATTERN, BookMeta, ManifestEntry
 
+logger = logging.getLogger(__name__)
+
 _SEGMENT_RE = re.compile(SAFE_SEGMENT_PATTERN)
+
+#: 版本产物子树目录名：根清单必须排除它，否则每次解析都要重算全部历史版本。
+VERSIONS_DIRNAME = "versions"
 
 
 def ensure_safe_segment(value: str, kind: str, *, allow_empty: bool = False) -> str:
@@ -48,6 +57,74 @@ def book_dir_for(data_root: Path | str, domain_id: str, course_id: str, book_id:
     book_dir = Path(data_root) / "parsed" / domain_id / course_id / book_id
     ensure_within(data_root, book_dir)
     return book_dir
+
+
+def version_dir_for(
+    data_root: Path | str, domain_id: str, course_id: str, book_id: str, job_id: str
+) -> Path:
+    """解析版本目录：`<book_dir>/versions/<job_id>/`（一次任务一个版本，互不覆盖）。"""
+    ensure_safe_segment(job_id, "job_id")
+    version_dir = book_dir_for(data_root, domain_id, course_id, book_id) / VERSIONS_DIRNAME / job_id
+    ensure_within(data_root, version_dir)
+    return version_dir
+
+
+def link_pages_into(root_pages_dir: Path, version_pages_dir: Path, page_no: int) -> Path | None:
+    """把根视图页图接入版本目录，返回目标路径；根视图缺该页图时返回 `None`。
+
+    硬链接而非复制：页图是产物里最大的一块，按版本复制会让磁盘随解析次数线性膨胀。
+    平台不支持硬链接（跨文件系统、部分 Windows 文件系统）时回落到复制并告警——
+    此处**必须**留可见信号，否则容量问题只会以「磁盘莫名满了」的形式回来。
+    """
+    source = root_pages_dir / f"p{page_no:04d}.png"
+    if not source.is_file():
+        return None
+    version_pages_dir.mkdir(parents=True, exist_ok=True)
+    target = version_pages_dir / source.name
+    if target.is_file():
+        return target
+    return _link_file(source, target)
+
+
+#: 版本目录不继承的派生文件：每次解析必然重算，留着只会给出旧指纹。
+_NOT_SEEDED = frozenset({"manifest.json", "chunks.json"})
+
+
+def seed_version_from(source_dir: Path, version_dir: Path) -> int:
+    """把上一生效作用域的产物接入新版本目录，返回接入文件数（写时复制的版本基线）。
+
+    一个版本必须是**完整快照**：逐页重解析只改写它碰过的页，其余页继承上一版，否则新版本
+    天生缺一半页，永不可能满足激活门槛，读取端也会在看不到产物时退回旧作用域。
+    硬链接安全性依赖原子替换（`os.replace` 只换目录项），因此新版本覆写不会破坏上一版。
+    """
+    if not source_dir.is_dir():
+        return 0
+    seeded = 0
+    for path in sorted(source_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(source_dir)
+        if relative.parts[0] == VERSIONS_DIRNAME or relative.name in _NOT_SEEDED:
+            continue
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        target = version_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_file():
+            continue
+        _link_file(path, target)
+        seeded += 1
+    return seeded
+
+
+def _link_file(source: Path, target: Path) -> Path:
+    """硬链接单个文件，失败时回落复制（同一处兜底逻辑，供页图接入与版本基线共用）。"""
+    try:
+        os.link(source, target)
+    except OSError:
+        logger.warning("硬链接失败，回落复制：%s → %s", source, target)
+        shutil.copy2(source, target)
+    return target
 
 
 def sha256_file(path: Path) -> str:
@@ -104,13 +181,19 @@ def read_book_meta(book_dir: Path) -> BookMeta:
 
 
 def build_manifest(book_dir: Path) -> list[ManifestEntry]:
-    """产物清单：相对路径 + 大小 + SHA-256（排除 manifest.json 自身与隐藏文件）。"""
+    """产物清单：相对路径 + 大小 + SHA-256（排除 manifest.json 自身与隐藏文件）。
+
+    对根视图调用时额外排除 `versions/` 子树——历史版本各有自己的清单，混进根清单会让
+    「本次解析写了什么」失去意义，且每页都要重算哈希。
+    """
     entries: list[ManifestEntry] = []
     for path in sorted(book_dir.rglob("*")):
         if not path.is_file():
             continue
         relative = path.relative_to(book_dir)
         if relative.name == "manifest.json" or any(part.startswith(".") for part in relative.parts):
+            continue
+        if relative.parts[0] == VERSIONS_DIRNAME:
             continue
         entries.append(
             ManifestEntry(

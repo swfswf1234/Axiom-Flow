@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（预处理/引擎适配/归一化/分块/编排/落盘全链路已实现；2026-09-20 真机小样打通（整本 + 逐页 + 失败注入 + kill 续跑）；**bbox 坐标空间契约已于 2026-09-21 实现并真机复验（DEFECT-004 关闭）**，块类型字面值缺口仍待修（DEFECT-005）；486 页全量与代表书质量验收待 ARCH-009）
+实现状态：Current（预处理/引擎适配/归一化/分块/编排/落盘全链路已实现；2026-09-20 真机小样打通（整本 + 逐页 + 失败注入 + kill 续跑）；**bbox 坐标空间契约已于 2026-09-21 实现并真机复验（DEFECT-004 关闭）**；**块类型字面值映射与可见丢弃计数同日实现（DEFECT-005 关闭，真机复验待 MinerU 起服务）**；**解析产物按版本划分（`versions/<job_id>/` + 生效指针）已于 2026-09-21 实现并在本地闭环取证（PLAN-004 / REQ-080），真机取证待 B→C→D 单窗口**；486 页全量与代表书质量验收待 ARCH-009）
 最后更新：2026-09-21
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_engines.py`、`tests/unit/test_normalize.py`、`tests/unit/test_chunking.py`、`tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`、`tests/smoke/test_live_mineru_chain.py`
@@ -43,13 +43,13 @@
 flowchart LR
     subgraph WIN["Axiom-Flow 8902（Windows）"]
         API["api/ 协议适配"]
-        OR["orchestrator/ 任务编排<br/>af_parse_jobs + af_pages"]
+        OR["orchestrator/ 任务编排<br/>af_parse_jobs + af_pages(按版本)"]
         ING["ingest/ 预处理<br/>PDF→页图 + book.json"]
         ENG["engines/ 引擎适配器"]
         NRM["normalize/ 后处理<br/>统一 blocks + Markdown"]
         CHK["normalize/chunking<br/>blocks→chunks"]
         SCH["schemas.py 统一模型"]
-        ST["产物落盘<br/>QED_DATA_ROOT/parsed/"]
+        ST["产物落盘<br/>parsed/…/versions/&lt;job_id&gt;/"]
     end
     subgraph MODELS["本地模型服务（8900 启停托管）"]
         MRU["MinerU 5002"]
@@ -94,12 +94,17 @@ flowchart LR
 ├── tmp/                                        # 根仓库工作区；**本服务不写数据根 tmp**（见下）
 └── parsed/<domain_id>/<course_id>/<book_id>/
     ├── book.json            # book_id/title/authors/page_count/sha256/source_file/engine/ingested_at
-    ├── manifest.json        # 产物清单（路径 + 大小 + SHA-256）
-    ├── chunks.json          # 分块（派生、不入库、可重建）
-    └── pages/
-        ├── p0001.png        # 原页图（150 DPI，对照左栏 + bbox 基准）
-        ├── p0001.md         # 页级 Markdown（$$...$$ / $...$ 内嵌公式）
-        └── p0001.blocks.json  # 统一 blocks（结构化，含 bbox）
+    ├── manifest.json        # 根视图清单（路径 + 大小 + SHA-256；**不递归 versions/**）
+    ├── pages/               # 原页图正本（ingest 拥有，150 DPI，对照左栏 + bbox 基准）
+    │   └── p0001.png
+    └── versions/<job_id>/   # 一次解析任务 = 一个完整快照版本（见「解析版本与生效指针」）
+        ├── book.json        # 自基线继承（使版本目录自解释）
+        ├── manifest.json    # 版本内清单，路径相对该版本目录
+        ├── chunks.json      # 分块（派生、不入库、可重建）
+        └── pages/
+            ├── p0001.png            # 与根页图同 inode 的硬链接（回落复制时告警）
+            ├── p0001.md             # 页级 Markdown（$$...$$ / $...$ 内嵌公式）
+            └── p0001.blocks.json    # 统一 blocks（结构化，含 bbox）
 ```
 
 - 页文件名唯一格式：`p<NNNN>.png` / `p<NNNN>.md` / `p<NNNN>.blocks.json`，`NNNN` = 页码 1 基
@@ -148,14 +153,56 @@ flowchart LR
   真机端到端复核（合成 A4 五行已知点坐标锚点，整本路径）：5/5 块平均 IoU **0.93**、最大偏移 **7px**，
   旧实现同一判据下 IoU **0.01** 且两块被夹取到页边（[DEFECT-004](../trackers/completed.md) 关闭证据
   `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`、`L3d_coord_space.json`）。
-- **引擎类型字面值（同一轮测定）**：`content_list[].type` 真机出现 `text` / `header` / `footer`
-  （非 `page_header`/`page_footer`）；映射表未覆盖的字面值必须**可见丢弃**（计入质量信号），不得
-  静默丢块造成页内 `index` 漂移（[DEFECT-005](../trackers/todo.md)）。
+- **引擎类型字面值（同一轮测定，2026-09-21 实现）**：`content_list[].type` 真机出现 `text` /
+  `header` / `footer`（非 `page_header`/`page_footer`）；映射表未覆盖的字面值必须**可见丢弃**
+  （计入质量信号），不得静默丢块造成页内 `index` 漂移。实现：`_TYPE_MAP` 同时收录 `header`/`footer`
+  与旧版 `page_header`/`page_footer`（并存以免版本回退）；`normalize_page` 逐条统计丢弃，
+  `QualityMetrics.dropped_block_count` 记丢弃条数、`dropped_types` 记被丢弃条目的原始 `type`
+  字面值（去重升序），因此「引擎返回 n 项 / 归一 m 块」的差额始终可解释，且 `index` 只在存活块上
+  连续编号（[DEFECT-005](../trackers/completed.md) 关闭）。必需字段缺失（表格无 HTML、公式无
+  LaTeX、图片无路径、列表无条目）同样计入该计数，不做占位补块。整页 markdown 回退（引擎**未回任何
+  结构化条目**时铺满全页的单个 paragraph 块）只在 `content_list` 为空时触发：回了条目却全部未能归一
+  时**不回退**，否则映射缺口会被伪装成一个正文块。由此对账不变式恒成立：
+  `原始条目数 = 存活块数 + dropped_block_count`。
+- **映射表变更的追溯影响**：`af_block_edits` 以 `(book_id, job_id, page_no, block_index)` 为唯一
+  定位键，而 `index` 是归一化后数组下标 —— 映射表增删字面值会改变同页存活块的下标含义。因此
+  **映射表版本与产物必须成对**，且编辑绑定它核对时所在的那个解析版本：换版本后旧编辑不自动套用
+  （块下标语义不同）。修复前落盘的产物与其 `index` 不回溯修正，需重解析后在新版本上重建编辑
+  （2026-09-21 改键时真机 `af_block_edits` 为 0 行，无需数据搬迁）。
 - `index` 为页内块数组下标（0 基，与块编辑定位一致）；`order` 为阅读顺序。
+
+## 解析版本与生效指针（PLAN-004 / REQ-080）
+
+「重新解析一本书」不覆盖上一次的产物：**一次解析任务 = 一个解析版本**，规则如下（承接根仓库
+`dataset-conventions.md` 的 REQ-080；实现体在 `orchestrator/pipeline.run_parse_job` 与
+`ingest/artifacts.py`）。
+
+| # | 条文 | 实现要点 |
+| --- | --- | --- |
+| V1 | **版本目录唯一落点**：解析产物只写 `<book_dir>/versions/<job_id>/`，内部布局与根布局同构；`job_id`（`uuid4().hex[:12]`）仍过 `ensure_safe_segment()` + `ensure_within()` 双闸 | `version_dir_for()`；版本目录从**第一页产物写入起**就是目标目录，不存在「先写别处、成功末尾再搬」的阶段（那会与条文 3 的页级持久化不变式冲突） |
+| V2 | **生效指针唯一事实源 = `af_books.active_job_id`**（`NULL` = 根视图 legacy）；`af_parse_jobs` 不存布尔「生效」列，避免同一事实两处漂移 | `BookRepository.set_active_job()` 单列 UPDATE |
+| V3 | **激活门槛**：任务终态 `completed`、**无失败页**且目标页全部 `parsed` 并产物在位、`chunks.json` 与 `manifest.json` 重算成功后，才把指针交给该版本；`failed`/中断/校验不过**不激活**，文件保留在 `versions/` 下供排查，不自动删除、也不被端点读到 | 运行中被杀 → 指针仍指旧版，读取端不可能看到半版本 |
+| V4 | **版本是完整快照（写时复制播种）**：新版本先按 `os.link` 从**当前生效作用域**（`active_job_id` 指向的版本目录，为空则根视图）继承页图与既有页产物，再写本次目标页；跳过 `manifest.json`/`chunks.json` 派生文件与 `versions/` 子树 | `seed_version_from()` + `link_pages_into()`；页图硬链接失败回落 `copy2` 并 `WARNING`。逐页重解析因此不必重跑整本，且旧版本的文件条目不受影响（`os.replace` 只换目录项） |
+| V5 | **manifest 基准 = 版本目录内 POSIX 相对路径**（`pages/p0001.blocks.json`），不带 `versions/<job_id>/` 前缀（该字段经 8900 原样透传给前端）；根 `manifest.json` 只描述 ingest 级文件，`build_manifest()` 显式排除 `versions/` 子树与隐藏临时文件 | `ingest/artifacts.build_manifest()` |
+| V10 | **不引入数据根暂存**：引擎中间产物只在内存，版本目录之外不得产生中间产物；`<data_root>/tmp/axiom-flow/` 恒不应存在，存在即缺陷 | 契约用例断言数据根只有 `raw/` 与 `parsed/` |
+
+配套的三个不变式：
+
+1. **页行与版本产物同构**：新版本播种后把基线里「已 `parsed` 且产物在位」的页行复制进本版本作用域
+   （`_inherit_page_rows`），因此 `af_pages` 始终如实描述该版本的内容，`af_books.pages_done` 描述的
+   是**生效版本**的页数。
+2. **续跑作用域 = `(book_id, job_id)`**：同一 job 重跑时，状态 `parsed` **且** `blocks.json` 在位的页
+   跳过引擎调用（不重解析、不重复落盘）；只认页行不够——产物缺失时宁可重解析也不给出空版本。
+3. **版本自证**：`af_parse_jobs.source_sha256` 与 `page_count` 在建任务后、调用引擎前写入，使「这一版
+   解析的是哪份文件、当时全书多少页」在行内可证，不依赖根视图当前状态。
+
+只读版本列举见 `GET /api/v1/books/{book_id}/versions`（`architecture/api.md` V6/V9）；**切换/回滚的写入
+端点与旧版本清理都不在本契约内**（清理属 D 类数据操作，需用户确认）。天然回滚方式：把
+`active_job_id` 置回 `NULL` 即回到根视图行为，不搬动任何文件。
 
 ## 分块（blocks → chunk）
 
-分块产物 `chunks.json`（书级，派生文件，不入库）：
+分块产物 `chunks.json`（**每个解析版本一份**，落在该版本目录内；派生文件，不入库）：
 
 ```json
 {
@@ -172,7 +219,7 @@ flowchart LR
 ```
 
 切分规则（数学文档感知；`GET /books/{id}/chunks` 带参数时为**实时重算、不落盘**，落盘版本由解析
-收尾重建）：
+收尾在**该版本目录内**重建）：
 
 1. 输入为**书级有序块序列**（页序 + `order`），跨页合并；
 2. `heading` 结束当前 chunk 并作为新 chunk 开头（保留标题上下文）；
@@ -186,9 +233,9 @@ flowchart LR
 
 | 模块 | 职责 |
 | --- | --- |
-| `api/` | 对外 `/api/v1` 路由，只做协议适配（契约见 `../architecture/api.md`） |
-| `orchestrator/` | 解析任务编排：接收 job → 默认全本/逐页 → 调引擎 → 归一化 → 分块 → 落盘 → 更新 af_parse_jobs/af_pages/af_books |
-| `ingest/` | 预处理：PDF 导入、渲染页图（150 DPI）、生成 book.json（含 SHA-256/page_count）；源 PDF 只读不复制 |
+| `api/` | 对外 `/api/v1` 路由，只做协议适配；读取面经「生效版本解析」唯一入口定位目录（契约见 `../architecture/api.md`） |
+| `orchestrator/` | 解析任务编排：接收 job → 播种版本基线 → 默认全本/逐页 → 调引擎 → 归一化 → 分块 → **写版本目录** → 更新 af_parse_jobs/af_pages → 校验通过后激活版本 |
+| `ingest/` | 预处理：PDF 导入、渲染页图（150 DPI）、生成 book.json（含 SHA-256/page_count）、版本目录与硬链接工具（`version_dir_for`/`link_pages_into`/`seed_version_from`）；源 PDF 只读不复制；重复 ingest 只替换根视图 |
 | `engines/` | 引擎适配器：调用模型服务，返回原始输出（见 [model-integration.md](model-integration.md)） |
 | `normalize/` | 后处理：引擎原始输出 → 统一 blocks（坐标归一、类型映射、阅读序）+ Markdown + 质量信号 |
 | `normalize/chunking` | 分块：书级 blocks → chunks（溯源完整、可重建） |
@@ -203,7 +250,7 @@ flowchart LR
 | 结果载荷非 JSON | 归一为 `EngineError`；`JSONDecodeError` 等内部异常不得穿透编排层（否则任务回滚会吞掉已解析页行） |
 | 页质量信号不达标 | 记录质量信号并标记；不自动切换引擎（用户裁决不设自动兜底） |
 | 模型服务未启动 | **两段语义**：提交期探活（参数校验后、落库前）失败 → 503 且**不创建 job 行** + 提示经 8900 `/models/{slot}` 启停模型；任务受理后的故障 → job `failed` |
-| 电源中断/进程被杀 | 每页成功/失败即 `session.commit()`，且**产物写先于页行提交**（不变式：有页行必有产物）→ 重启后按 af_pages 续跑「无行 ∪ failed」页 |
+| 电源中断/进程被杀 | 每页成功/失败即 `session.commit()`，且**产物写先于页行提交**（不变式：有页行必有产物）→ 重启后在**同一版本作用域** `(book_id, job_id)` 内续跑「无行 ∪ failed」页；未激活的版本指针不动，读取端继续看到上一个完整版本 |
 | 模型服务不可达 | API 层错误映射为可读中文错误信息，不泄漏堆栈 |
 
 进度写入节流：`af_parse_jobs.progress` 在「距上次写入 ≥1 秒」或「每处理满 10 页」时覆写一次，
@@ -211,7 +258,10 @@ flowchart LR
 `persist_per_page=False` 仅供性能排查退回调用方统一提交，不是静默兜底路径。
 
 质量信号（每页随 blocks.json 落盘，`QualityMetrics`）：空块率、formula 平均置信度、table
-解析成功数、页文本长度与原生文本长度比值（扫描件无原生文本则跳过）。
+解析成功数、页文本长度与原生文本长度比值（扫描件无原生文本则跳过）、**可见丢弃计数**
+（`dropped_block_count` + `dropped_types`：引擎返回但未能归一的条目数及其原始 `type` 字面值，
+去重升序）。丢弃必须可计数、可归因：信号里 `dropped_block_count > 0` 即表示映射表有缺口，
+人工据此判定是否补映射，而不是页面看起来「解析得干净」。
 
 ### 验收标准
 
