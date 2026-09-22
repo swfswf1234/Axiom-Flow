@@ -118,12 +118,34 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 **「范围」节已按上述形状改写**；S1~S4 判据不变（S1 六态原值、S2 三类形态、S3 自证字段、S4 零写入
 零磁盘路径泄漏全部已落进上述形状）。
 
+### W2 仓储查询（2026-09-22）
+
+先红灯：`tests/unit/test_db.py` 新增 `TestParseJobListQuery`（7 条）/ `TestPageStateQuery`（3 条）/
+`TestEditCountByPage`（3 条），13 条全部以 `AttributeError: '...Repository' object has no attribute ...`
+转红（形状正确性红灯，非夹具错误）；实现后 `tests/unit` 346 条全绿、`ruff check src tests` clean。
+
+- `ParseJobRepository.list_all(*, status, book_id, limit, offset) -> (rows, total)`
+  （`repositories.py:255`）：`total` 与行集**共用同一组条件**且为分页前计数，否则客户端无法判断还有
+  没有下一页；倒序双键 `created_at DESC, job_id DESC` 的回归判据是「同秒三任务」用例（MySQL 秒级精度）。
+  未知 `status` 值给**空集而非全量**——枚举合法性由 API 层判 422，仓储面不得静默放宽成无过滤。
+- `PageRepository.list_states(book_id, job_id) -> list[PageStateRow]`（`repositories.py:393`）：新增只读
+  投影行 `PageStateRow(page_no, status, error)`（`repositories.py:66`），**不携带 `quality`**——486 页
+  全集一次回包必须轻，正文与质量信号仍归单页端点。仓储只给有页行的页，`1..total` 的缺行补全
+  （= `pending`）留给读取面，因为仓储不知道该书的 `total` 取 `af_books.page_count` 还是 `book.json`。
+- `EditRepository.count_by_page(book_id, job_id) -> dict[int, int]`（`repositories.py:512`）：一次
+  `GROUP BY page_no` 聚合，不逐页发 SQL；作用域带 `job_id`（编辑绑定解析版本），同版本同块是覆盖更新
+  故重复提交天然只计一次——这一条正是「计数不因重复提交虚增」的回归判据。
+
+**对原工作项的两处偏差（已回写上行）**：① 回归网落在单元层而非契约层——与既有
+`TestPageRepository`/`TestEditRepository` 同文件同层，API 契约红灯随 W3/W4 的路由一起补；② 方法是
+三条不是两条（`edit_count` 需要独立聚合查询，不能在页清单里逐页发 SQL）。
+
 ## 工作项
 
 | # | 工作项 | 产物 | 门禁 | 状态 |
 | --- | --- | --- | --- | --- |
 | W1 | 契约成文：`api.md` 两节 + 响应字段表 + 错误语义（404 书不存在 / 404 版本目录缺失） | 文档改动（先于实现） | 契约 | Done（2026-09-22，`architecture/api.md` ③ 类两节 + 两张字段表 + 错误语义两行 + 强制规则作用域条改写；取舍与事实依据见「实施登记 W1」） |
-| W2 | 仓储查询 + 红灯契约测试（复用 `tests/contract/test_api_v1_contract.py:88-109` 的 `_build`/`client` fixtures 与 `_sync_book`/`_ingest` 助手） | `repositories.py` 两方法 + 契约测试先红后绿 | 契约 | Pending |
+| W2 | 仓储查询 + 红灯测试（原计划写「契约测试」，实际分层见登记） | `repositories.py` 三查询（`list_all`/`list_states`/`count_by_page`）+ `tests/unit/test_db.py` 先红后绿 | 单元 | Done（2026-09-22，13 条测试先红（三条方法 `AttributeError`）后绿；形状与对原工作项的两处偏差见「实施登记 W2」） |
 | W3 | `GET /parse-jobs` 端点（过滤/分页/排序稳定；响应字段与 `ParseJob` 一致） | `main.py` 路由 + 契约测试 | 契约 | Pending |
 | W4 | `GET /books/{id}/pages` 端点（逐页状态清单 + `scope`/`job_id` 自证） | 同上 | 契约 | Pending |
 | W5 | 文档与映射收口：`code-map.md`、`operations.md` 改号措辞、`parsing-management.md` 端点面 | 文档改动 | 架构/设计契约测试 | Pending |

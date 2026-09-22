@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session
@@ -351,6 +353,153 @@ class TestPageRepository:
         assert repo.list_for_book("b05", "job2") == []
         assert repo.get("b05", LEGACY_JOB_ID, 1) is None
         assert repo.get("b11", "job1", 1) is not None
+
+
+class TestParseJobListQuery:
+    """`GET /api/v1/parse-jobs` 的仓储面（PLAN-008 W2）：过滤、稳定倒序与过滤后总数。
+
+    契约口径见 `docs/architecture/api.md` ③ 类同名节。
+    """
+
+    def _seed(self, repo: ParseJobRepository, job_id: str, *, book_id: str, status: str, day: int) -> None:
+        repo.create(ParseJobRow(job_id=job_id, book_id=book_id, engine="mineru"))
+        repo.mark_finished(job_id, status=status)
+        # 建任务行的 created_at 由仓储取当前时间，倒序判据需要可重复的相对时序
+        repo.get(job_id).created_at = datetime(2026, 9, day, 12, 0, tzinfo=UTC)
+
+    def test_list_all_returns_rows_and_total_of_filtered_set(self, session):
+        repo = ParseJobRepository(session)
+        self._seed(repo, "job1", book_id="b05", status="completed", day=20)
+        self._seed(repo, "job2", book_id="b05", status="failed", day=21)
+        self._seed(repo, "job3", book_id="b11", status="completed", day=22)
+
+        rows, total = repo.list_all()
+
+        assert [job.job_id for job in rows] == ["job3", "job2", "job1"]
+        assert total == 3
+
+    def test_status_filter_is_multi_value_or(self, session):
+        """任务中心「只列活跃」天然是两个状态值，单值过滤会逼客户端发两次请求。"""
+        repo = ParseJobRepository(session)
+        repo.create(ParseJobRow(job_id="q1", book_id="b05", engine="mineru"))
+        repo.create(ParseJobRow(job_id="r1", book_id="b05", engine="mineru"))
+        repo.mark_running("r1")
+        self._seed(repo, "c1", book_id="b05", status="completed", day=20)
+
+        rows, total = repo.list_all(status=["queued", "running"])
+
+        assert {job.job_id for job in rows} == {"q1", "r1"}
+        assert total == 2
+
+    def test_status_filter_with_unknown_value_returns_empty(self, session):
+        """枚举合法性由 API 层判 422；仓储面对未知值给空集而非全量（不静默放宽成无过滤）。"""
+        repo = ParseJobRepository(session)
+        self._seed(repo, "job1", book_id="b05", status="completed", day=20)
+
+        rows, total = repo.list_all(status=["not-a-status"])
+
+        assert rows == [] and total == 0
+
+    def test_book_id_filter_on_missing_book_is_empty_not_error(self, session):
+        """已删书与不存在书都走这一条：列表过滤不判资源存在性（API 侧返回 200 空列表）。"""
+        repo = ParseJobRepository(session)
+        self._seed(repo, "job1", book_id="b05", status="completed", day=20)
+
+        rows, total = repo.list_all(book_id="nope")
+
+        assert rows == [] and total == 0
+
+    def test_same_instant_orders_by_job_id_desc(self, session):
+        """`MySQL DATETIME` 只到秒：同秒任务仅按时间排序不可重复，翻页会漏行或重行。"""
+        repo = ParseJobRepository(session)
+        same = datetime(2026, 9, 22, 12, 0, tzinfo=UTC)
+        for job_id in ("aaa", "bbb", "ccc"):
+            repo.create(ParseJobRow(job_id=job_id, book_id="b05", engine="mineru"))
+            repo.get(job_id).created_at = same
+        session.flush()
+
+        rows, _ = repo.list_all()
+
+        assert [job.job_id for job in rows] == ["ccc", "bbb", "aaa"]
+
+    def test_pagination_slices_rows_but_total_stays_filtered_count(self, session):
+        repo = ParseJobRepository(session)
+        for index in range(5):
+            self._seed(repo, f"job{index}", book_id="b05", status="completed", day=10 + index)
+
+        rows, total = repo.list_all(limit=2, offset=2)
+
+        assert [job.job_id for job in rows] == ["job2", "job1"]
+        assert total == 5, "total 是分页前全集，客户端据此判定还有没有下一页"
+
+    def test_offset_beyond_total_returns_empty_rows_with_total(self, session):
+        repo = ParseJobRepository(session)
+        self._seed(repo, "job1", book_id="b05", status="completed", day=20)
+
+        rows, total = repo.list_all(limit=10, offset=50)
+
+        assert rows == [] and total == 1
+
+
+class TestPageStateQuery:
+    """`GET /api/v1/books/{book_id}/pages` 的仓储面（PLAN-008 W2）：轻量逐页状态投影。"""
+
+    def test_list_states_projects_only_contract_columns(self, session):
+        """清单行不带 quality/整页内容：正文仍走单页端点，486 页全集一次返回必须轻。"""
+        repo = PageRepository(session)
+        repo.upsert(
+            "b05", "job1", 1, status="parsed", source="mineru", quality={"empty_block_ratio": 0.0}
+        )
+        repo.upsert("b05", "job1", 2, status="failed", error="窗口 1-56：超时")
+
+        states = repo.list_states("b05", "job1")
+
+        assert [(s.page_no, s.status, s.error) for s in states] == [
+            (1, "parsed", ""),
+            (2, "failed", "窗口 1-56：超时"),
+        ]
+
+    def test_list_states_is_version_scoped(self, session):
+        """作用域按 job_id：跨版本混读会让旧版状态冒充生效版结论（主键含 job_id 的目的）。"""
+        repo = PageRepository(session)
+        repo.upsert("b05", "job1", 1, status="parsed")
+        repo.upsert("b05", "job2", 1, status="failed", error="引擎异常")
+        repo.upsert("b11", "job1", 7, status="parsed")
+
+        assert [(s.page_no, s.status) for s in repo.list_states("b05", "job1")] == [(1, "parsed")]
+        assert [(s.page_no, s.status) for s in repo.list_states("b05", "job2")] == [(1, "failed")]
+
+    def test_list_states_omits_pages_without_rows(self, session):
+        """仓储只给有页行的页；`1..total` 的补全（无行页 = `pending`）由读取面做。"""
+        repo = PageRepository(session)
+        repo.upsert("b05", "job1", 3, status="parsed")
+
+        assert [s.page_no for s in repo.list_states("b05", "job1")] == [3]
+
+
+class TestEditCountByPage:
+    """`edit_count` 的仓储面（PLAN-008 W2 / 承载 ARCH-006「页清单暴露编辑存在性」）。"""
+
+    def test_counts_group_by_page_within_version(self, session):
+        repo = EditRepository(session)
+        repo.upsert("b05", "job1", 1, 0, verdict="ok")
+        repo.upsert("b05", "job1", 1, 2, verdict="bad")
+        repo.upsert("b05", "job1", 3, 1, verdict="ok")
+        repo.upsert("b05", "job2", 1, 0, verdict="ok")
+        repo.upsert("b11", "job1", 9, 0, verdict="ok")
+
+        assert repo.count_by_page("b05", "job1") == {1: 2, 3: 1}
+
+    def test_repeated_edit_on_same_block_counts_once(self, session):
+        """同版本同块覆盖更新（唯一键）：编辑计数不能因重复提交而虚增。"""
+        repo = EditRepository(session)
+        repo.upsert("b05", "job1", 1, 0, verdict="ok")
+        repo.upsert("b05", "job1", 1, 0, verdict="bad", note="改判")
+
+        assert repo.count_by_page("b05", "job1") == {1: 1}
+
+    def test_book_without_edits_returns_empty_mapping(self, session):
+        assert EditRepository(session).count_by_page("b05", "job1") == {}
 
 
 class TestEditRepository:

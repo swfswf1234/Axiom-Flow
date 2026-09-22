@@ -62,6 +62,18 @@ class ParseJobRow:
     page_count: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PageStateRow:
+    """页清单的轻量投影行：只带清单契约需要的三列。
+
+    整页质量信号与正文仍由单页端点返回；486 页全书一次回包的响应不能拖 `quality` JSON。
+    """
+
+    page_no: int
+    status: str
+    error: str
+
+
 def edit_id_for(book_id: str, job_id: str, page_no: int, block_index: int) -> str:
     """编辑记录主键：`ed_<md5(book_id:job_id:page_no:block_index)>`（同版本同块幂等键）。
 
@@ -240,6 +252,38 @@ class ParseJobRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_all(
+        self,
+        *,
+        status: Sequence[str] | None = None,
+        book_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[AfParseJob], int]:
+        """全局任务列表（`GET /api/v1/parse-jobs`）：过滤 → 稳定倒序 → 分页，并回过滤后总数。
+
+        倒序以 `created_at DESC, job_id DESC` 收尾：`MySQL DATETIME` 只到秒，同秒任务仅按时间
+        排序不可重复，翻页会漏行或重行。`total` 是分页前过滤集的大小，客户端据此判断还有没有
+        下一页，因此计数只能与行集共用同一组条件。
+        """
+        conditions: list[Any] = []
+        if status is not None:
+            conditions.append(AfParseJob.status.in_(list(status)))
+        if book_id is not None:
+            conditions.append(AfParseJob.book_id == book_id)
+
+        total = int(
+            self.session.scalar(select(func.count()).select_from(AfParseJob).where(*conditions)) or 0
+        )
+        stmt = (
+            select(AfParseJob)
+            .where(*conditions)
+            .order_by(AfParseJob.created_at.desc(), AfParseJob.job_id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(self.session.scalars(stmt)), total
+
     def mark_running(self, job_id: str) -> bool:
         job = self.session.get(AfParseJob, job_id)
         if job is None:
@@ -346,6 +390,19 @@ class PageRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_states(self, book_id: str, job_id: str) -> list[PageStateRow]:
+        """按解析版本列**有页行的**页状态清单（`GET /api/v1/books/{book_id}/pages` 的仓储面）。
+
+        只投影清单契约列；没有页行的页在此缺席，`1..total` 的补全（缺行 = `pending`）由读取面做，
+        因为仓储面无法知道全书页数该取 `af_books.page_count` 还是 `book.json`。
+        """
+        stmt = (
+            select(AfPage.page_no, AfPage.status, AfPage.error)
+            .where(AfPage.book_id == book_id, AfPage.job_id == job_id)
+            .order_by(AfPage.page_no)
+        )
+        return [PageStateRow(page_no=no, status=st, error=err or "") for no, st, err in self.session.execute(stmt)]
+
     def count_parsed(self, book_id: str, job_id: str) -> int:
         stmt = select(func.count()).select_from(AfPage).where(
             AfPage.book_id == book_id, AfPage.job_id == job_id, AfPage.status == "parsed"
@@ -451,6 +508,19 @@ class EditRepository:
             .order_by(AfBlockEdit.page_no, AfBlockEdit.block_index)
         )
         return list(self.session.scalars(stmt))
+
+    def count_by_page(self, book_id: str, job_id: str) -> dict[int, int]:
+        """按页聚合人工编辑条数（页清单的 `edit_count`）：一次分组查询，不逐页发 SQL。
+
+        作用域必须带 `job_id`——编辑绑定其所属解析版本，跨版本计数会让旧版编辑冒充生效版结论。
+        同版本同块是覆盖更新（唯一键），因此重复提交天然只计一次。
+        """
+        stmt = (
+            select(AfBlockEdit.page_no, func.count())
+            .where(AfBlockEdit.book_id == book_id, AfBlockEdit.job_id == job_id)
+            .group_by(AfBlockEdit.page_no)
+        )
+        return {int(page_no): int(count) for page_no, count in self.session.execute(stmt)}
 
     def delete_for_book(self, book_id: str) -> int:
         """删除整本书的编辑行（所有版本）：书目删除不留孤儿覆盖层，页行与文件同一作用域。"""
