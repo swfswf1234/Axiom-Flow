@@ -5,7 +5,7 @@
 `/get_task_results/{id}`（该版本不存在），两者都无响应形状留档，故必须先探测再改码。
 
 冻结要素（假设 H1~H4、样本 S-a/S-b、预算、门槛 M1~M4）见
-`docs/plans/2026-09-20-parse-live-bringup.md` 的 W0 一节。
+`docs/history/plans/2026-09/2026-09-20-parse-live-bringup.md` 的 W0 一节。
 
 用法（只连接模型服务，不启停容器）：
 

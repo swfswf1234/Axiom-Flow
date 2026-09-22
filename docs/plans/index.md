@@ -37,3 +37,15 @@
   关闭证据见 [completed.md](../trackers/completed.md) PLAN-004 与 REQ-080 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-20-req080-parse-version-layout.md` 处须改指上述
   归档位置（迁移文件头注释 `20260920_0002_parse_version_scoping.py` 已随本批更新）。
+- PLAN-003 解析真机打通：设计偏差核对与契约修正（Axiom-Flow）已完成（2026-09-22，用户裁决取 (A)
+  「先转承载再关」后关闭），计划按 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-20-parse-live-bringup.md)（保留 W0 冻结清单与
+  留档哈希、23 项偏差台账、契约条文晋升 `design/`+`architecture/` **之前的推导依据**，以及 R0/R1/R2 三个
+  真机窗口的逐条取证表）；运行时事实源以晋升后的
+  [parsing-pipeline.md](../design/parsing-pipeline.md)、[api.md](../architecture/api.md)、
+  [database-design.md](../architecture/database-design.md)、[operations.md](../guides/operations.md) 为准。
+  **六条活行已改挂两份新计划**：PLAN-007（全本窗口分块提交 + 空白页合法化，承载 REQ-086/087、ARCH-009/019）
+  与 PLAN-008（页级失败清单与 jobs 列表端点，承载 REQ-088、ARCH-005/006）；关闭证据见
+  [completed.md](../trackers/completed.md) PLAN-003 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-20-parse-live-bringup.md` 处须改指上述归档位置
+  （本批已同步 `docs/adr/0007`、`docs/trackers/*`、`scripts/tmp/probe_mineru_api.py`）。

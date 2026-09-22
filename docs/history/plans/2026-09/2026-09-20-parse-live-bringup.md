@@ -1,16 +1,16 @@
 # 解析真机打通：设计偏差核对与契约修正（parse-live-bringup）
 
-状态：In Progress
+状态：Completed
 任务类型：B
 最后更新：2026-09-22
-关联 ADR：[ADR 0002](../adr/0002-pending-design-location.md)（待评审设计先入 plans/）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（引擎由配置选择、不设自动兜底）、[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（MySQL 集成测试隔离边界）
-关联设计：[model-integration.md](../design/model-integration.md)、[parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)
+关联 ADR：[ADR 0002](../../../adr/0002-pending-design-location.md)（待评审设计先入 plans/）、[ADR 0004](../../../adr/0004-model-boundary-and-pipeline-ownership.md)（引擎由配置选择、不设自动兜底）、[ADR 0005](../../../adr/0005-mysql-integration-test-isolation.md)（MySQL 集成测试隔离边界）
+关联设计：[model-integration.md](../../../design/model-integration.md)、[parsing-pipeline.md](../../../design/parsing-pipeline.md)、[parsing-management.md](../../../design/parsing-management.md)
 关联 Tracker：docs/trackers/todo.md（PLAN-003、ARCH-001/003/004/005/006/009/016/017/018/019、REQ-001、REQ-075、REQ-080、REQ-081、REQ-083、REQ-084、REQ-085、REQ-036/057/074/086/087、DEFECT-001/002/003 与本轮新登 DEFECT-004/005/006/007/008）
 归档判定：Retain（契约条文晋升 design/architecture、实现收口后，计划壳归档 `docs/history/plans/2026-09/`）
 
 > **2026-09-20 收尾范围（用户裁决）**：本计划的执行面收窄为「**解析真机打通（小样止）** + **数据库
 > 存储收口** + **QED_DATA_ROOT 收口**」三块，详见 [收尾执行设计](#收尾执行设计真机打通--数据库与数据根收口2026-09-20-裁决后重排)。
-> 产物按版本划分（REQ-080）已由 [PLAN-004](../history/plans/2026-09/2026-09-20-req080-parse-version-layout.md) 立项并**挂起**
+> 产物按版本划分（REQ-080）已由 [PLAN-004](../../../history/plans/2026-09/2026-09-20-req080-parse-version-layout.md) 立项并**挂起**
 > 在本部分之后，本计划不做版本布局与 DDL。
 
 ## 背景：三方对表暴露的问题比单个 404 更大
@@ -479,9 +479,9 @@ W7 期间发现并登记（不在本轮静默修复）：
 | DEFECT-003 | W4/W5/W6 覆盖其全部子项，W6 后关闭（**2026-09-20 已关闭**，见 `completed.md`） |
 | DEFECT-004 | 本轮新登（bbox 归一化 0–1000 被误当 PDF 点，含 PNG 路径 `page_size` 错配）；前置 ARCH-005/006 联调，需先补契约条文再按 TDD 修。**2026-09-21 关闭**：契约条文晋升两份 Accepted 设计 + 9 例单测先红后绿 + 真机端到端锚点复验（IoU 0.9314 / 偏移 ≤7px）+ 冒烟对齐判据（反转即红），详「三轮开工登记」，行已原子移入 `completed.md` |
 | DEFECT-005 | 本轮新登（`header`/`footer` 字面值未入 `_TYPE_MAP`，块被静默丢弃 + 下标漂移）；修复需成文「未知类型如何处理」（丢弃需可见计数，不静默）。**2026-09-21 现状**：仍是 ARCH-005/006 与 ARCH-009 的唯一归一化前置（坐标空间面已随 DEFECT-004 解除）。**2026-09-21 四轮关闭**：可见丢弃条文补入 Accepted 设计并加「映射表变更的追溯影响」条；`_TYPE_MAP` 新旧字面值并存 + `dropped_block_count`/`dropped_types` 计数 + `index` 连续编号 + 整页回退条件收紧；新增 11 例单元（两轮红 `6 failed`/`1 failed`）与冒烟零丢弃对账断言，详「四轮开工登记」，行已原子移入 `completed.md` |
-| DEFECT-006 | 本轮新登（`pages` 无上界/存在性校验 + `completed` 掩盖部分失败 + 书级 `parse_status` 语义混用），属契约裁决项。**2026-09-21 裁决 A1 + B1**：任务结局三态（`completed`/`partial`/`failed`，与激活门槛同源）+ `failed_pages` 结构化 + 书级 `parse_status`（进度）与 `last_parse_result`（结局）分列，成文为 [ADR 0007](../adr/0007-parse-status-semantics.md)，**实施承载改为 PLAN-006**（同日实施并关闭、按 Delete 删壳，正文见锚点 `9034a19`，S1~S7 判据入 `completed.md`）；页码越界子项已随 R0-3 交付 |
-| DEFECT-007 | 本轮新登（被中断任务永久 `running`，无 reaper/心跳），修复选项需 ADR 级裁决。**2026-09-21 裁决 C1**：启动期把遗留 `queued`/`running` 归一为 `interrupted`（单实例部署为其正当性前提，写入运维指南），同样由 [ADR 0007](../adr/0007-parse-status-semantics.md) 承载语义、PLAN-006 承载实施（同上，已关闭删壳） |
-| ARCH-003 / ARCH-016 | W8 真机冒烟绿后关闭。**2026-09-21 复核后仍开放**：8.1 已绿，但本行判据被本轮新缺陷接续——ARCH-003 剩 DEFECT-006/007 语义成文与修复（需用户裁决/ADR），ARCH-016 剩 **DEFECT-005**（DEFECT-004 已于 2026-09-21 关闭）与代表书类型分布取证（ARCH-009）。**2026-09-21 四轮后**：DEFECT-005 亦关闭，ARCH-016 只剩 ARCH-009 类型分布取证 + 真机零丢弃复跑（待 5002 在线）；ARCH-003 仍剩 DEFECT-006/007 语义成文与修复（需用户裁决/ADR）。**2026-09-21 主线审计后 ARCH-016 关闭**（零丢弃复跑达成；类型分布取证与 ARCH-009 判据逐字重复，移交之，`title`/`table` 缺口随之登记），ARCH-003 仍开放。**2026-09-21 十二轮后**：DEFECT-006/007 随 PLAN-006 实施并关闭（[ADR 0007](../adr/0007-parse-status-semantics.md) 决定 1~7 落地，门禁 405 passed），ARCH-003 的**裁决依赖解除**，只剩真机冒烟复跑这一条件（连同 `20260921_0001` apply 与孤儿行 `5f43593a12cc` 归一），故本计划对它的接续关系不变 |
+| DEFECT-006 | 本轮新登（`pages` 无上界/存在性校验 + `completed` 掩盖部分失败 + 书级 `parse_status` 语义混用），属契约裁决项。**2026-09-21 裁决 A1 + B1**：任务结局三态（`completed`/`partial`/`failed`，与激活门槛同源）+ `failed_pages` 结构化 + 书级 `parse_status`（进度）与 `last_parse_result`（结局）分列，成文为 [ADR 0007](../../../adr/0007-parse-status-semantics.md)，**实施承载改为 PLAN-006**（同日实施并关闭、按 Delete 删壳，正文见锚点 `9034a19`，S1~S7 判据入 `completed.md`）；页码越界子项已随 R0-3 交付 |
+| DEFECT-007 | 本轮新登（被中断任务永久 `running`，无 reaper/心跳），修复选项需 ADR 级裁决。**2026-09-21 裁决 C1**：启动期把遗留 `queued`/`running` 归一为 `interrupted`（单实例部署为其正当性前提，写入运维指南），同样由 [ADR 0007](../../../adr/0007-parse-status-semantics.md) 承载语义、PLAN-006 承载实施（同上，已关闭删壳） |
+| ARCH-003 / ARCH-016 | W8 真机冒烟绿后关闭。**2026-09-21 复核后仍开放**：8.1 已绿，但本行判据被本轮新缺陷接续——ARCH-003 剩 DEFECT-006/007 语义成文与修复（需用户裁决/ADR），ARCH-016 剩 **DEFECT-005**（DEFECT-004 已于 2026-09-21 关闭）与代表书类型分布取证（ARCH-009）。**2026-09-21 四轮后**：DEFECT-005 亦关闭，ARCH-016 只剩 ARCH-009 类型分布取证 + 真机零丢弃复跑（待 5002 在线）；ARCH-003 仍剩 DEFECT-006/007 语义成文与修复（需用户裁决/ADR）。**2026-09-21 主线审计后 ARCH-016 关闭**（零丢弃复跑达成；类型分布取证与 ARCH-009 判据逐字重复，移交之，`title`/`table` 缺口随之登记），ARCH-003 仍开放。**2026-09-21 十二轮后**：DEFECT-006/007 随 PLAN-006 实施并关闭（[ADR 0007](../../../adr/0007-parse-status-semantics.md) 决定 1~7 落地，门禁 405 passed），ARCH-003 的**裁决依赖解除**，只剩真机冒烟复跑这一条件（连同 `20260921_0001` apply 与孤儿行 `5f43593a12cc` 归一），故本计划对它的接续关系不变 |
 | REQ-075 | 端点面随 W8 回执后关闭。**2026-09-21 关闭**：配置面（Step 1/2-A + G5 三段走查）与端点面（DEFECT-002 真机证据 + 冒烟用例）两项齐备，回执稿见「跨项目回执稿（W8-g）」；按协作标准，根仓库自读本表登记 |
 | REQ-001 | 复核材料随 W8 就绪后发出回执。**2026-09-21 改判承载行**（根侧 `REQ-001` 号已被 2026-08 端口迁移占用）⇒ 指向其 `PLAN-044`/`ARCH-020-D`。**2026-09-22 关闭**：根侧 PLAN-044 行已登记读取复核材料（锚点 `95e1d37`），判据达成，详「根侧回执已到：六个跨项目行关闭」 |
 | REQ-080 | 维持 Open，指向 PLAN-004（本计划不动 DDL、不改产物布局）。**2026-09-21**：坐标空间前置解除，版本目录内块坐标可信；回执随 PLAN-004 收口发出。**2026-09-22 关闭**：根侧四条确认全部接受 ⇒ REQ-080 与 PLAN-004 同批入 `completed.md` |
@@ -530,7 +530,7 @@ W7 期间发现并登记（不在本轮静默修复）：
 
 ### 用户裁决（2026-09-20，本轮三项）
 
-1. **W3 保留（路 B）**：先评审 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)
+1. **W3 保留（路 B）**：先评审 [ADR 0005](../../../adr/0005-mysql-integration-test-isolation.md)
    （Draft → Accepted），接受后才写真 MySQL 双 Session 测试并联动 `standards/testing.md`。
    真机 MySQL 不替代它（真机是手工一次性证据，测试是回归网）。
 2. **真机小样止**：单页 + 5 页 + 真书单页回归；全量 486 页与质量抽查归 ARCH-009。
@@ -640,16 +640,16 @@ W7 期间发现并登记（不在本轮静默修复）：
 
 | # | 发现 | 判据/证据 | 处置 |
 | --- | --- | --- | --- |
-| N1 | `job.status=completed` **掩盖部分失败**（有失败页仍 `completed`） | `L5_polls.txt` | 成文缺口：需裁决「部分成功」表达（新增状态字面值 or 只看 `error`/页行），登记 [DEFECT-006](../trackers/todo.md) |
-| N2 | 被中断任务**永久停留 `running`**（kill 后 `5f43593a12cc` 仍 `running parsed 14/30`），无 reaper/心跳超时；续跑实际只依赖 `af_pages`，与 job 行无关 | `L9_final_jobs.txt` | 同上：语义需成文 + 修复选项（启动期把遗留 `running` 归 `failed` or 心跳列），登记 [DEFECT-007](../trackers/todo.md) |
-| N3 | `pages` **无上界/存在性校验**：486 页书接受 `pages=[40,999]`，并在真机 `af_pages` 写出幽灵行（第 999 页 `failed`） | `L5_submit.json` + `L6_final_state.txt` | 校验缺口，登记 [DEFECT-006](../trackers/todo.md)；幽灵行清理属 D 类运行库写操作，**待用户批准**（不自行删） |
+| N1 | `job.status=completed` **掩盖部分失败**（有失败页仍 `completed`） | `L5_polls.txt` | 成文缺口：需裁决「部分成功」表达（新增状态字面值 or 只看 `error`/页行），登记 [DEFECT-006](../../../trackers/todo.md) |
+| N2 | 被中断任务**永久停留 `running`**（kill 后 `5f43593a12cc` 仍 `running parsed 14/30`），无 reaper/心跳超时；续跑实际只依赖 `af_pages`，与 job 行无关 | `L9_final_jobs.txt` | 同上：语义需成文 + 修复选项（启动期把遗留 `running` 归 `failed` or 心跳列），登记 [DEFECT-007](../../../trackers/todo.md) |
+| N3 | `pages` **无上界/存在性校验**：486 页书接受 `pages=[40,999]`，并在真机 `af_pages` 写出幽灵行（第 999 页 `failed`） | `L5_submit.json` + `L6_final_state.txt` | 校验缺口，登记 [DEFECT-006](../../../trackers/todo.md)；幽灵行清理属 D 类运行库写操作，**待用户批准**（不自行删） |
 | N4 | 书级 `parse_status` 与「本轮任务完成」共用一个字段：整本任务下正确（L3 `completed 5/5`），逐页子集任务把它置 `failed`（真书 38/486） | `L9_book_state.txt`、`L3_report.json` | 语义需成文（`parse_status` = 全书覆盖 or 最近任务结果？），并入 N1 裁决 |
-| N5 | **`content_list[].bbox` 是逐轴 0–1000 归一化坐标，不是 PDF 点**（锚点实验：放置 y=780pt → 实测 910；归一化预期 926；x=500pt → 实测 836，预期 840） | `L3d_coord_space.json` | 阻断对照与块编辑 → 登记 [DEFECT-004](../trackers/todo.md) |
+| N5 | **`content_list[].bbox` 是逐轴 0–1000 归一化坐标，不是 PDF 点**（锚点实验：放置 y=780pt → 实测 910；归一化预期 926；x=500pt → 实测 836，预期 840） | `L3d_coord_space.json` | 阻断对照与块编辑 → 登记 [DEFECT-004](../../../trackers/todo.md) |
 | N6 | 逐页（PNG）路径叠加坐标系错配：PNG 输入的 `middle_json.pdf_info[0].page_size=[446,631]`（像素按 200DPI 折算的标称点），与归一化 bbox 组不出自洽映射 → 真书第 3 页产物出现 `x0=1240,x1=1241` 的 1px 宽块与贴边钳制 | `L3c_page0003.json`、`L7_page3_bbox.txt` | 并入 DEFECT-004 修复范围 |
-| N7 | 真机类型字面值是 `header`/`footer`，`_TYPE_MAP` 只有 `page_header`/`page_footer` → 页眉页脚块被 `block_from_raw` 静默丢弃（样本第 1 页 8 项 → 7 块） | `L3d_coord_space.json`、`L3b_raw_bbox.json` | 登记 [DEFECT-005](../trackers/completed.md)（**2026-09-21 四轮修复并关闭**，见「四轮开工登记」）；连带块 `index` 下标漂移风险（与 PLAN-004 ③ 相关） |
+| N7 | 真机类型字面值是 `header`/`footer`，`_TYPE_MAP` 只有 `page_header`/`page_footer` → 页眉页脚块被 `block_from_raw` 静默丢弃（样本第 1 页 8 项 → 7 块） | `L3d_coord_space.json`、`L3b_raw_bbox.json` | 登记 [DEFECT-005](../../../trackers/completed.md)（**2026-09-21 四轮修复并关闭**，见「四轮开工登记」）；连带块 `index` 下标漂移风险（与 PLAN-004 ③ 相关） |
 | N8 | `title`/`equation`/`table` 等语义类型在合成小样上**不出现**（40 项只有 `text`/`header`），类型映射整体可用性未在真机取证 | `L3b_raw_bbox.json` | 不据此判定可用；真实分布取证归 ARCH-009（代表书） |
 | N9 | L3/L5/L6 的整本与失败注入证据必须在**版本布局前**取，PLAN-004 的 L10 前提措辞（「解析从未真机成功」）已被本轮证伪 | 本节 | 已回改 PLAN-004 与 `project-status.md` 措辞 |
-| N10 | 2026-09-21 只读配置走查发现：根 `.env:20` 的 `QED_OCR_MODEL_URL` 行带**行内 `#` 注释**，而 `config._env_file_values` 只跳过整行注释、不剥离行内注释 → 本仓库 `.env` 若缺该键，生效值会连注释一起读入并成为坏 URL（当前因本仓库 `.env:17` 优先生效而未触发） | `data/probes/live-bringup-20260920/D4_G5_config_credential.txt`（逐键三层来源表） | 登记 [DEFECT-008](../trackers/todo.md)（B 类一行修复 + 用例）；根仓库 `.env` 属只读范围，**不由本仓库改动** |
+| N10 | 2026-09-21 只读配置走查发现：根 `.env:20` 的 `QED_OCR_MODEL_URL` 行带**行内 `#` 注释**，而 `config._env_file_values` 只跳过整行注释、不剥离行内注释 → 本仓库 `.env` 若缺该键，生效值会连注释一起读入并成为坏 URL（当前因本仓库 `.env:17` 优先生效而未触发） | `data/probes/live-bringup-20260920/D4_G5_config_credential.txt`（逐键三层来源表） | 登记 [DEFECT-008](../../../trackers/todo.md)（B 类一行修复 + 用例）；根仓库 `.env` 属只读范围，**不由本仓库改动** |
 
 ### 收尾二轮（2026-09-21：冒烟固化 + C2/C3 可自查残留）
 
@@ -678,7 +678,7 @@ W7 期间发现并登记（不在本轮静默修复）：
 
 ### 跨项目回执稿（W8-g，2026-09-21）
 
-按[跨项目协作流程](../standards/cross-project-collaboration.md)，回执只落本仓库 todo/计划，根仓库自读登记，
+按[跨项目协作流程](../../../standards/cross-project-collaboration.md)，回执只落本仓库 todo/计划，根仓库自读登记，
 本仓库不写根仓库文件。
 
 **REQ-075 —— MinerU 直连配置同步 + 新异步 API 端点对齐（回执 QED-Engine，本方关闭）**
@@ -696,7 +696,7 @@ W7 期间发现并登记（不在本轮静默修复）：
 
 **REQ-001 —— 8900 数据域适配 af_* 新契约（复核材料，本方仍开放等待根仓库回执）**
 
-- 端点面事实源：[api.md](../architecture/api.md)；真机只读面 L7 九端点全可用，`image_url` 字面量不变量成立，
+- 端点面事实源：[api.md](../../../architecture/api.md)；真机只读面 L7 九端点全可用，`image_url` 字面量不变量成立，
   未解析页返回 404。
 - 根仓库 2026-09-20「联调最小打通轮」自修的四处断裂（review→edit 门面、sync `file_path`、parse-jobs
   `engine`/`id`/`progress`、`page_no`/`image_url` 补写）与本仓库契约一致，`tests/contract/test_api_v1_contract.py`
@@ -743,7 +743,7 @@ W7 期间发现并登记（不在本轮静默修复）：
 
 | # | 工作项 | 交付 | 验证 |
 | --- | --- | --- | --- |
-| 1 | 契约先行（按「未知类型如何处理」条文补实现口径） | [parsing-pipeline.md](../design/parsing-pipeline.md)「引擎类型字面值」条改写为已实现语义（新旧字面值并存、`normalize_page` 逐条对账、必需字段缺失同样计入、不做占位补块），质量信号节补「可见丢弃计数」；新增「映射表变更的追溯影响」条：`af_block_edits` 以 `(book_id, page_no, block_index)` 为唯一键，`index` 是归一化后下标 → **映射表版本与产物必须成对**，历史产物不回溯修正 | 契约测试（设计文档守护）全绿 |
+| 1 | 契约先行（按「未知类型如何处理」条文补实现口径） | [parsing-pipeline.md](../../../design/parsing-pipeline.md)「引擎类型字面值」条改写为已实现语义（新旧字面值并存、`normalize_page` 逐条对账、必需字段缺失同样计入、不做占位补块），质量信号节补「可见丢弃计数」；新增「映射表变更的追溯影响」条：`af_block_edits` 以 `(book_id, page_no, block_index)` 为唯一键，`index` 是归一化后下标 → **映射表版本与产物必须成对**，历史产物不回溯修正 | 契约测试（设计文档守护）全绿 |
 | 2 | 真机证据复核 | 从留档 `data/probes/live-bringup-20260920/L3d_coord_space.json` 直接读出同一次响应的 `type="header"`（TOPLEFT 锚点）与 `type="footer"`（BOTTOMRIGHT 锚点）；`L3b_raw_bbox.json` 40 项 = `text` 35 + `header` 5（样本第 1 页 8 项 → 旧码归一 7 块） | 判据来自留档，不依赖本次网络 |
 | 3 | 映射与计数实现 | `_TYPE_MAP` 增加 `header`/`footer`，并保留 `page_header`/`page_footer`（旧版字面值并存以免版本回退）；`compute_quality(..., dropped_literals=...)` 产出 `dropped_block_count` + `dropped_types`（去重升序）；`normalize_page` 逐条对账，`index` 只在存活块上连续编号 | 新增 11 例单元（`test_normalize.py::TestVisibleDrop` 8 例 + `TestNormalizePage` 对账 1 例 + `test_schemas.py` 默认值与下界 1 例 + 既有回退例补断言），第一轮红 `6 failed` → 全绿 |
 | 3b | 整页回退条件收紧（顺带检出的过度兜底） | 原实现只要「归一后无块」就合成整页 paragraph，会把映射缺口伪装成正文块；收紧为**只在引擎未回任何结构化条目**时回退，并成文对账不变式 `原始条目数 = 存活块数 + dropped_block_count` | 第二轮红 `1 failed`（条目全未归一时仍合成块）→ 绿 |
@@ -763,7 +763,7 @@ W7 期间发现并登记（不在本轮静默修复）：
 - **C2 数据库收口**：D1（写入面：页行 upsert / `progress` 覆写 / `af_parse_jobs.engine` 实际引擎名 /
   ingest 回写）与 D2（JSON 列与 DATETIME 在真 MySQL 往返）随 L2~L6 取证成立；**D4 于 2026-09-21 取证成立**
   （凭据不外泄 + 只有 `af_*` 四表可触达）。**仅剩 D3**（删除与审计，真机共享库写 + 产物删除，待用户批准）
-  与 **D5/W3-b/W3-c**（受 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)
+  与 **D5/W3-b/W3-c**（受 [ADR 0005](../../../adr/0005-mysql-integration-test-isolation.md)
   评审阻塞）——按用户裁决「DEFECT-001 不落库（不关闭）」，本计划不因 L4/L5/L6 通过而关闭 DEFECT-001。
 - **C3 数据根收口**：G2（`raw/` 只读，L2 前后 sha256 一致）与 G3（`tmp/axiom-flow/` 恒不存在，条文 12）
   成立；G1/G3/G4 口径已于 2026-09-20 晋升成文（`parsing-pipeline.md`：domain 空则省略层级 + 不写数据根
@@ -815,7 +815,7 @@ W7 期间发现并登记（不在本轮静默修复）：
 
 | # | 工作项 | 状态 | 结果与证据 |
 | --- | --- | --- | --- |
-| W3-a | ADR 0005 评审（Draft → Accepted） | **完成 2026-09-21** | 用户确认接受，并**改判决定 3**：由「`qed_test` 整库自建自删」改为「复用 `qed_test`、夹具只拥有本方 `af_*` 四表 + `alembic_version`，绝不 `DROP DATABASE`」——因为刚核验到根仓库 2026-09-21 已把 `qed_test` 灌成 `qed` 的 13 表镜像，按草案执行会删掉别人的资产。决定 2 同时补「库名不符即 `pytest.exit` 终止会话」。修订写入 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)「评审与实施记录」节 |
+| W3-a | ADR 0005 评审（Draft → Accepted） | **完成 2026-09-21** | 用户确认接受，并**改判决定 3**：由「`qed_test` 整库自建自删」改为「复用 `qed_test`、夹具只拥有本方 `af_*` 四表 + `alembic_version`，绝不 `DROP DATABASE`」——因为刚核验到根仓库 2026-09-21 已把 `qed_test` 灌成 `qed` 的 13 表镜像，按草案执行会删掉别人的资产。决定 2 同时补「库名不符即 `pytest.exit` 终止会话」。修订写入 [ADR 0005](../../../adr/0005-mysql-integration-test-isolation.md)「评审与实施记录」节 |
 | W3-b | `tests/support/mysql.py` + `tests/integration/test_parse_persistence.py` | **完成 2026-09-21** | 先红（`ModuleNotFoundError: tests.support.mysql`，7 errors）后绿：opt-in 真跑 **8 passed**，默认门禁 **8 skipped**。断言面 ①未 commit 的页行对他连接不可见、commit 后可见 ②第 n 页调用引擎前前 n-1 页已提交（`parsed_snapshots == [0,1,2]`）③`progress.parsed` 采样单调且在运行中确实前进过 ④非 `EngineError` 穿透与整本中途失败时前序页行仍在、`active_job_id` 不激活 ⑤**反向判据** `test_deferred_commits_are_genuinely_invisible_mid_run`：`persist_per_page=False` 时独立连接什么都看不到，证明正向断言不恒真 ⑥边界自证：engine URL 与 `SELECT DATABASE()` 均为 `qed_test`、Alembic 落在 `20260920_0002` |
 | W3-c | `standards/testing.md` 两处联动 + 指南 | **完成 2026-09-21** | 分层表 integration 行改为「mock 面门禁必跑 / MySQL 面需 `QED_TEST_MYSQL=1`，默认 skip」；编写约定的隔离铁律补**唯一例外**句（回环 + `qed_test` 自有表白名单 + 数据根 `tmp_path` + 缺开关 skip）；`guides/development.md` 增该命令块与「执行时机：改 `orchestrator/`、`db/` 持久化语义后必须跑一次」；code-map 补 `tests/support/` 行与 orchestrator 的测试列 |
 
@@ -898,7 +898,7 @@ C-0 因此改以**模型侧计数**（`queued_tasks + processing_tasks`）为主
 
 ## 跨项目回执发出（2026-09-21，R1 窗口后）
 
-按[跨项目协作流程](../standards/cross-project-collaboration.md)第 4 步：回执只落本仓库 todo/计划，
+按[跨项目协作流程](../../../standards/cross-project-collaboration.md)第 4 步：回执只落本仓库 todo/计划，
 根仓库自读登记，本仓库不写根仓库文件；出站请求在本仓库登记后由**用户转达**根仓库。
 
 **锚点（根侧复核的坐标）**：代码/测试/台账 = commit `95e1d37`（分支 `release`）；本节文本随其后的
@@ -909,7 +909,7 @@ docs commit 同批推送，**根侧拉取 `release` HEAD 即得全部材料**。
 
 ### REQ-080 —— 解析产物按版本划分（回执 QED-Engine，本方实施完成，等根侧确认四条）
 
-事实源：[PLAN-004「REQ-080 实施回执稿」](../history/plans/2026-09/2026-09-20-req080-parse-version-layout.md)（差异 1~4 +
+事实源：[PLAN-004「REQ-080 实施回执稿」](../../../history/plans/2026-09/2026-09-20-req080-parse-version-layout.md)（差异 1~4 +
 请根确认清单四条 + 真机取证段）。要点：`versions/<job_id>/` 落盘 + `af_books.active_job_id` 生效指针
 （NULL = 根视图）+ 只读 `GET /api/v1/books/{id}/versions`；迁移 `20260920_0002` 已在真实 `qed` 库生效；
 **8900 与前端零改造**（端点路径、响应结构、`image_url` 字面量、manifest 相对路径基准全部不变）。
@@ -922,7 +922,7 @@ docs commit 同批推送，**根侧拉取 `release` HEAD 即得全部材料**。
 关闭结果 Achieved）**：**四条全部接受**——① 差异 1~4 满足关闭语义；② 版本对比/回滚**不开**写入端点
 契约（将来需求另立 REQ）；③ 人工编辑不随版本继承接受；④ 旧版本磁盘清理属 **D 类另行立项**。根侧并附
 实测佐证「8900 门面读取路径不变即工作正常（parsing-tree/页数据/书页状态一致）」。据此本方 REQ-080 行
-与 PLAN-004 行同日原子迁入 [completed.md](../trackers/completed.md)，PLAN-004 壳按 **Retain** 归档。
+与 PLAN-004 行同日原子迁入 [completed.md](../../../trackers/completed.md)，PLAN-004 壳按 **Retain** 归档。
 **四条的长期后果**（后续任务的边界，不是待办）：② ⇒ 不做切换/回滚端点，除非根侧另立 REQ；
 ④ ⇒ `versions/` 磁盘清理始终是 D 类，需用户批准，无自动删除；③ ⇒ 块编辑绑定其所属 `job_id`
 （条文 V6/V9），重解析后旧编辑不回显属既定语义而非缺陷。
@@ -991,7 +991,7 @@ REQ-080 回执承接完毕；REQ-001 行保持开放，等根侧读取本节并�
 ### 根侧回执已到：六个跨项目行关闭（2026-09-22 复核，A 类零代码）
 
 **判据**：根仓库 `docs/trackers/` 自身登记即为「根侧已回执」的事实源（本仓库只读，不写根侧文件；
-按[跨项目协作流程](../standards/cross-project-collaboration.md)，回执由用户转达）。2026-09-22 逐行
+按[跨项目协作流程](../../../standards/cross-project-collaboration.md)，回执由用户转达）。2026-09-22 逐行
 读取其 `completed.md`/`todo.md` 后，本计划承载的六行全部满足关闭条件。
 
 | 行 | 根侧登记位置 | 根侧结论原文要点 | 本方关闭判据 |
@@ -1003,7 +1003,7 @@ REQ-080 回执承接完毕；REQ-001 行保持开放，等根侧读取本节并�
 | REQ-084 | 其 `completed.md` REQ-084 行（Achieved） | 转达到手即 **BUGFIX-010** 已修：启停**派发即返回**（后台线程 + 槽位级 in-flight 409）、`MODEL_POLL_TIMEOUT_MS=300s`、「启动中→可用」两段式；实测 4ms 返回、409 生效、约 18s 收敛 | 建议语义（轮询 `/health` 到 200 + 区分已提交/已就绪）已被采纳实现 |
 | REQ-085 | 其 `completed.md` REQ-085 行（Achieved） | 用户裁决走**确认约定**（不做硬互斥）：边界审核实证 MinerU 单实例 + 解析调用唯一链路 = 8902 直连；约定成文于其 `design/local-model-management.md` **已知约束 9/10** | 本方请求 ① 的两种满足路径（互斥信号**或**确认约定）之「确认约定」达成；本方闸门（ARCH-017）已在位 |
 
-**关闭动作**：六行自 todo.md 原子迁入 [completed.md](../trackers/completed.md)；`ARCH-001` 聚合行子行
+**关闭动作**：六行自 todo.md 原子迁入 [completed.md](../../../trackers/completed.md)；`ARCH-001` 聚合行子行
 清单随之收缩为 `ARCH-003/005/006/009、REQ-086/087`。
 
 **同轮编号冲突处置（新入站）**：根仓库 2026-09-21 把 **`REQ-086`** 用给了「全本解析按窗口分块提交 +
@@ -1021,13 +1021,13 @@ A 类（文档/回执，零代码）收口：先核对事实，再在本节写�
 
 | # | 根侧行（关闭条件原文） | 我方实况与结论 | 回执要点 |
 | --- | --- | --- | --- |
-| X1 | **REQ-036**（高，「对方承接回执后关闭」；它同时卡住根侧 REQ-034 前置解除与 C 组第一阶段联调） | ① V2-003 越界产物**已于 2026-08-20 审阅并自行提交**（`importer.py` + 8 测试，81 passed + ruff clean，见 completed 该行），此后 ingest 已推进到真机 486 页 E2E（ARCH-015 关闭）；② V2-004 orchestrator / V2-005 MinerU 接入 / V2-007 API v1 **全部交付**：`orchestrator/pipeline.py`（全本+逐页+页级持久化+断点续跑+单一占用闸门）、`engines/mineru.py`（3.4.4 `/tasks`→`/tasks/{id}`→`/tasks/{id}/result` + `model_load()`）、15 条 `/api/v1/*` 路由 + `tests/contract/test_api_v1_contract.py`，契约事实源 [api.md](../architecture/api.md)；③ 8902 真机只读面 L7 九端点全可用，根侧 2026-09-20「联调最小打通轮」的四处自修与我方契约一致 | **正式承接并回执**：三项子请求均由本仓库实施完毕，根侧可据此解除 REQ-034 的「等 8902 API 建立」前置。风险声明：本仓库不感知 8900 侧改造，联调结论以根侧实测为准 |
-| X2 | **REQ-057**（中，「Axiom-Flow 需完成文档审阅后回执关闭」；根侧记我方「已建文档但未审阅」） | 本仓库 [ADR 0002](../adr/0002-pending-design-location.md)（待评审设计先入 `plans/`，确定后晋升 `design/`）**状态 = Accepted，2026-08-23**，由 `tests/contract/test_adr_governance.py` 守护；且一直在实际执行：本计划「契约条文草案（晋升输入）」与 PLAN-004 条文 V1~V10 即该 ADR 的产物，晋升动作发生在 W7 / PLAN-004 P7 | 根侧台账「未审阅」一行**已过时**：审阅与接受均已完成 3 周，无需本仓库改动，请根侧改记「已审阅」并关闭 REQ-057 |
-| X3 | **REQ-074**（中，「对方回执后关闭」——Agent 标准体系对齐根 REQ-071 口径） | 本仓库走的是 [ADR 0003](../adr/0003-standards-governance-alignment.md) 的**同源不同名**路线（范本取自 QED-Tracker 成熟版 + 根仓库治理对齐）：根 `code-document-traceability.md` ≡ `standards/doc-governance.md`「代码与文档追溯」节 + `code-map.md` **逐模块登记职责/状态/设计/测试** + `test_code_document_mapping.py` 双向守护；根 `code-standards.md` ≡ `AGENTS.md`「变更分级与边界」「中文与注释」+ `guides/development.md` 六步 + `standards/testing.md` 分层与隔离铁律 + **ruff 门禁**（机器可判定，比条文更硬）；根 `storage-conventions.md` ≡ `design/parsing-pipeline.md` 条文 12（本组件不产生数据根中间产物，比「任务结束清理 tmp」更严）+ `operations.md` 数据根口径 + 测试只用 `tmp_path` | 回执「**等价覆盖，不新增同义文件**」。三条**明确差异**一并声明：① 根 `storage-conventions.md:62`「改数据根/三区/tmp/原子落盘规则需先立 ADR」本仓库**不作为 ADR 触发条件**（2026-09-20 用户裁决：该条只约束根仓库），改走本仓库「变更分级」大修改路径（todo + `plans/` 计划 + architecture/design 同步）；② **唯一实质不等价处（本轮实测）**：本仓库 `src/` 26 个 Python 模块**未普遍**采用根侧推荐的「模块职责 / 设计关联（DesignRef） / 实现状态」文件头（实测仅 `ingest/importer.py` 与 `ingest/__init__.py`，测试侧 12/29 份带「模块职责」行），追溯事实源集中在 code-map。是否补齐 26 份文件头属**新增代码规范执行**，本轮不做，留给用户裁决（见下「REQ-074 遗留裁决项」）；③ 若根侧坚持三仓库文件同名镜像，那属本仓库 `standards/` 实质规则变更，**必须先新增 ADR** 才能落地 |
+| X1 | **REQ-036**（高，「对方承接回执后关闭」；它同时卡住根侧 REQ-034 前置解除与 C 组第一阶段联调） | ① V2-003 越界产物**已于 2026-08-20 审阅并自行提交**（`importer.py` + 8 测试，81 passed + ruff clean，见 completed 该行），此后 ingest 已推进到真机 486 页 E2E（ARCH-015 关闭）；② V2-004 orchestrator / V2-005 MinerU 接入 / V2-007 API v1 **全部交付**：`orchestrator/pipeline.py`（全本+逐页+页级持久化+断点续跑+单一占用闸门）、`engines/mineru.py`（3.4.4 `/tasks`→`/tasks/{id}`→`/tasks/{id}/result` + `model_load()`）、15 条 `/api/v1/*` 路由 + `tests/contract/test_api_v1_contract.py`，契约事实源 [api.md](../../../architecture/api.md)；③ 8902 真机只读面 L7 九端点全可用，根侧 2026-09-20「联调最小打通轮」的四处自修与我方契约一致 | **正式承接并回执**：三项子请求均由本仓库实施完毕，根侧可据此解除 REQ-034 的「等 8902 API 建立」前置。风险声明：本仓库不感知 8900 侧改造，联调结论以根侧实测为准 |
+| X2 | **REQ-057**（中，「Axiom-Flow 需完成文档审阅后回执关闭」；根侧记我方「已建文档但未审阅」） | 本仓库 [ADR 0002](../../../adr/0002-pending-design-location.md)（待评审设计先入 `plans/`，确定后晋升 `design/`）**状态 = Accepted，2026-08-23**，由 `tests/contract/test_adr_governance.py` 守护；且一直在实际执行：本计划「契约条文草案（晋升输入）」与 PLAN-004 条文 V1~V10 即该 ADR 的产物，晋升动作发生在 W7 / PLAN-004 P7 | 根侧台账「未审阅」一行**已过时**：审阅与接受均已完成 3 周，无需本仓库改动，请根侧改记「已审阅」并关闭 REQ-057 |
+| X3 | **REQ-074**（中，「对方回执后关闭」——Agent 标准体系对齐根 REQ-071 口径） | 本仓库走的是 [ADR 0003](../../../adr/0003-standards-governance-alignment.md) 的**同源不同名**路线（范本取自 QED-Tracker 成熟版 + 根仓库治理对齐）：根 `code-document-traceability.md` ≡ `standards/doc-governance.md`「代码与文档追溯」节 + `code-map.md` **逐模块登记职责/状态/设计/测试** + `test_code_document_mapping.py` 双向守护；根 `code-standards.md` ≡ `AGENTS.md`「变更分级与边界」「中文与注释」+ `guides/development.md` 六步 + `standards/testing.md` 分层与隔离铁律 + **ruff 门禁**（机器可判定，比条文更硬）；根 `storage-conventions.md` ≡ `design/parsing-pipeline.md` 条文 12（本组件不产生数据根中间产物，比「任务结束清理 tmp」更严）+ `operations.md` 数据根口径 + 测试只用 `tmp_path` | 回执「**等价覆盖，不新增同义文件**」。三条**明确差异**一并声明：① 根 `storage-conventions.md:62`「改数据根/三区/tmp/原子落盘规则需先立 ADR」本仓库**不作为 ADR 触发条件**（2026-09-20 用户裁决：该条只约束根仓库），改走本仓库「变更分级」大修改路径（todo + `plans/` 计划 + architecture/design 同步）；② **唯一实质不等价处（本轮实测）**：本仓库 `src/` 26 个 Python 模块**未普遍**采用根侧推荐的「模块职责 / 设计关联（DesignRef） / 实现状态」文件头（实测仅 `ingest/importer.py` 与 `ingest/__init__.py`，测试侧 12/29 份带「模块职责」行），追溯事实源集中在 code-map。是否补齐 26 份文件头属**新增代码规范执行**，本轮不做，留给用户裁决（见下「REQ-074 遗留裁决项」）；③ 若根侧坚持三仓库文件同名镜像，那属本仓库 `standards/` 实质规则变更，**必须先新增 ADR** 才能落地 |
 | X4 | **REQ-075**（高，「对方回执后关闭」；根侧 2026-09-21 复核仍写「待对方回执」） | 本仓库**已关闭**（completed 2026-09-21 行），回执正文就在本计划「跨项目回执稿（W8-g，2026-09-21）」的 REQ-075 段：唯一键 `QED_OCR_MODEL_URL` / 生效端口 5002、无旧键别名；MinerU 3.4.4 三段端点与 `return_content_list`/`return_middle_json` 必开；legacy `/file_parse` 与 `/get_task_results/{id}` 在 3.4.4 均 404 | 本批回执**点名**根侧读取该段并关闭 REQ-075；连带 **ARCH-020-E 的「前置阻塞 REQ-075」可解除**（其证据列仍记「HTTP 404」属修复前旧状态） |
 
 **本方侧终态**：X1~X4 无遗留动作，全部转为「等根仓库读取并关闭其台账行」。三条入站行的关闭结果已写入
-[completed.md](../trackers/completed.md)（REQ-036/057/074），REQ-075 指向其原关闭行。
+[completed.md](../../../trackers/completed.md)（REQ-036/057/074），REQ-075 指向其原关闭行。
 
 **REQ-074 遗留裁决项（不阻塞回执，登记在 ARCH-010 长期行）**：差异 ② 的两种处置——
 (A) 按根侧范本补齐 `src/` 26 个模块的「模块职责 / 设计关联（DesignRef） / 实现状态」文件头，并在
@@ -1037,6 +1037,10 @@ A 类（文档/回执，零代码）收口：先核对事实，再在本节写�
 改动先定级，且补齐文件头会让 26 个模块同时进入 diff 面。
 
 ## 承载 REQ-087（根侧 ARCH-020-E 的数据源需求：页级失败清单与 jobs 列表）
+
+> **本计划已于 2026-09-22 关闭，本节不再是该行的承载**：本行现登为 **`REQ-088`**（根侧同日把
+> `REQ-087` 用于「空白页合法化」，本仓库为后占者故让号），活承载见
+> [PLAN-008](../../../plans/2026-09-22-req088-page-jobs-list.md)。以下为登记与裁决过程原文，保留原貌。
 
 **来源**：根仓库 `docs/trackers/todo.md` 的 **ARCH-020-E** 证据列原文——「同轮承载解析 UI 暂缓增强
 （bbox 拖拽缩放手柄、**失败页重解析按钮**、**任务中心抽屉**、页内搜索、质量信号展示——**待 8902 页级
@@ -1059,7 +1063,7 @@ A 类（文档/回执，零代码）收口：先核对事实，再在本节写�
 **为什么登记时只登记不实施**（2026-09-21 的理由，已被 2026-09-22 的裁决解除）：`api.md` 是根侧 8900
 透传的**契约事实源**，端点集一旦开出来即成契约。当时 DEFECT-006（部分失败/书级状态拆分）与
 DEFECT-007（假 `running`）未成语义，先开列表端点等于把错误语义固化给前端（ADR 0004 铁律：不做静默
-兼容层）。**现状**：两者已由 [ADR 0007](../adr/0007-parse-status-semantics.md) 裁决并由 PLAN-006 实施
+兼容层）。**现状**：两者已由 [ADR 0007](../../../adr/0007-parse-status-semantics.md) 裁决并由 PLAN-006 实施
 关闭 ⇒ 数据来源四条缺口（`failed_pages`、`last_parse_result`、`status` 六态、`/versions`）全部具备，
 本行**只剩端点实施本身**（属新立项，见关闭条件）。
 
@@ -1125,7 +1129,7 @@ DEFECT-007（假 `running`）未成语义，先开列表端点等于把错误语
 （`dropped_types` 为空），二者都不满足则该缺口重开为缺陷。
 
 **关闭结果 Achieved**（判据 1 达成 + 判据 2 移交并被 ARCH-009 完整覆盖），行已原子移入
-[completed.md](../trackers/completed.md)；`title`/`table` 取证缺口写入 ARCH-009 行与上方条文。
+[completed.md](../../../trackers/completed.md)；`title`/`table` 取证缺口写入 ARCH-009 行与上方条文。
 
 ## 承载 ARCH-003 / ARCH-009 / ARCH-018 / ARCH-019（2026-09-22 真机窗口 R2：三件一次做完）
 
@@ -1178,7 +1182,7 @@ skip、PLAN-006 收口时未跑** ⇒ 这正是 ARCH-003 判据要求真机复�
 `failures: []`（`B3_summary.json`），探针源 PDF 由脚本自行 unlink。**口径备注（不判失败）**：`DELETE`
 契约只承诺书目录，因此**删除不裁剪空的父级目录 `parsed/probe/d3-20260922/`**——留空目录
 属既定行为，如需裁剪须先改 `parsing-management.md` 的删除契约（未来若做旧版本磁盘清理的 D 类计划可顺带裁决）。
-删除面的落库/磁盘与回滚口径已运维成文于 [operations.md](../guides/operations.md)
+删除面的落库/磁盘与回滚口径已运维成文于 [operations.md](../../../guides/operations.md)
 「书目删除的落库与磁盘口径（2026-09-22 D3 真机演练测定）」节。
 
 ### W-C：ARCH-009 代表书抽查验收（判据达成，过程中发现并修复 ARCH-018）
@@ -1220,7 +1224,7 @@ skip、PLAN-006 收口时未跑** ⇒ 这正是 ARCH-003 判据要求真机复�
 
 - **ARCH-018 修复**：`normalize/blocks.py` 新增 `split_math_delimiters()` 并接入 FORMULA 分支
   （裸 `latex` + 由定界符决定 `display`）；`tests/unit/test_normalize.py::TestFormulaDelimiters` 6 例；
-  契约成文于 [parsing-pipeline.md](../design/parsing-pipeline.md)「公式定界符契约」。
+  契约成文于 [parsing-pipeline.md](../../../design/parsing-pipeline.md)「公式定界符契约」。
   影响面：`pages/*.md`、`chunks.json`、API `blocks[].latex` 与块编辑回显同时被修复。
 - 窗口工具新增：`live_window_preflight.py`（只读快照，原生 SQL ∩ `SHOW COLUMNS` 故迁移前后可跑）、
   `live_d3_delete_drill.py`、`live_pick_sample_pages.py`（含墨度模式）、
@@ -1252,24 +1256,46 @@ skip、PLAN-006 收口时未跑** ⇒ 这正是 ARCH-003 判据要求真机复�
   回执发出，条文 1~11 晋升 design/architecture 且契约守护全绿。REQ-080 与 Rudin 验收（ARCH-009）
   **不属本计划关闭条件**。
   **2026-09-21 依赖转移**：DEFECT-006/007 已由用户裁决（A1/B1/C1）并成文为
-  [ADR 0007](../adr/0007-parse-status-semantics.md)，其实施与 ARCH-003 收口一并由
+  [ADR 0007](../../../adr/0007-parse-status-semantics.md)，其实施与 ARCH-003 收口一并由
   PLAN-006 承载（该计划同日关闭并按 Delete 删壳，正文见锚点 `9034a19`）⇒ 本计划剩余关闭依赖收窄为
   **D3 真机删除演练（需批准）+ REQ-001 根侧登记**，不再含状态语义裁决。
   **2026-09-22 R2 窗口：两项剩余依赖全部达成** —— D3 已执行并登记（见「W-B」），REQ-001 随六个
   跨项目行关闭 ⇒ **本计划自列的关闭条件已全部满足**。但正文此刻仍是三条**活行**的承载
   （REQ-086 / REQ-087 / ARCH-019，且 REQ-086/087 各含未实施的 B 类工作项）：按
-  [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)「一任务一承载」，Retain 归档会把活承载
+  [ADR 0006](../../../adr/0006-ledger-plan-carrier-contract.md)「一任务一承载」，Retain 归档会把活承载
   一起搬进 `history/` 并使其脱离活跃计划集合（契约测试的镜像判定只扫 `plans/`）⇒ **故本计划保持
   In Progress，关闭与否作为待用户裁决项**：(A) 先为 REQ-086/087 另立 B 类计划、把 ARCH-019 挂到其下，
   再关本计划（Retain）；(B) 维持现状直到这三行全部关闭。默认取 (B)，不动。
+  **2026-09-22 用户裁决取 (A) ⇒ 本计划关闭（Completed / Achieved，Retain）**：活行改挂两份新计划后
+  本计划按 Retain 归档（见下「承载转移」）。**转移动机说明**：裁决文本只点名三条活行，实际引用本计划
+  作承载的是**六条**（ARCH-005/006/009/019 + REQ-086/087）——归档后 `plans/` 扫描不再命中本计划，
+  六行必须全部改挂，否则违反 ADR 0006「一任务一承载」。
+- **承载转移（2026-09-22，本计划关闭时生效）**：
+  - [PLAN-007 全本窗口分块提交与空白页合法化](../../../plans/2026-09-22-req086-whole-book-window.md) ←
+    `REQ-086`（根侧入站，实施未开工）、`ARCH-009`（抽查口径已 PASS，剩全量取证）、
+    `ARCH-019`（`ref_text` 映射待裁决）；同日新入站的根侧 `REQ-087`（空白页合法化 + 跨版本续跑语义）
+    亦挂此计划——它与 REQ-086 共享同一个 b05 全本真机判据现场，拆开会互相等待。
+  - [PLAN-008 页级失败清单与 jobs 列表端点](../../../plans/2026-09-22-req088-page-jobs-list.md) ←
+    `ARCH-005`、`ARCH-006`（两者关闭判据都是 8903 真机联调，而联调消费的就是这两个端点）。
+  - **二次编号冲突**：本计划的「承载 REQ-087」节改挂新计划时**再改号为 `REQ-088`**——根仓库
+    2026-09-22 00:35 已用 `REQ-087` 登记「空白页合法化」（commit `3f0c60e`），本仓库 00:57（commit
+    `1d4de56`）才把端点行改号为 087，属后占者 ⇒ 按「后占者让号」（判例同 `REQ-001`、`REQ-086`）让号。
+    本节以下正文按关闭时点定稿，**不回改**旧号与旧承载路径；改号事实以本条为准。
 - **归档判定 Retain**：W0 冻结清单与留档哈希、偏差台账、契约条文（晋升前的推导依据）需保留，
   故计划壳归档 `docs/history/plans/2026-09/`，不删除。
 - 收尾动作：todo 关闭任务原子迁移 `completed.md`；`project-status.md` 现状与断点续跑措辞按事实
   刷新；`code-map.md` 补 `engines/factory.py`、`tests/support/`、`tests/integration/` 模块行。
+  **2026-09-22 收口登记**：四条全部执行（`code-map.md` 三行已在 W7 轮补齐，本轮无新增模块）；
+  本壳移至 `docs/history/plans/2026-09/` 后，壳内 43 处相对链接与外部四处引用（`adr/0007`、
+  `trackers/completed.md`、`trackers/project-status.md`、`scripts/tmp/probe_mineru_api.py` 注释）同批改指，
+  月份索引与 `plans/index.md` 登记去处。关闭轮门禁：`pytest tests -q` → **411 passed, 10 skipped**、
+  `ruff check src tests scripts` → 全绿（本轮零代码，用例数与十四轮收口轮持平；治理契约测试
+  `test_plan_governance` / `test_tracker_governance` / `test_markdown_links` 覆盖承载改挂、编号让号与
+  链接改指三类不变式）。
 
 ## 台账历史归档（2026-09-21 承载契约压缩）
 
-按 [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md) 决定 4，todo 行证据列压缩为「最新结论 +
+按 [ADR 0006](../../../adr/0006-ledger-plan-carrier-contract.md) 决定 4，todo 行证据列压缩为「最新结论 +
 承载引用」，以下为被移除的历史日志原文（本计划为这些行的承载文档；行文中的 `~~划掉~~` 与日期段
 保留原貌，不回改）。
 
@@ -1279,13 +1305,13 @@ skip、PLAN-006 收口时未跑** ⇒ 这正是 ARCH-003 判据要求真机复�
 
 ### PLAN-003 原证据列
 
-> **2026-09-20 立项并执行 W0**：三方对表产出偏差台账 23 项（A1~A6/B/C/D/E/F）+ 契约条文 11 条（含 1b）；W0 冻结探测 M1~M4 全 PASS（留档 `data/probes/mineru-3.4.4-20260920/`），端点终版与响应信封已成文，新增偏差 A5（`return_content_list` 等默认 false）与 A6（系统代理劫持回环流量）。**W1/W2/W4/W5/W6 代码侧完成**（`mineru.py` 三段化 + 信封双兼容 + 直连；`pipeline.py` 页级 commit + progress 节流；`engines/factory.py` 显式分派 + 提交期 503 + 数据根双闸 + ingest/purge 幂等），门禁 285 → **283 passed** + ruff 全绿（W7 删除重复事实源用例 2 例，基线相应下调），DEFECT-003 随 W6 关闭，完成登记见计划正文。**W7 完成**（F1~F5 文档自洽 + 条文 1~9/11 晋升 design/architecture，含 `database-design.md` 表状态口径改「已实现」与新增「任务表语义」「页表语义」；ADR 0004 正文 8002→5002）。**2026-09-20 收尾裁决**（取消延后、恢复推进，执行面收窄为三块）：C1 解析真机打通**小样止**（单页 + 5 页合成全本 + 真书单页回归，全量与质量验收归 ARCH-009）、C2 数据库存储收口（含 W3 走**路 B**：先评审 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md) 再写真 MySQL 双 Session 测试）、C3 数据根收口（`tmp/axiom-flow/` 改判为**设计表述错误** → 条文 12「不写即合规、存在即缺陷」，零代码；`data/` 重定义为探测/合成样本留档区）。判据清单 L1~L8 / D1~D5 / G1~G6 与工作项 W3-a~c、W8-a~g 见计划「收尾执行设计」。**2026-09-20 收尾轮真机取证完成 C1**：L1~L8 **全绿（小样止）**——L2 真书第 3 页、L3 五页合成整本（5/5 + 18 产物 + chunks 2 块）、L4 进度单调、L5 失败注入、L6 kill 续跑（真 MySQL 21 行留存 → 16/16 补齐）、L7 只读端点、L8 提交期 503 不落行，结论与原始留档见计划「收尾执行登记」与 `data/probes/live-bringup-20260920/`。同时暴露 4 项新缺陷（DEFECT-004 bbox 坐标空间 / DEFECT-005 类型字面值 / DEFECT-006 校验与状态语义 / DEFECT-007 遗留 running）与 1 项待批清理（真机 `af_pages` 第 999 页幽灵行）。**剩余**：C2 的 D3/D4/D5、C3 的 G1/G4/G5 口径晋升、W8 的 8.1 冒烟用例固化与 8.4/W8-g 跨项目回执；外部依赖仅 ADR 0005 评审。DEFECT-001 按用户裁决**不随真机证据关闭**。**2026-09-21 收尾二轮**：8.1 固化完成——`tests/smoke/test_live_mineru_chain.py`（逐页 PNG 形状 + 5 页整本落库与产物齐套 + 数据根 `tmp/` 不存在；默认门禁 `2 skipped`，`QED_SMOKE_LIVE=1` 真机 `2 passed in 7.08s`，5002 `completed_tasks` 48→50）；8.4/W8-g 回执稿成文（PLAN-003「跨项目回执稿」节）→ **DEFECT-002 与 REQ-075 关闭**；C3 的 D4/G5 只读取证成立（凭据零命中 + 仅 `af_*` 四表可触达；三段走查证明生效层恒为本仓库 `.env`，与根 `.env` 值一致）→ **C3 收口面关闭**；新登 DEFECT-008（`.env` 行内注释不剥离的潜伏坏 URL）。**本计划剩余全部为外部/裁决依赖**：C2 的 D3（真机删除演练，需批准）与 D5/W3（ADR 0005 评审）、REQ-001（等根仓库回执）、DEFECT-004~008 修复。**2026-09-21 DEFECT-004 修复并关闭**（本轮开工项，详证据与 REQ-081 回执见计划「DEFECT-004 修复登记」与「跨项目回执稿（REQ-081）」两节；门禁 283 → **292 passed** + 契约 82 + ruff 全绿，真机冒烟 `2 passed`）。**2026-09-21 四轮：DEFECT-005 修复并关闭**（`header`/`footer` 入 `_TYPE_MAP` 且与旧版字面值并存；`normalize_page` 逐条对账 → `QualityMetrics.dropped_block_count`/`dropped_types` 可见丢弃；`index` 只在存活块连续编号；整页 markdown 回退条件收紧为「引擎未回任何结构化条目」，对账不变式恒成立；新增 11 例单元（两轮红→绿：`6 failed` + `1 failed`）+ 冒烟新增「原始项 = 存活块 + 丢弃」零丢弃对账断言；门禁 292 → **303 passed, 2 skipped** + 契约 82 + ruff 全绿；**真机零丢弃复跑待 MinerU 起服务**，5002 当前 `/health` 连接拒绝）。本计划仍不关闭：剩余均为外部/裁决依赖项。
+> **2026-09-20 立项并执行 W0**：三方对表产出偏差台账 23 项（A1~A6/B/C/D/E/F）+ 契约条文 11 条（含 1b）；W0 冻结探测 M1~M4 全 PASS（留档 `data/probes/mineru-3.4.4-20260920/`），端点终版与响应信封已成文，新增偏差 A5（`return_content_list` 等默认 false）与 A6（系统代理劫持回环流量）。**W1/W2/W4/W5/W6 代码侧完成**（`mineru.py` 三段化 + 信封双兼容 + 直连；`pipeline.py` 页级 commit + progress 节流；`engines/factory.py` 显式分派 + 提交期 503 + 数据根双闸 + ingest/purge 幂等），门禁 285 → **283 passed** + ruff 全绿（W7 删除重复事实源用例 2 例，基线相应下调），DEFECT-003 随 W6 关闭，完成登记见计划正文。**W7 完成**（F1~F5 文档自洽 + 条文 1~9/11 晋升 design/architecture，含 `database-design.md` 表状态口径改「已实现」与新增「任务表语义」「页表语义」；ADR 0004 正文 8002→5002）。**2026-09-20 收尾裁决**（取消延后、恢复推进，执行面收窄为三块）：C1 解析真机打通**小样止**（单页 + 5 页合成全本 + 真书单页回归，全量与质量验收归 ARCH-009）、C2 数据库存储收口（含 W3 走**路 B**：先评审 [ADR 0005](../../../adr/0005-mysql-integration-test-isolation.md) 再写真 MySQL 双 Session 测试）、C3 数据根收口（`tmp/axiom-flow/` 改判为**设计表述错误** → 条文 12「不写即合规、存在即缺陷」，零代码；`data/` 重定义为探测/合成样本留档区）。判据清单 L1~L8 / D1~D5 / G1~G6 与工作项 W3-a~c、W8-a~g 见计划「收尾执行设计」。**2026-09-20 收尾轮真机取证完成 C1**：L1~L8 **全绿（小样止）**——L2 真书第 3 页、L3 五页合成整本（5/5 + 18 产物 + chunks 2 块）、L4 进度单调、L5 失败注入、L6 kill 续跑（真 MySQL 21 行留存 → 16/16 补齐）、L7 只读端点、L8 提交期 503 不落行，结论与原始留档见计划「收尾执行登记」与 `data/probes/live-bringup-20260920/`。同时暴露 4 项新缺陷（DEFECT-004 bbox 坐标空间 / DEFECT-005 类型字面值 / DEFECT-006 校验与状态语义 / DEFECT-007 遗留 running）与 1 项待批清理（真机 `af_pages` 第 999 页幽灵行）。**剩余**：C2 的 D3/D4/D5、C3 的 G1/G4/G5 口径晋升、W8 的 8.1 冒烟用例固化与 8.4/W8-g 跨项目回执；外部依赖仅 ADR 0005 评审。DEFECT-001 按用户裁决**不随真机证据关闭**。**2026-09-21 收尾二轮**：8.1 固化完成——`tests/smoke/test_live_mineru_chain.py`（逐页 PNG 形状 + 5 页整本落库与产物齐套 + 数据根 `tmp/` 不存在；默认门禁 `2 skipped`，`QED_SMOKE_LIVE=1` 真机 `2 passed in 7.08s`，5002 `completed_tasks` 48→50）；8.4/W8-g 回执稿成文（PLAN-003「跨项目回执稿」节）→ **DEFECT-002 与 REQ-075 关闭**；C3 的 D4/G5 只读取证成立（凭据零命中 + 仅 `af_*` 四表可触达；三段走查证明生效层恒为本仓库 `.env`，与根 `.env` 值一致）→ **C3 收口面关闭**；新登 DEFECT-008（`.env` 行内注释不剥离的潜伏坏 URL）。**本计划剩余全部为外部/裁决依赖**：C2 的 D3（真机删除演练，需批准）与 D5/W3（ADR 0005 评审）、REQ-001（等根仓库回执）、DEFECT-004~008 修复。**2026-09-21 DEFECT-004 修复并关闭**（本轮开工项，详证据与 REQ-081 回执见计划「DEFECT-004 修复登记」与「跨项目回执稿（REQ-081）」两节；门禁 283 → **292 passed** + 契约 82 + ruff 全绿，真机冒烟 `2 passed`）。**2026-09-21 四轮：DEFECT-005 修复并关闭**（`header`/`footer` 入 `_TYPE_MAP` 且与旧版字面值并存；`normalize_page` 逐条对账 → `QualityMetrics.dropped_block_count`/`dropped_types` 可见丢弃；`index` 只在存活块连续编号；整页 markdown 回退条件收紧为「引擎未回任何结构化条目」，对账不变式恒成立；新增 11 例单元（两轮红→绿：`6 failed` + `1 failed`）+ 冒烟新增「原始项 = 存活块 + 丢弃」零丢弃对账断言；门禁 292 → **303 passed, 2 skipped** + 契约 82 + ruff 全绿；**真机零丢弃复跑待 MinerU 起服务**，5002 当前 `/health` 连接拒绝）。本计划仍不关闭：剩余均为外部/裁决依赖项。
 
 ### DEFECT-001 原任务与证据列
 
 > 任务：解析进度与页状态不落库：`orchestrator/pipeline.py` 全程只 flush，唯一 commit 在 `orchestrator/jobs.py` 任务结束时；`ParseJobRepository.update_progress` 无调用点 → 实时进度查询与断点续跑在 MySQL 上不成立
 >
-> 证据：来源：提交 a5d2e96 代码审查（2026-09-20）。复现缺口：`tests/integration/` 目前无测试文件，DB 测试全为内存/临时 SQLite（`test_db.py`、`test_db_migrations.py`），共享 Session 掩盖了未提交问题。**2026-09-20 W2 代码侧已落地**：页级 `commit`（产物写先于提交）+ `progress` 按 ≥1s 或每 10 页节流 + `_fail` 前置提交 + `persist_per_page` 开关；守护测试改用**文件 SQLite + 独立读连接**复现连接隔离（5 例先红后绿）。**2026-09-20 收尾轮真机证据已取得**：L4 运行中 `progress.parsed` 单调递增（0→1→2→3、9→16）、L5 单页失败不中断且已解析页保留、L6 kill 后真 MySQL 21 页行留存并按「无行 ∪ failed」续跑 16/16。**2026-09-20 用户裁决：本项不因真机证据关闭**（「DEFECT-001 不落库」= 不收口），仍开放的是 MySQL 级提交边界回归网：W3-b 双 Session 测试受 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md) Draft 评审阻塞；关闭时回改 `project-status.md` 的「断点续跑基础」措辞
+> 证据：来源：提交 a5d2e96 代码审查（2026-09-20）。复现缺口：`tests/integration/` 目前无测试文件，DB 测试全为内存/临时 SQLite（`test_db.py`、`test_db_migrations.py`），共享 Session 掩盖了未提交问题。**2026-09-20 W2 代码侧已落地**：页级 `commit`（产物写先于提交）+ `progress` 按 ≥1s 或每 10 页节流 + `_fail` 前置提交 + `persist_per_page` 开关；守护测试改用**文件 SQLite + 独立读连接**复现连接隔离（5 例先红后绿）。**2026-09-20 收尾轮真机证据已取得**：L4 运行中 `progress.parsed` 单调递增（0→1→2→3、9→16）、L5 单页失败不中断且已解析页保留、L6 kill 后真 MySQL 21 页行留存并按「无行 ∪ failed」续跑 16/16。**2026-09-20 用户裁决：本项不因真机证据关闭**（「DEFECT-001 不落库」= 不收口），仍开放的是 MySQL 级提交边界回归网：W3-b 双 Session 测试受 [ADR 0005](../../../adr/0005-mysql-integration-test-isolation.md) Draft 评审阻塞；关闭时回改 `project-status.md` 的「断点续跑基础」措辞
 
 ### ARCH-003 原证据列
 

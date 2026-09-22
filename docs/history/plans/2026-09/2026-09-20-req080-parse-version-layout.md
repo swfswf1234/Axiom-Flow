@@ -173,7 +173,7 @@ ingest/purge 与版本的交互、只读版本列举端点、文档晋升与回�
 | P5 | `api/main.py`：读取路径统一走生效版本解析（含 `active_job_id IS NULL` 的 legacy 回落）、`GET /books/{id}/versions`、`BookOut.active_job_id`、提交任务不再隐式依赖根目录产物清单 | **达成**：`_read_scope()` 为读取面唯一入口，五类只读端点 + 块编辑端点全部改造；`ParseVersionOut` 与 `GET /books/{id}/versions` 上线；契约 `TestParseVersions`（S1 两版本并存读生效版、S4 `image_url` 字面量常量、manifest 基准=版本目录、生效目录缺失 404 不回落、重 ingest 后历史版本按 `job_id` 可直读） | P4 |
 | P6 | ingest/purge 改造（V8）：`ingest_book()` 只交换 `book.json` + `pages/`、保 `versions/`；API 侧不再调 `reset_for_book()` 删全部页行，改置 `active_job_id=NULL`；purge 删含 `versions/` 的整本目录 | **达成**：`importer._swap_root_view()`（改名让位 → 上位 → 清旧目录 + 失败回滚，无「`pages/` 不存在」读空窗），`reset_legacy()` 只清根视图行；`DELETE` 清全部版本 `af_pages` + `af_block_edits`（`delete_for_book`），purge 删整本目录；红灯：`test_reingest_preserves_versions_directory` + 契约「重 ingest 后版本目录仍在、根视图回落 legacy」 | P4 |
 | P7 | 文档晋升与联动：`parsing-pipeline.md`（产物树/版本目录/V10）、`parsing-management.md`（V8/端点表）、`api.md`（V5/V6/V9）、`database-design.md`（V2/V7 + Mermaid + DDL）、`code-map.md`、`guides/operations.md`；销账 PLAN-003「W7 完成登记」发现 2（`engine` 死默认值随本迁移一并清理）；发现 1（`tmp/`）已由条文 12 改判，随 V10 一并成文 | **2026-09-21 成文**：六份文档 + 两份台账已同步（`design/parsing-pipeline.md` 新增「解析版本与生效指针」节、`architecture/api.md` 新增 `/versions` 与生效版本读法、`database-design.md` 四表 DDL/Mermaid 重写、`operations.md` 新增单窗口 runbook）；PLAN-003 发现 2 已随 `20260920_0002` 的 `alter_column(server_default=None)` 销账并有守护用例 | P2~P6 定型 |
-| P8 | 门禁与收口：全量 `pytest` + `ruff`；REQ-080 实施回执稿（含差异点与待确认清单）、PLAN-003 W8 待办补「新布局上重跑冒烟」、`project-status.md` 刷新 | **进行中**：本地门禁 `376 passed, 10 skipped` + `ruff` 全绿；**真机 D 步已达成（2026-09-21 20:35~20:36，job `86ab56ae2b6c`）**——版本布局上单次重解析 20 页全部 parsed 并**首次激活** `active_job_id`，`versions/<job_id>/` 产物 529 个（含 `chunks.json`/`manifest.json`）、根视图无 `chunks.json`、页图硬链接同 inode、丢弃 0；取证 `data/probes/live-window-20260921/{S1c_exclusive,S2_after}.json`（过程与两处脚本缺陷见 [PLAN-003](../../plans/2026-09-20-parse-live-bringup.md)「承载 ARCH-017」节 G4/G5）。剩 S7：REQ-080/081/083 回执发出 + 根仓库确认 | P7 |
+| P8 | 门禁与收口：全量 `pytest` + `ruff`；REQ-080 实施回执稿（含差异点与待确认清单）、PLAN-003 W8 待办补「新布局上重跑冒烟」、`project-status.md` 刷新 | **进行中**：本地门禁 `376 passed, 10 skipped` + `ruff` 全绿；**真机 D 步已达成（2026-09-21 20:35~20:36，job `86ab56ae2b6c`）**——版本布局上单次重解析 20 页全部 parsed 并**首次激活** `active_job_id`，`versions/<job_id>/` 产物 529 个（含 `chunks.json`/`manifest.json`）、根视图无 `chunks.json`、页图硬链接同 inode、丢弃 0；取证 `data/probes/live-window-20260921/{S1c_exclusive,S2_after}.json`（过程与两处脚本缺陷见 [PLAN-003](2026-09-20-parse-live-bringup.md)「承载 ARCH-017」节 G4/G5）。剩 S7：REQ-080/081/083 回执发出 + 根仓库确认 | P7 |
 
 **D 步真机结论（2026-09-21，条文逐条判定）**：V1（不回写根视图）、V2（页行按 `(book_id, job_id)`
 作用域）、V3（`completed` + 产物齐备才激活，单列 UPDATE）、V5/V6（读取面走生效版本，`image_url`
@@ -203,7 +203,7 @@ PLAN-003 W8 的复核触发点在 P8 更新为「必须在版本布局上取证�
 | I6 | **生效版本目录缺失 → 显式 404**（`生效版本产物缺失：{book_id} @ {job_id}`），**不回落根视图** | ADR 0004 无自动兜底：静默回落会让前端以为在读新版本、实际读旧数据，比报错更坏 |
 | I7 | **`edit_id` 摘要纳入 `job_id`，但定位一律走唯一键** | 迁移前存量行保留旧摘要（不含 `job_id`）；若按新摘要查询，已有人工编辑会变成孤儿。重算历史主键属无收益的破坏性动作 |
 | I8 | **`ParseJobRow.engine` 与 DDL 默认值同时收口**：仓储行数据类 `engine` 改为必填、迁移 `20260920_0002` 里 `alter_column("engine", server_default=None)` | PLAN-003「W7 发现 2」销账：`'mineru'` 的 DDL 兜底是静默回落入口（ADR 0004 禁止）。降级**不**恢复死默认值（有意的单向门） |
-| I9 | **真机冒烟判据同步版本布局**：`tests/smoke/test_live_mineru_chain.py` 的整本用例改为断言 `versions/<job_id>/` 内产物齐套 + `active_job_id == job_id` + 根视图**不含** `chunks.json`（默认门禁 skip，故不改变 352 的计数）。**2026-09-21 R0 销账**：`scripts/tmp/live_reparse_b01_pages.py` 已在版本布局上重写为 HTTP 驱动（走 8902 端点提交/轮询，不再自拼旧扁平路径），并加部署自检（`alembic_version==20260920_0002` + `active_job_id` 字段在响应中）、`--check-only` 只读预检、pages 越界 422 复验与 re-ingest 自动化；旧扁平副本留档 `data/probes/window-prep-20260921/live_reparse_b01_pages.py.old-flat-layout`（见 [PLAN-003](../../plans/2026-09-20-parse-live-bringup.md)「承载 REQ-083 / DEFECT-008 / DEFECT-006」节 R0-4） | 该用例是 D 窗口的取证工具；若仍断言旧扁平路径，D 步必然「代码对、用例红」，把实现问题误读成模型问题。脚本同理**必须在版本布局上重写后**才可用于 D 步，且重写要防「对未迁移部署跑真机」这类不可逆误操作 |
+| I9 | **真机冒烟判据同步版本布局**：`tests/smoke/test_live_mineru_chain.py` 的整本用例改为断言 `versions/<job_id>/` 内产物齐套 + `active_job_id == job_id` + 根视图**不含** `chunks.json`（默认门禁 skip，故不改变 352 的计数）。**2026-09-21 R0 销账**：`scripts/tmp/live_reparse_b01_pages.py` 已在版本布局上重写为 HTTP 驱动（走 8902 端点提交/轮询，不再自拼旧扁平路径），并加部署自检（`alembic_version==20260920_0002` + `active_job_id` 字段在响应中）、`--check-only` 只读预检、pages 越界 422 复验与 re-ingest 自动化；旧扁平副本留档 `data/probes/window-prep-20260921/live_reparse_b01_pages.py.old-flat-layout`（见 [PLAN-003](2026-09-20-parse-live-bringup.md)「承载 REQ-083 / DEFECT-008 / DEFECT-006」节 R0-4） | 该用例是 D 窗口的取证工具；若仍断言旧扁平路径，D 步必然「代码对、用例红」，把实现问题误读成模型问题。脚本同理**必须在版本布局上重写后**才可用于 D 步，且重写要防「对未迁移部署跑真机」这类不可逆误操作 |
 
 **S1~S6 本地取证矩阵**（全部在 `tmp_path` 假数据根 + `FakeEngine` + SQLite 上成立；真机面见下一节）：
 
@@ -302,7 +302,7 @@ D-1 re-ingest 补齐 486 张页图并把 39 行 legacy（含第 999 页幽灵行
     ruff）。P1 确认清单并入回执稿成文。
   - **真机面（2026-09-21 R1 窗口达成）**：① C 窗口执行成功（备份 + `alembic upgrade
     20260920_0002` + 同窗口发布）✅；② D 步在版本布局上单次重解析并激活成功 ✅（`86ab56ae2b6c`）；
-    ③ S7 = REQ-080 回执**发出** ✅（commit `95e1d37`，见 [PLAN-003](../../plans/2026-09-20-parse-live-bringup.md)
+    ③ S7 = REQ-080 回执**发出** ✅（commit `95e1d37`，见 [PLAN-003](2026-09-20-parse-live-bringup.md)
     「跨项目回执发出」）。三项均达成 ⇒ 本计划关闭的**唯一剩余门槛是根侧对「请确认清单」四条的回应**
     （外部依赖，非本方待办；若根侧改判差异 1~4 不满足语义，则本计划按反馈改判而非直接关闭）。
 - **当前差距小结（2026-09-21 回执发出后）**：S1~S6 ✅ / P1 ✅ / P7 ✅ / P8 ✅（含 C/D 真机取证）/

@@ -7,7 +7,7 @@
 
 ## 背景
 
-DEFECT-006/007 的取证（[PLAN-003](../plans/2026-09-20-parse-live-bringup.md) R0/R1 节）暴露出解析
+DEFECT-006/007 的取证（[PLAN-003](../history/plans/2026-09/2026-09-20-parse-live-bringup.md) R0/R1 节）暴露出解析
 状态三处语义缺陷，均为代码事实而非推测：
 
 1. **任务终态掩盖失败页**：`pipeline.py` 的判据是 `COMPLETED if parsed else FAILED`，`parsed` 为
