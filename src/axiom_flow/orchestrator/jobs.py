@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from axiom_flow.db.repositories import BookRepository, PageRepository, ParseJobRepository
 from axiom_flow.engines.base import ParseEngine
-from axiom_flow.orchestrator.pipeline import ParseOutcome, run_parse_job
+from axiom_flow.orchestrator.pipeline import DEFAULT_WINDOW_SIZE, ParseOutcome, run_parse_job
 from axiom_flow.schemas import JobStatus, LastParseResult, ParseStatus
 
 logger = logging.getLogger(__name__)
@@ -33,10 +33,12 @@ class JobRunner:
         engine_factory: Callable[[str], ParseEngine],
         data_root: Path | str,
         background: bool = True,
+        window_size: int = DEFAULT_WINDOW_SIZE,
     ) -> None:
         self._session_factory = session_factory
         self._engine_factory = engine_factory
         self._data_root = Path(data_root)
+        self._window_size = window_size
         self._executor: Executor | None = ThreadPoolExecutor(max_workers=1) if background else None
 
     def submit(self, *, job_id: str, book_id: str, pages: list[int] | None, engine: str) -> None:
@@ -57,6 +59,7 @@ class JobRunner:
                     book_id=book_id,
                     pages=pages,
                     data_root=self._data_root,
+                    window_size=self._window_size,
                 )
                 session.commit()
             logger.info("parse job %s %s（parsed=%s/%s）", job_id, outcome.status, outcome.parsed, outcome.total)

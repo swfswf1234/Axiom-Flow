@@ -113,6 +113,20 @@
 - **补证据不得再解析一次**：解析成功但取证段失败时，用 `--evidence-only <job_id>` 只读重取
   （跳过 ingest/门槛探针/C-0/提交）。单次重解析是用户裁决的窗口约束，重新解析会制造新版本目录并
   让已激活指针被移动。首次窗口（2026-09-21）即以此方式补齐 `S2_after.json`。
+- **探针窗口（`qed_test` + 隔离数据根，PLAN-007 W6 起可用）**：`python scripts/tmp/live_wholebook_req086.py`
+  用**真实环境变量**把库换成 `qed_test`、数据根换成 `data/probes/<窗口目录>/root`（不改 `.env`，退出即回
+  业务口径），并在解析前硬闸门断言二者到位；探针服务起在独立端口（默认 8912，**不写 `logs/qed-axiom.pid`**，
+  与业务 8902 并存）。脚本自带「业务侧零写入」前后比对（业务库行 + 真实 `dataset/parsed/` 目录指纹），
+  不一致即判 FAIL。**失败重跑不算「为补证据再解析一次」**——那条约束的是成功之后。
+
+- **模型容器「中途自己重启」的判据是 WSL 全局 OOM，不是本仓库超时**：长解析中途出现
+  `[WinError 10054] 远程主机强迫关闭了一个现有的连接`（连续 3 次）+ 剩余页 `MODEL_UNAVAILABLE` 时，
+  先查 `wsl docker inspect mineru-api --format '{{.RestartCount}} {{.State.StartedAt}}'` 与
+  `wsl dmesg | grep -i -E "oom|killed process"`。若 dmesg 有 `Out of memory: Killed process (mineru-api)`
+  （RSS 峰值 9.6~11.2 GiB）而 `free -g` 显示 VM 只有 15 GiB，则是宿主内存闸门：MinerU hybrid
+  （vLLM + Layout + OCR-det）单进程在连续窗口负载下触顶，`ExitCode=0` 后由 `--restart=unless-stopped` 拉起。
+  处置属环境容量（`.wslconfig` 的 `[wsl2] memory=` 在本仓库工作区之外，只能由用户改后 `wsl --shutdown` 生效），
+  **不以缩小 `AXIOM_PARSE_WINDOW_SIZE` 绕开**——那会把容量问题伪装成参数问题。
 - 迁移期间 8902 离线：8900 返回 503 并降级显示（独立性铁律），不影响配置域与其他界面。
 
 ## 单实例前提与启动期归一（PLAN-006 / ADR 0007）
@@ -164,7 +178,7 @@
 | 任务显示 `interrupted` | 上次进程遗留的活动行被启动期归一改判（不再假装 running），**不是**引擎故障。核对 `failed_pages` 与 `versions/<job_id>/` 在位页后按上节续跑；版本未激活属预期（激活判据未满足） |
 | 任务显示 `partial` | 有页失败但任务正常结束：`GET /parse-jobs/{id}` 的 `failed_pages` 给出完整页码，`af_pages` 逐页 `error` 给出原因；生效指针**不会**指向该版本（判据未齐备），产物保留在 `versions/` 供排查 |
 | 只读端点 404 `生效版本产物缺失：<book_id> @ <job_id>` | `af_books.active_job_id` 指向的版本目录被外部删除/未落盘（不回落根视图，ADR 0004）。核对 `versions/` 是否在盘、`GET /books/{id}/versions` 各行 `parsed`；确认产物不可恢复后重新解析或把指针置 NULL（`UPDATE af_books SET active_job_id=NULL WHERE book_id=…`，置 NULL 属数据修正，按 D 类先备份） |
-| 容器已起但解析慢/超时 | 由根仓库 `scripts/image-model/` 排查 GPU 穿透与 vLLM warmup（首次约 1 分钟）；整本解析超时调大 `AXIOM_OCR_TIMEOUT`（默认 600s） |
+| 容器已起但解析慢/超时 | 由根仓库 `scripts/image-model/` 排查 GPU 穿透与 vLLM warmup（首次约 1 分钟）；超时读 `AXIOM_OCR_TIMEOUT`（默认 600s）且**按块计**——整本挂钟上限 = 块数 × 600s，单块超时只损失该块页（`partial`），调大 `AXIOM_PARSE_WINDOW_SIZE`（默认 56 页/块，须 ≤ 容器 `processing_window_size`）可减少块数与提交开销 |
 | 模型异常 | 由根仓库 `scripts/image-model/` 重建容器/镜像 |
 | WSL 不可达 | `wsl -l -v` 确认状态；容器由根仓库 `scripts/image-model/` 脚本恢复 |
 

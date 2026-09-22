@@ -51,7 +51,8 @@ class Settings:
     vision_model: str = "qwen-vl-plus"  # qwen-vl 云端档位身份（预留引擎，注释态配置）
     ocr_engine: str = "mineru"  # 解析引擎：mineru / paddleocr-vl / qwen-vl（后两者预留）
     ocr_model_url: str = "http://127.0.0.1:5002"  # 图像槽位本地端点（MinerU 容器，/health）
-    ocr_timeout: int = 600  # 单次解析调用超时秒数（整本解析耗时长）
+    ocr_timeout: int = 600  # 单个解析块一次调用的超时秒数（见 `parse_window_size`）
+    parse_window_size: int = 56  # 全本解析的每块页数（真机 W0 冻结，PLAN-007）
     db_host: str = "127.0.0.1"
     db_port: int = 3306
     db_name: str = "qed"
@@ -77,6 +78,7 @@ _ENV_MAP = {
     "AXIOM_OCR_ENGINE": ("ocr_engine", str),
     "QED_OCR_MODEL_URL": ("ocr_model_url", str),
     "AXIOM_OCR_TIMEOUT": ("ocr_timeout", partial(_to_int, default=600)),
+    "AXIOM_PARSE_WINDOW_SIZE": ("parse_window_size", partial(_to_int, default=56)),
     "QED_DB_HOST": ("db_host", str),
     "QED_DB_PORT": ("db_port", partial(_to_int, default=3306)),
     "QED_DB_NAME": ("db_name", str),

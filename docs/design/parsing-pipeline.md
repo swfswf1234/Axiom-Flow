@@ -7,7 +7,10 @@
 块类型字面值映射与可见丢弃（DEFECT-005）、解析产物按版本划分（PLAN-004 / REQ-080，R1 窗口真机首次激活）；
 **2026-09-22 R2 窗口代表书抽查口径验收达成**（ARCH-009 判据 ①~⑤ PASS：两本各 20 页公式段可解析率 100%、
 b11 零丢弃、chunk 完整性 PASS；判据为程序化结构可解析 + 人工留档），同轮发现并修复**公式定界符缺陷**
-（ARCH-018，见下「公式定界符契约」条）。**未随本轮消失**：b05 的 `ref_text` 映射丢弃缺口另立 ARCH-019、
+（ARCH-018，见下「公式定界符契约」条）；**2026-09-22 PLAN-007 全本按页窗口分块提交与空白页合法化
+已实施**（`orchestrator/pipeline.py` 串行窗口循环 + `engines/mineru.py` 窗口参数与按块 deadline +
+`QualityMetrics.blank_page`，单元与契约门禁全绿；b05 全本真机复测为 PLAN-007 W6）。
+**未随本轮消失**：b05 的 `ref_text` 映射丢弃缺口另立 ARCH-019（映射已按裁决 (A) 落地，取证待 W6）、
 b05 混合版本产物的全量重生归 ARCH-011 批量批次）
 最后更新：2026-09-22
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
@@ -84,9 +87,38 @@ flowchart LR
 | 阶段 | 模块 | 内容 |
 | --- | --- | --- |
 | 预处理 | `ingest/` | 源 PDF（数据根相对路径，只读）→ 150 DPI 原页图 + `book.json`（page_count/sha256/source_file）；不调模型 |
-| 调用 | `engines/` | `factory.py` 按「请求体 `engine` → `AXIOM_OCR_ENGINE`」解析出实际引擎名后构造适配器；适配器直连模型服务，默认全本（PDF）、指定 pages 时逐页（页图）；三段式提交/轮询/取结果共享 `AXIOM_OCR_TIMEOUT` 的 `deadline`（协议细节见 [model-integration.md](model-integration.md)） |
+| 调用 | `engines/` | `factory.py` 按「请求体 `engine` → `AXIOM_OCR_ENGINE`」解析出实际引擎名后构造适配器；适配器直连模型服务，默认全本（PDF，**按页窗口分块串行提交**，见下）、指定 pages 时逐页（页图）；三段式提交/轮询/取结果共享**本次调用**的 `deadline`（`AXIOM_OCR_TIMEOUT`，协议细节见 [model-integration.md](model-integration.md)） |
 | 后处理 | `normalize/` | 引擎原始输出 → 统一 blocks（类型映射/坐标空间换算/阅读序）+ 页级 Markdown 组装 + `QualityMetrics` |
 | 分块 | `normalize/chunking` | 书级有序 blocks → chunks（规则见下），落 `chunks.json` |
+
+### 全本窗口分块提交与空白页语义（PLAN-007 / REQ-086·REQ-087，2026-09-22 实施）
+
+**为什么必须分块**：适配器一次调用只有一个 `deadline`（`AXIOM_OCR_TIMEOUT`），而 MinerU 侧按自己的
+`processing_window_size` 分批推理——317 页书整本单提交会在第 1 道 600 秒墙处超时；又因「整本一次
+调用」的异常直接上抛，任务 `progress` 恒 0，既不可观测也无从续跑。
+
+- **窗口切分**：全本任务把请求页 `1..page_count` 按 `AXIOM_PARSE_WINDOW_SIZE`（默认 **56**：真机 W0 实测
+  b05 前 56 页 245 秒 ≈4.4 秒/页，且 56 ≤ 容器 `processing_window_size=64`，留档
+  `data/probes/window-req086-20260922/`）切成连续区间，**串行**提交，每块一次
+  `parse_document(start_page, end_page)`（**1 基含两端**；适配器换算为 MinerU 的 0 基 `start_page_id`/
+  `end_page_id`，并把窗口内相对页号还原为全书绝对页号）。
+- **失败域 = 一个窗口**：块级 `EngineError` 只把该块目标页记 `af_pages.status=failed`，块原因写进
+  `progress.error`（`窗口 {a}-{b}：{引擎原文}`）与终态 `af_parse_jobs.error`，随后继续下一块；单块失败
+  **不**把整本判 `failed`，终态仍按 ADR 0007 齐备判据落 `partial`。
+- **不做块级重试**：最坏挂钟 = 块数 × 单块超时，块级重试会把它翻倍；恢复路径是同 job 重跑（续跑只补未
+  `parsed` 的页）。逐页路径的「重试 1 次」属另一层，两者不互相冒充。
+- **块间探活即止**：每块提交前查 `engine.health()`；服务已不可用就不再提交剩余块，把剩余目标页记
+  `failed` 并写「模型服务不可用」文案，避免拿剩余窗口逐个撞超时形成僵尸任务。
+- **进度按块推进**：块内仍守「页产物写先于页行提交」的不变式，每页成功/失败即提交，`progress` 按既有
+  节流覆写，使独立连接能读到非零中间值（真机留档见 PLAN-007 W6）。
+- **不改版本语义**：一次任务仍是一个解析版本；分块只改提交形状，激活门槛、`versions/<job_id>/` 布局与
+  `af_pages` 主键作用域零变化（PLAN-004 条文 V1~V10 与 ADR 0007 不动）。
+- **空白页是合法产物（REQ-087）**：适配器以 `middle_json.pdf_info` 枚举窗口内的页——真机形状是空白页
+  **只出现在 `pdf_info`**，`content_list` 与 `md_content` 完全省略它，因此它产出 `blocks=[]` 的合法页结果
+  而非 `EngineError`，计 `parsed`、不阻塞全本激活。质量标记 `QualityMetrics.blank_page` 的判据是「引擎确认
+  该页存在但未回任何内容」，与「解析失败」「映射缺口」三者可区分：整页原始条目**全部**未归一时
+  `blank_page` 必为 false（此时 `dropped_block_count > 0`），不把映射缺口伪装成白页；`content_list` 与
+  `pdf_info` 双缺（真无产物）仍抛 `EngineError`，不静默造空白页。
 
 ## 统一格式与产物
 
@@ -280,7 +312,7 @@ flowchart LR
 
 | 场景 | 行为 |
 | --- | --- |
-| 单页失败（超时/空输出/异常） | 重试 1 次 → 仍失败标记 `af_pages.status=failed`，job 不中断；页码进 `af_parse_jobs.failed_pages`（结构化、不截断，S2），失败页摘要即时写入 `progress.error`（≤200 字符），终态摘要写 `af_parse_jobs.error`（≤500 字符）；终态按齐备与否判 `completed`/`partial`/`failed`（S1） |
+| 单页失败（逐页路径，超时/空输出/异常） | 重试 1 次 → 仍失败标记 `af_pages.status=failed`，job 不中断；页码进 `af_parse_jobs.failed_pages`（结构化、不截断，S2），失败页摘要即时写入 `progress.error`（≤200 字符），终态摘要写 `af_parse_jobs.error`（≤500 字符）；终态按齐备与否判 `completed`/`partial`/`failed`（S1） |
 | 轮询期瞬时失败（HTTP 异常/非 2xx） | 适配器累计**连续 3 次**才判引擎失败（成功一次即清零计数），全程受同一 `deadline` 约束；不与单页重试互相吞并 |
 | 结果载荷非 JSON | 归一为 `EngineError`；`JSONDecodeError` 等内部异常不得穿透编排层（否则任务回滚会吞掉已解析页行） |
 | 页质量信号不达标 | 记录质量信号并标记；不自动切换引擎（用户裁决不设自动兜底） |
@@ -291,7 +323,9 @@ flowchart LR
 
 进度写入节流：`af_parse_jobs.progress` 在「距上次写入 ≥1 秒」或「每处理满 10 页」时覆写一次，
 任务终态必写一次；单页失败节点强制写入（使 `progress.error` 实时可见）。
-`persist_per_page=False` 仅供性能排查退回调用方统一提交，不是静默兜底路径。
+`persist_per_page=False` 仅供性能排查退回调用方统一提交，不是静默兜底路径。全本任务的分块提交使
+进度**按块**推进（每块之间必然跨过秒级真实耗时），块级失败原因以 `窗口 {a}-{b}：…` 形式覆写
+`progress.error`，见上「全本窗口分块提交与空白页语义」。
 
 **为什么必须有闸门**（窗口实证 2026-09-21）：本机 GPU 只够一个 MinerU 解析在飞，而模型服务自身
 `max_concurrent_requests=3` 不会替调用方排队；根侧控制台可与本仓库并发提交。无闸门时排队任务在

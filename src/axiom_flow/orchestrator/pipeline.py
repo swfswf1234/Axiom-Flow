@@ -1,7 +1,9 @@
-"""解析任务编排：全本（默认）/逐页 → 引擎 → 归一化 → 分块 → 落盘 → 回写 af_*。
+"""解析任务编排：全本（默认按页窗口分块）/逐页 → 引擎 → 归一化 → 分块 → 落盘 → 回写 af_*。
 
 设计事实源：`docs/design/parsing-pipeline.md`、[ADR 0007](../../../docs/adr/0007-parse-status-semantics.md)。
-失败语义（终态判据与激活门槛**同源**，不存在「`completed` 但未激活」）：
+全本提交按 `window_size` 页切成**串行窗口**（PLAN-007 / REQ-086）：适配器一次调用只有一个 deadline，
+整本单提交使长书必然超时；分块后单块 `EngineError` 只把该块目标页记 `failed` 并继续下一块，块间
+探活失败即停止提交剩余块。失败语义（终态判据与激活门槛**同源**，不存在「`completed` 但未激活」）：
 - 模型服务不可用（提交前探活失败）→ 任务 `failed`，不中断其他任务；
 - 目标页全部 `parsed` 且产物在位 → `completed`，同时激活本版本；
 - 至少一页成功但未齐备（含单页失败，重试 1 次仍失败）→ `partial`，**不激活**，失败页结构化写
@@ -62,6 +64,10 @@ DEFAULT_DPI = 150
 PAGE_ATTEMPTS = 2  # 首次 + 重试 1 次
 PROGRESS_MIN_INTERVAL_SECONDS = 1.0  # progress 写入的最小时间间隔
 PROGRESS_PAGE_INTERVAL = 10  # 或每处理这么多页写一次
+# 全本分块提交的默认窗口页数（PLAN-007 / REQ-086）：真机 W0 实测 b05 前 56 页 245s
+# （约 4.4s/页），且不超过 MinerU 容器 `processing_window_size=64`；实际取值读配置
+# `AXIOM_PARSE_WINDOW_SIZE`，本常量只作为未接线时的兜底。
+DEFAULT_WINDOW_SIZE = 56
 
 # 模型服务不可用的统一措辞：提交期 503 与执行期 job failed 共用（两段语义，同一文案）。
 MODEL_UNAVAILABLE = "模型服务不可用：请经 8900 /models/{slot} 启停模型后重试"
@@ -171,6 +177,17 @@ def _resumed_pages(
     }
 
 
+def _page_windows(requested: list[int], size: int) -> list[tuple[int, int]]:
+    """把全书请求页切成**串行提交**的连续窗口（1 基含两端）。
+
+    按请求页而非待处理页切分：续跑已解析的页仍留在其所属窗口内，窗口边界与页号只由
+    `requested + size` 决定，重跑同一任务时序列可复现。
+    """
+    if size <= 0:
+        raise ValueError(f"窗口页数必须为正整数，当前为 {size}")
+    return [(requested[i], requested[min(i + size, len(requested)) - 1]) for i in range(0, len(requested), size)]
+
+
 def _version_is_complete(
     page_repo: PageRepository, book_id: str, job_id: str, version_dir: Path, requested: list[int]
 ) -> bool:
@@ -273,8 +290,13 @@ def run_parse_job(
     persist_per_page: bool = True,
     model_gate_interval: float = MODEL_GATE_INTERVAL_SECONDS,
     model_gate_deadline: float = MODEL_GATE_DEADLINE_SECONDS,
+    window_size: int = DEFAULT_WINDOW_SIZE,
 ) -> ParseOutcome:
-    """执行一次解析任务（同步；由 `orchestrator.jobs.JobRunner` 在后台线程调用）。"""
+    """执行一次解析任务（同步；由 `orchestrator.jobs.JobRunner` 在后台线程调用）。
+
+    全本（`pages is None`）按 `window_size` 页**串行分块**提交：适配器每次调用有独立 deadline，
+    单块失败只损失该块页，进度按块可见。指定页时逐页提交，不做窗口切分。
+    """
     books = BookRepository(session)
     jobs = ParseJobRepository(session)
     page_repo = PageRepository(session)
@@ -371,6 +393,16 @@ def run_parse_job(
         _commit()
         _flush_progress(force=True)
 
+    def _mark_window_failed(window_pages: list[int], error: str) -> None:
+        """块级失败隔离：本块目标页逐页记 `failed`，终态错误文本保留块原因。
+
+        不重试也不中断后续块：最坏挂钟 = 块数 × 单块超时，块级重试会把它翻倍；同 job 重跑即续跑。
+        """
+        for page_no in window_pages:
+            _mark_failed(page_no, error)
+        progress["error"] = error[:200]
+        _flush_progress(force=True)
+
     def _handle(page_no: int, result: PageResult) -> None:
         nonlocal parsed
         image_size = _image_size(book_dir, page_no, geometry, dpi)
@@ -398,15 +430,30 @@ def run_parse_job(
 
     try:
         if pages is None:
-            document: DocumentResult = engine.parse_document(source_pdf.read_bytes(), source_pdf.name)
-            _store_images(version_dir, document.images)
-            by_page = {result.page: result for result in document.pages}
-            for page_no in target_pages:
-                result = by_page.get(page_no)
-                if result is None:
-                    _mark_failed(page_no, "引擎未返回该页")
+            pdf_bytes = source_pdf.read_bytes()
+            for start, end in _page_windows(requested_pages, window_size):
+                if not engine.health():
+                    # 块间探活失败即止：拿剩余窗口继续提交只会把挂钟按块数翻倍（僵尸任务）
+                    _mark_window_failed([no for no in target_pages if no >= start], MODEL_UNAVAILABLE)
+                    break
+                window_pages = [no for no in target_pages if start <= no <= end]
+                if not window_pages:
+                    continue  # 整窗已在本次版本解析并落盘，无需重复提交
+                try:
+                    document: DocumentResult = engine.parse_document(
+                        pdf_bytes, source_pdf.name, start_page=start, end_page=end
+                    )
+                except EngineError as exc:
+                    _mark_window_failed(window_pages, f"窗口 {start}-{end}：{exc}"[:500])
                     continue
-                _handle(page_no, result)
+                _store_images(version_dir, document.images)
+                by_page = {result.page: result for result in document.pages}
+                for page_no in window_pages:
+                    result = by_page.get(page_no)
+                    if result is None:
+                        _mark_failed(page_no, "引擎未返回该页")
+                        continue
+                    _handle(page_no, result)
         else:
             for page_no in target_pages:
                 image_path = link_pages_into(book_dir / "pages", version_dir / "pages", page_no)

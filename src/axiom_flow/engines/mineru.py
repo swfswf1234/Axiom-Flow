@@ -8,6 +8,12 @@
 3. `GET /tasks/{task_id}/result` → **202＝未就绪继续等**，200 → `{backend, version,
    results:{"<file_stem>":{md_content, content_list, middle_json}}}`。
 
+窗口协议（PLAN-007 W0 真机冻结，留档 `data/probes/window-req086-20260922/`）：`/tasks` 表单的
+`start_page_id`/`end_page_id` 是 **0 基且含两端**；结果里 `content_list[].page_idx` 与
+`middle_json.pdf_info[].page_idx` 都是**窗口内相对**索引，故本适配层负责加窗口起点还原为全书
+绝对页号。空白页只在 `pdf_info` 可见、`content_list` 与 `md_content` 完全省略该页，因此页枚举以
+`pdf_info` 为准（否则合法空白页会被误判为失败页并永久阻塞全本激活）。
+
 `content_list`/`middle_json` 在真机为 JSON 字符串，解析面兼容两种载体。解析参数（后端/语言/公式
 开关等）由模型服务侧（QED-Engine）管理，本适配器只设产物形态开关、不设解析调参。
 HTTP 客户端恒以 `trust_env=False` 构造：Windows 系统代理对回环地址不做豁免，交给代理会出现
@@ -20,7 +26,6 @@ import base64
 import binascii
 import json
 import time
-from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -152,10 +157,15 @@ def _images(data: dict[str, Any]) -> dict[str, bytes]:
     return images
 
 
-def _pages_from_result(data: dict[str, Any]) -> list[PageResult]:
-    """content_list 按 page_idx（0 基）分组 → 页级结果；缺结构时回退整段 markdown。"""
+def _pages_from_result(data: dict[str, Any], *, first_page: int = 1) -> list[PageResult]:
+    """窗口结果 → 页级结果，页号为**全书绝对页号**（1 基）。
+
+    页枚举以 `middle_json.pdf_info` 为准、块按 `content_list[].page_idx` 归组，两处索引都是
+    **窗口内相对**（0 基，真机 W0 冻结 ②）：空白页只在 `pdf_info` 里可见而 `content_list` 完全省略
+    （冻结 ③），只认 `content_list` 会把合法空白页误判为「引擎未返回该页」。`pdf_info` 缺失时
+    退回按条目索引枚举，再退回整段 markdown（旧式无块结构载体）。
+    """
     content_list = _load_json_field(data, "content_list") or []
-    markdown = _markdown_of(data)
     sizes = _page_sizes(data)
     grouped: dict[int, list[dict]] = {}
     if isinstance(content_list, list):
@@ -167,14 +177,21 @@ def _pages_from_result(data: dict[str, Any]) -> list[PageResult]:
             except (TypeError, ValueError):
                 page_idx = 0
             grouped.setdefault(page_idx, []).append(item)
-    if not grouped:
-        if not markdown.strip():
-            raise EngineError("MinerU 解析完成但无结构化产物")
-        return [PageResult(page=1, markdown=markdown, bbox_space=_BBOX_SPACE)]
-    return [
-        PageResult(page=index + 1, blocks=grouped[index], page_size=sizes.get(index), bbox_space=_BBOX_SPACE)
-        for index in sorted(grouped)
-    ]
+    total = max(len(sizes), max(grouped, default=-1) + 1)
+    if total:
+        return [
+            PageResult(
+                page=first_page + index,
+                blocks=grouped.get(index, []),
+                page_size=sizes.get(index),
+                bbox_space=_BBOX_SPACE,
+            )
+            for index in range(total)
+        ]
+    markdown = _markdown_of(data)
+    if not markdown.strip():
+        raise EngineError("MinerU 解析完成但无结构化产物")
+    return [PageResult(page=first_page, markdown=markdown, bbox_space=_BBOX_SPACE)]
 
 
 def _markdown_of(data: dict[str, Any]) -> str:
@@ -248,13 +265,13 @@ class MinerUEngine:
             return None
         return ModelLoad(queued=queued, processing=processing)
 
-    def _submit(self, content: bytes, filename: str) -> str:
+    def _submit(self, content: bytes, filename: str, fields: dict[str, str]) -> str:
         """提交任务：`POST /tasks`，202 受理并返回顶层 `task_id`。"""
         try:
             response = self._http().post(
                 f"{self.base_url}/tasks",
                 files={"files": (filename, content, _mime_for(filename))},
-                data=_OUTPUT_FLAGS,
+                data=fields,
             )
         except httpx.HTTPError as exc:
             raise EngineError(f"MinerU 服务不可达：{exc}") from exc
@@ -315,22 +332,42 @@ class MinerUEngine:
                 raise EngineError(f"MinerU 结果查询失败：HTTP {response.status_code}")
             return _json_object(response, "MinerU 结果查询")
 
-    def _run(self, content: bytes, filename: str) -> dict[str, Any]:
-        """三段编排：提交 → 轮询终态 → 取结果，全程受同一 deadline 约束。"""
-        task_id = self._submit(content, filename)
+    def _run(self, content: bytes, filename: str, *, page_span: tuple[int, int] | None = None) -> dict[str, Any]:
+        """三段编排：提交 → 轮询终态 → 取结果，**一次调用一个 deadline**。
+
+        `page_span` 为 1 基含两端的书页区间；`deadline` 每次提交独立计算，是「全本按窗口分块、
+        单块超时只损失该块」的落点（PLAN-007 / REQ-086）。
+        """
+        fields = dict(_OUTPUT_FLAGS)
+        if page_span is not None:
+            # 真机 W0 冻结 ①：`start_page_id`/`end_page_id` 为 0 基且含两端（1 基 47 → 46）。
+            fields["start_page_id"] = str(page_span[0] - 1)
+            fields["end_page_id"] = str(page_span[1] - 1)
+        task_id = self._submit(content, filename, fields)
         deadline = time.monotonic() + self.timeout
         self._wait_done(task_id, deadline)
         return _result_payload(self._fetch_result(task_id, deadline), _stem(filename))
 
-    def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult:
-        """全本解析：整本 PDF 一次提交，返回逐页结果 + 内嵌图片。"""
-        data = self._run(pdf_bytes, filename)
-        return DocumentResult(pages=_pages_from_result(data), images=_images(data))
+    def parse_document(
+        self,
+        pdf_bytes: bytes,
+        filename: str,
+        *,
+        start_page: int | None = None,
+        end_page: int | None = None,
+    ) -> DocumentResult:
+        """全本（或窗口）解析：一次提交整本字节，`start_page`/`end_page` 为 1 基含两端书页。
+
+        不传窗口即整本（容器默认 0/99999）；传窗口时结果页号已还原为全书绝对页号。
+        """
+        span = (start_page, end_page) if start_page is not None and end_page is not None else None
+        data = self._run(pdf_bytes, filename, page_span=span)
+        return DocumentResult(
+            pages=_pages_from_result(data, first_page=start_page or 1),
+            images=_images(data),
+        )
 
     def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult:
-        """单页解析：页图提交，结果页码重写为请求页码。"""
+        """单页解析：页图提交，结果按请求页号返回（空白页回零块合法页，不判失败）。"""
         data = self._run(image_bytes, f"p{page_no:04d}.png")
-        pages = _pages_from_result(data)
-        if not pages:
-            raise EngineError(f"MinerU 未返回第 {page_no} 页内容")
-        return replace(pages[0], page=page_no)
+        return _pages_from_result(data, first_page=page_no)[0]

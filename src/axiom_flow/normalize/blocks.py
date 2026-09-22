@@ -32,6 +32,9 @@ _TYPE_MAP: dict[str, BlockType] = {
     "page_footer": BlockType.FOOTER,
     "page_number": BlockType.PAGE_NUMBER,
     "list": BlockType.LIST,
+    # ARCH-019（2026-09-22 用户裁决取 (A)）：参考文献条目按正文段落承接，丢弃归零；(B) LIST 聚合会
+    # 改变块下标 index（af_block_edits 定位键），待根侧渲染面提出后再议。
+    "ref_text": BlockType.PARAGRAPH,
 }
 
 _SKIP_IN_MARKDOWN = {BlockType.HEADER, BlockType.FOOTER, BlockType.PAGE_NUMBER}
@@ -233,10 +236,12 @@ def compute_quality(
 ) -> QualityMetrics:
     """页质量信号：空块率 / 公式平均置信度（无公式取 1.0）/ 表格数 / 文本长度比 + 可见丢弃。
 
-    `dropped_literals` 为引擎返回但未能归一的条目原始 `type` 字面值：丢弃必须**可见**
+    `dropped_literals` 为引擎返回但未能归一为统一块的条目原始 `type` 字面值：丢弃必须**可见**
     （计入信号），否则同页块数与引擎条目数不一致却无从判定（DEFECT-005 契约）。
     """
     total = len(blocks)
+    # 空白页判据「零块且零丢弃」：条目全未映射的页属映射缺口，不得伪装成白页（REQ-087 反向判据）。
+    blank_page = total == 0 and not dropped_literals
     empty = sum(1 for block in blocks if not (block.text or block.latex or block.html or block.items))
     empty_ratio = (empty / total) if total else 1.0
 
@@ -260,6 +265,7 @@ def compute_quality(
         text_length_ratio=round(ratio, 4),
         dropped_block_count=len(dropped_literals),
         dropped_types=sorted({str(literal) for literal in dropped_literals}),
+        blank_page=blank_page,
     )
 
 

@@ -22,7 +22,8 @@
 | `QED_DB_*` | MySQL 连接（qed 库 af_* 表；`qed_test` 为测试库） | — |
 | `AXIOM_OCR_ENGINE` | 解析引擎：`mineru`（先落地）/ `paddleocr-vl` / `qwen-vl`（预留） | `mineru` |
 | `QED_OCR_MODEL_URL` | 图像槽位本地端点（MinerU 容器，`/health`） | `http://127.0.0.1:5002` |
-| `AXIOM_OCR_TIMEOUT` | 单次解析调用超时秒数 | `600` |
+| `AXIOM_OCR_TIMEOUT` | **单块**一次解析调用的超时秒数（全本按窗口分块，每块独立计） | `600` |
+| `AXIOM_PARSE_WINDOW_SIZE` | 全本解析每块页数（串行提交，真机 W0 冻结） | `56` |
 | `API_KEY` / `AXIOM_VISION_MODEL` | 仅 qwen-vl 云端档位预留（`.env` 注释态） | — |
 
 > **ARCH-020（2026-09-14）**：解析直连模型服务、不经 8900 网关；引擎与对接见

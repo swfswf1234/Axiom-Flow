@@ -68,9 +68,10 @@ Windows 文件系统大小写不敏感，历史文档曾写作 `qed_env`，与�
 - **配置语境（2026-09-17 简化）**：Axiom-Flow 只做「模型 API 调用 + 预处理/后处理」，配置
   三段式（服务 / 数据与库 / 解析引擎）；服务脚本无 `--mode`，配置由 `config.py` 向上走查
   `.env` 自读（`AXIOM_PORT`、`QED_DATA_ROOT`、`QED_DB_*`、`AXIOM_OCR_ENGINE`、
-  `QED_OCR_MODEL_URL`、`AXIOM_OCR_TIMEOUT`）。
-- **解析超时**：整本解析耗时长，超时读 `AXIOM_OCR_TIMEOUT`（默认 600s）；调参在 QED-Engine
-  侧（模型服务配置），本仓库不暴露调参入口。
+  `QED_OCR_MODEL_URL`、`AXIOM_OCR_TIMEOUT`、`AXIOM_PARSE_WINDOW_SIZE`）。
+- **解析超时**：全本按 `AXIOM_PARSE_WINDOW_SIZE`（默认 56 页/块）**串行分块**提交，超时读
+  `AXIOM_OCR_TIMEOUT`（默认 600s）且**每次调用独立计**，故整本挂钟上限 = 块数 × 600s、单块失败只损失
+  该块页；模型调参仍在 QED-Engine 侧（模型服务配置），本仓库不暴露调参入口。
 - **`.env` 值内联注释**：值中 ` #`（空白+井号）会被视为注释并剥离；带 `#` 的真实值请确保
   `#` 前不留空格。
 - **停止脚本回显**：`stop` 回显 `stopped (forced)` 表示 taskkill 强杀兜底成功（conda run 等

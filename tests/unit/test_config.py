@@ -19,6 +19,7 @@ _ENV_KEYS = (
     "AXIOM_OCR_ENGINE",
     "QED_OCR_MODEL_URL",
     "AXIOM_OCR_TIMEOUT",
+    "AXIOM_PARSE_WINDOW_SIZE",
     "AXIOM_VISION_MODEL",
     "QED_DB_HOST",
     "QED_DB_PORT",
@@ -237,6 +238,13 @@ class TestEngineConfig:
         monkeypatch.setenv("AXIOM_OCR_TIMEOUT", "notnum")
 
         assert load_settings().ocr_timeout == 600
+
+    def test_parse_window_size_default_and_override(self, isolated, monkeypatch):
+        """PLAN-007：56 页/块由真机 W0 冻结（b05 前 56 页 245s，且 ≤ 容器 `processing_window_size`）。"""
+        assert load_settings().parse_window_size == 56
+
+        monkeypatch.setenv("AXIOM_PARSE_WINDOW_SIZE", "30")
+        assert load_settings().parse_window_size == 30
 
 
 class TestOverrides:

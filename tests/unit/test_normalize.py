@@ -423,3 +423,57 @@ class TestVisibleDrop:
         ]
         page = _normalize(raw, markdown="正文\n\n页眉")
         assert len(raw) == len(page.blocks) + page.quality.dropped_block_count
+
+class TestBlankPageSignal:
+    """PLAN-007 W2 / REQ-087：空白页是合法产物，必须与「解析失败」「映射缺口」可区分（判据 S5）。
+
+    真机形状（`data/probes/window-req086-20260922` 的 `real-blank-only`）：任务 `completed`、
+    `pdf_info` 有该页、`content_list` 与 `md_content` 皆空 ⇒ 归一化为零块页并带空白标记。
+    """
+
+    def test_page_with_nothing_from_engine_is_blank(self):
+        page = _normalize([], markdown="", page=48)
+        assert page.blocks == []
+        assert page.quality is not None
+        assert page.quality.blank_page is True
+
+    def test_markdown_only_page_is_not_blank(self):
+        page = _normalize([], markdown="正文", page=2)
+        assert page.quality.blank_page is False
+
+    def test_all_dropped_page_is_not_blank(self):
+        """反向判据：条目全未映射的页**不是**空白页——那是映射缺口，不得伪装成白页。"""
+        page = _normalize([{"type": "chart", "text": "图"}], markdown="")
+        assert page.quality is not None
+        assert page.quality.blank_page is False
+        assert page.quality.dropped_block_count == 1
+
+
+class TestRefTextMapping:
+    """ARCH-019（2026-09-22 用户裁决取 (A)）：`ref_text` 参考文献条目映射为 `PARAGRAPH`，丢弃归零。
+
+    (B) `LIST` 聚合会改变块下标 `index`（块编辑定位键），属渲染面需求，根侧提出后再议。
+    """
+
+    def test_ref_text_maps_to_paragraph(self):
+        page = _normalize([{"type": "ref_text", "text": "[1] W. Rudin, Principles", "bbox": [0, 0, 10, 10]}])
+        assert page.blocks[0].type is BlockType.PARAGRAPH
+        assert page.blocks[0].text == "[1] W. Rudin, Principles"
+
+    def test_ref_text_leaves_no_drop(self):
+        page = _normalize([
+            {"type": "text", "text": "正文", "bbox": [0, 0, 10, 10]},
+            {"type": "ref_text", "text": "[2] 参考文献", "bbox": [0, 0, 10, 10]},
+        ])
+        assert page.quality is not None
+        assert page.quality.dropped_block_count == 0
+        assert page.quality.dropped_types == []
+
+    def test_adjacent_unmapped_literal_still_visible(self):
+        """反向判据：补 `ref_text` 不得顺手放宽其它字面值。"""
+        page = _normalize([
+            {"type": "ref_text", "text": "[1] x", "bbox": [0, 0, 10, 10]},
+            {"type": "aside_text", "text": "边注", "bbox": [0, 0, 10, 10]},
+        ])
+        assert len(page.blocks) == 1
+        assert page.quality.dropped_types == ["aside_text"]

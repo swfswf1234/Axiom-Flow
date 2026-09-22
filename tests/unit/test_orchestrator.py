@@ -27,6 +27,7 @@ from axiom_flow.db.repositories import (
 )
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
 from axiom_flow.ingest import ingest_book
+from axiom_flow.orchestrator import jobs as jobs_module
 from axiom_flow.orchestrator import pipeline, run_parse_job
 from axiom_flow.orchestrator.jobs import JobRunner
 from axiom_flow.schemas import BlocksPage
@@ -74,7 +75,9 @@ class FakeEngine:
         self.load_calls += 1
         return self.loads[index]
 
-    def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult:
+    def parse_document(
+        self, pdf_bytes: bytes, filename: str, *, start_page: int | None = None, end_page: int | None = None
+    ) -> DocumentResult:
         self.parse_calls += 1
         if self.fail_document:
             raise EngineError("MinerU 服务不可达：connection refused")
@@ -644,6 +647,203 @@ def _file_env(tmp_path: Path, pages: int = 2):
         return engine, session, data_root
 
 
+class _WindowEngine(FakeEngine):
+    """按窗口回**全书绝对页号**的假引擎：记录每次提交的 1 基含两端区间，可按窗失败或块间转不健康。"""
+
+    def __init__(
+        self,
+        *,
+        pages: int,
+        fail_spans: set[tuple[int, int]] | None = None,
+        healthy_windows: int | None = None,
+        reader=None,
+    ) -> None:
+        super().__init__()
+        self.pages = pages
+        self.fail_spans = fail_spans or set()
+        self.healthy_windows = healthy_windows
+        self._reader = reader
+        self.spans: list[tuple[int, int]] = []
+        self.snapshots: list[int] = []
+
+    def health(self) -> bool:
+        if self.healthy_windows is None:
+            return True
+        return len(self.spans) < self.healthy_windows
+
+    def parse_document(
+        self, pdf_bytes: bytes, filename: str, *, start_page: int | None = None, end_page: int | None = None
+    ) -> DocumentResult:
+        if self._reader is not None:
+            with Session(self._reader) as reader:
+                self.snapshots.append(PageRepository(reader).count_parsed("b05", "job-1"))
+        span = (start_page or 1, min(end_page or self.pages, self.pages))
+        self.spans.append(span)
+        if span in self.fail_spans:
+            raise EngineError("MinerU 服务不可达：connection refused")
+        return DocumentResult(
+            pages=[
+                PageResult(
+                    page=page_no,
+                    blocks=[{"type": "text", "text": f"第 {page_no} 页", "bbox": [72, 96, 540, 132]}],
+                    page_size=(595.0, 842.0),
+                )
+                for page_no in range(span[0], span[1] + 1)
+            ]
+        )
+
+
+class TestWholeBookWindows:
+    """PLAN-007 W3 / REQ-086：全本按页窗口**串行**提交，块级 deadline 与块级失败隔离。
+
+    为什么必须分块：MinerU 适配器一次调用只有一个 deadline（`ocr_timeout`，默认 600s），
+    真机 W0 实测 b05 前 56 页耗时 245s ⇒ 317 页整本单提交必然超时（progress 恒 0）。
+    """
+
+    def test_book_is_submitted_in_serial_page_windows(self, tmp_path):
+        engine, session, data_root = _file_env(tmp_path, pages=12)
+        fake = _WindowEngine(pages=12)
+
+        outcome = run_parse_job(
+            session=session,
+            engine=fake,
+            job_id="job-1",
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+            window_size=5,
+        )
+
+        assert fake.spans == [(1, 5), (6, 10), (11, 12)], "按 window_size 切连续区间、串行提交"
+        assert outcome.status == "completed" and (outcome.parsed, outcome.total) == (12, 12)
+        assert PageRepository(session).count_parsed("b05", "job-1") == 12
+        version_dir = _version_dir(data_root, "job-1")
+        assert (version_dir / "pages" / "p0012.blocks.json").is_file(), "跨窗页号必须是全书绝对页号"
+
+    def test_window_failure_only_fails_its_own_pages(self, tmp_path):
+        """S1：单块失败只损失该块（该块页行 `failed`），后续块继续，job 不整体 `failed`。"""
+        engine, session, data_root = _file_env(tmp_path, pages=12)
+        fake = _WindowEngine(pages=12, fail_spans={(6, 10)})
+
+        outcome = run_parse_job(
+            session=session,
+            engine=fake,
+            job_id="job-1",
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+            window_size=5,
+        )
+
+        assert fake.spans == [(1, 5), (6, 10), (11, 12)], "块失败不得中断后续块"
+        assert outcome.status == "partial"
+        assert outcome.failed_pages == [6, 7, 8, 9, 10]
+        assert outcome.parsed == 7
+        assert "不可达" in outcome.error, "块错误文本必须进终态，不能只剩页号清单"
+        with Session(engine) as reader:
+            pages = PageRepository(reader)
+            assert pages.get("b05", "job-1", 5).status == "parsed"
+            assert pages.get("b05", "job-1", 6).status == "failed"
+            assert pages.get("b05", "job-1", 12).status == "parsed"
+            job = ParseJobRepository(reader).get("job-1")
+        assert job is not None and job.failed_pages == [6, 7, 8, 9, 10]
+
+    def test_progress_is_visible_per_window_from_another_connection(self, tmp_path):
+        """S2：进度按块推进且可在真机观测到非零中间值（独立连接读，复现 MySQL 连接隔离）。"""
+        engine, session, data_root = _file_env(tmp_path, pages=12)
+        fake = _WindowEngine(pages=12, reader=engine)
+
+        run_parse_job(
+            session=session,
+            engine=fake,
+            job_id="job-1",
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+            window_size=5,
+        )
+
+        assert fake.snapshots == [0, 5, 10], "每块开始前，前序块已对独立连接可见"
+
+    def test_model_gone_between_windows_stops_submitting(self, tmp_path):
+        """块间探活失败即止：不拿剩余窗口去撞超时（最坏挂钟 = 块数 × 单块超时）。"""
+        engine, session, data_root = _file_env(tmp_path, pages=12)
+        fake = _WindowEngine(pages=12, healthy_windows=1)
+
+        outcome = run_parse_job(
+            session=session,
+            engine=fake,
+            job_id="job-1",
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+            window_size=5,
+        )
+
+        assert fake.spans == [(1, 5)], "服务已不可用就不再提交后续块"
+        assert outcome.status == "partial" and outcome.parsed == 5
+        assert "模型服务不可用" in outcome.error
+
+    def test_partial_resumed_window_still_skips_parsed_pages(self, tmp_path, monkeypatch):
+        """同 job 续跑：已 parsed 且产物在位的页不重复回写，但其所在窗口仍须提交（引擎按窗口解析）。"""
+        engine, session, data_root = _file_env(tmp_path, pages=12)
+        fake = _WindowEngine(pages=12)
+        for page_no in (1, 2):
+            PageRepository(session).upsert("b05", "job-1", page_no, status="parsed", source="mineru")
+        pages_dir = _version_dir(data_root, "job-1") / "pages"
+        pages_dir.mkdir(parents=True, exist_ok=True)
+        for page_no in (1, 2):
+            (pages_dir / f"p{page_no:04d}.blocks.json").write_text(
+                BlocksPage(page=page_no, image_size=(1, 1), source="mineru", blocks=[]).model_dump_json(),
+                encoding="utf-8",
+            )
+        written: list[int] = []
+        original = pipeline._write_page_artifacts
+
+        def spy(version_dir: Path, page: BlocksPage) -> None:
+            written.append(page.page)
+            original(version_dir, page)
+
+        monkeypatch.setattr(pipeline, "_write_page_artifacts", spy)
+
+        outcome = run_parse_job(
+            session=session,
+            engine=fake,
+            job_id="job-1",
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+            window_size=5,
+        )
+
+        assert outcome.parsed == 12 and outcome.status == "completed"
+        assert written == list(range(3, 13)), "续跑页只继承不重写；首窗从第 3 页起补写"
+        assert fake.spans == [(1, 5), (6, 10), (11, 12)]
+
+    def test_runner_forwards_window_size(self, tmp_path, monkeypatch):
+        """接线守护：`AXIOM_PARSE_WINDOW_SIZE` 必须真的到达 `run_parse_job`，否则配置静默失效。"""
+        engine, session, data_root = _file_env(tmp_path)
+        session.close()
+        captured: dict[str, object] = {}
+
+        def fake_run(**kwargs) -> pipeline.ParseOutcome:
+            captured.update(kwargs)
+            return pipeline.ParseOutcome(job_id=kwargs["job_id"], status="completed", parsed=0, total=0)
+
+        monkeypatch.setattr(jobs_module, "run_parse_job", fake_run)
+        runner = JobRunner(
+            session_factory=sessionmaker(bind=engine, future=True),
+            engine_factory=lambda name: FakeEngine(),
+            data_root=data_root,
+            background=False,
+            window_size=7,
+        )
+
+        runner.submit(job_id="job-1", book_id="b05", pages=None, engine="mineru")
+
+        assert captured["window_size"] == 7
+
+
 class _ProbingEngine(FakeEngine):
     """在每次调用引擎前用独立读连接快照本版本已提交的 parsed 页数。"""
 
@@ -665,9 +865,11 @@ class _ProbingEngine(FakeEngine):
             raise self.explode(f"第 {page_no} 页内部异常")
         return super().parse_page(image_bytes, page_no)
 
-    def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult:
+    def parse_document(
+        self, pdf_bytes: bytes, filename: str, *, start_page: int | None = None, end_page: int | None = None
+    ) -> DocumentResult:
         self._probe()
-        return super().parse_document(pdf_bytes, filename)
+        return super().parse_document(pdf_bytes, filename, start_page=start_page, end_page=end_page)
 
 
 class TestPerPagePersistence:

@@ -149,7 +149,9 @@ class _ProbeEngine:
             raise EngineError(f"第 {page_no} 页解析失败")
         return _page_result(page_no)
 
-    def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult:
+    def parse_document(
+        self, pdf_bytes: bytes, filename: str, *, start_page: int | None = None, end_page: int | None = None
+    ) -> DocumentResult:
         self._probe()
         return DocumentResult(pages=[_page_result(page_no) for page_no in range(1, 4)])
 

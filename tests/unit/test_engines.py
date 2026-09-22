@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 
 import httpx
 import pytest
@@ -427,6 +428,140 @@ class TestParsePage:
         page = _engine(handler).parse_page(b"png-bytes", 9)
         assert page.page == 9
         assert page.blocks[0]["text"] == "回退取键"
+
+
+class TestWindowSubmission:
+    """PLAN-007 W1：窗口协议（W0 真机冻结）。
+
+    冻结事实（`data/probes/window-req086-20260922/`，合成标记 PDF 两窗留档）：
+
+    - `start_page_id`/`end_page_id` 为 **0 基且含两端**（`start=2,end=4` → 真机返回 1 基第 3/4/5 页，
+      `middle_json.pdf_info` 长度 3）；
+    - 返回的 `content_list[].page_idx` 与 `pdf_info[].page_idx` 都是**窗口内相对**（自 0 起），
+      不是全书索引 ⇒ 适配器必须按窗口起点还原为全书绝对页号（现实现按全书 0 基解释，是缺陷）。
+    """
+
+    @staticmethod
+    def _form_field(body: str, name: str) -> str | None:
+        match = re.search(rf'name="{name}"\r\n\r\n([^\r]*)', body)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _handler(seen: list[httpx.Request], *, content_list: object, middle: object, md: str = "# ok"):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/tasks":
+                seen.append(request)
+                return httpx.Response(202, json={"task_id": "win"})
+            if request.url.path == "/tasks/win":
+                return httpx.Response(200, json={"status": "completed"})
+            return httpx.Response(
+                200,
+                json=_result_body(
+                    "book",
+                    content_list=json.dumps(content_list) if content_list is not None else None,
+                    middle=json.dumps(middle) if middle is not None else None,
+                    md=md,
+                ),
+            )
+
+        return handler
+
+    def test_window_sends_zero_based_inclusive_page_ids(self):
+        seen: list[httpx.Request] = []
+        handler = self._handler(
+            seen,
+            content_list=[{"type": "text", "text": "x", "bbox": [0, 0, 1, 1], "page_idx": 0}],
+            middle={"pdf_info": [{"page_size": [595.0, 842.0]}] * 4},
+        )
+        _engine(handler).parse_document(b"%PDF-1.4", "book.pdf", start_page=11, end_page=14)
+        body = seen[0].read().decode("utf-8", "replace")
+        assert self._form_field(body, "start_page_id") == "10"  # 1 基 11 → 0 基 10
+        assert self._form_field(body, "end_page_id") == "13"  # 含两端：1 基 14 → 0 基 13
+
+    def test_no_window_sends_no_page_ids(self):
+        """不带窗口时不发送页段字段：整本仍按容器默认（0/99999），不臆造参数。"""
+        seen: list[httpx.Request] = []
+        handler = self._handler(
+            seen,
+            content_list=[{"type": "text", "text": "x", "bbox": [0, 0, 1, 1], "page_idx": 0}],
+            middle={"pdf_info": [{"page_size": [595.0, 842.0]}]},
+        )
+        _engine(handler).parse_document(b"%PDF-1.4", "book.pdf")
+        body = seen[0].read().decode("utf-8", "replace")
+        assert self._form_field(body, "start_page_id") is None
+        assert self._form_field(body, "end_page_id") is None
+
+    def test_relative_page_idx_restored_to_absolute_book_pages(self):
+        """窗口内相对索引 → 全书绝对页号；中间无条目的页仍须出现（真书空白页形态）。"""
+        seen: list[httpx.Request] = []
+        handler = self._handler(
+            seen,
+            content_list=[
+                {"type": "text", "text": "first", "bbox": [0, 0, 1, 1], "page_idx": 0},
+                {"type": "text", "text": "third", "bbox": [0, 0, 1, 1], "page_idx": 2},
+            ],
+            middle={"pdf_info": [{"page_size": [595.0, 842.0]}] * 3},
+        )
+        result = _engine(handler).parse_document(b"%PDF-1.4", "book.pdf", start_page=47, end_page=49)
+        assert [page.page for page in result.pages] == [47, 48, 49]
+        assert [block["text"] for block in result.pages[0].blocks] == ["first"]
+        assert result.pages[1].blocks == []
+        assert [block["text"] for block in result.pages[2].blocks] == ["third"]
+        assert result.pages[1].page_size == (595.0, 842.0)
+
+    def test_window_without_middle_json_still_offsets_pages(self):
+        """无 `middle_json` 时按条目相对索引偏移，不退回「全书索引」旧口径。"""
+        seen: list[httpx.Request] = []
+        handler = self._handler(
+            seen,
+            content_list=[
+                {"type": "text", "text": "a", "bbox": [0, 0, 1, 1], "page_idx": 0},
+                {"type": "text", "text": "b", "bbox": [0, 0, 1, 1], "page_idx": 1},
+            ],
+            middle=None,
+        )
+        result = _engine(handler).parse_document(b"%PDF-1.4", "book.pdf", start_page=100, end_page=101)
+        assert [page.page for page in result.pages] == [100, 101]
+
+    def test_whole_book_default_starts_at_page_one(self):
+        seen: list[httpx.Request] = []
+        handler = self._handler(
+            seen,
+            content_list=[{"type": "text", "text": "x", "bbox": [0, 0, 1, 1], "page_idx": 0}],
+            middle={"pdf_info": [{"page_size": [595.0, 842.0]}] * 2},
+        )
+        result = _engine(handler).parse_document(b"%PDF-1.4", "book.pdf")
+        assert [page.page for page in result.pages] == [1, 2]
+
+    def test_blank_page_window_is_a_legal_empty_page(self):
+        """W2 / REQ-087：真机空白页形状（`real-blank-only` 留档）= completed + `pdf_info` 1 页 +
+        `content_list` 与 `md_content` 皆空。这必须是**合法的空页结果**，不得抛 `EngineError`
+        ——否则空白页被判 `failed`，含空白页的书永不满足激活门槛。"""
+        seen: list[httpx.Request] = []
+        handler = self._handler(
+            seen,
+            content_list=[],
+            middle={"pdf_info": [{"page_size": [815.0, 1151.0]}]},
+            md="",
+        )
+        result = _engine(handler).parse_document(b"%PDF-1.4", "book.pdf", start_page=48, end_page=48)
+        assert [page.page for page in result.pages] == [48]
+        assert result.pages[0].blocks == []
+        assert result.pages[0].markdown == ""
+
+    def test_middle_json_absent_and_truly_empty_still_raises(self):
+        """反向判据：无任何页证据（无条目、无 md、无 `pdf_info`）时仍须抛错——
+        「空」与「什么都没回」不能混为一谈，否则缺陷会被静默成合法空白页。"""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/tasks":
+                return httpx.Response(202, json={"task_id": "win0"})
+            if request.url.path == "/tasks/win0":
+                return httpx.Response(200, json={"status": "completed"})
+            return httpx.Response(200, json=_result_body("book", content_list=[], md=""))
+
+        with pytest.raises(EngineError, match="无结构化产物"):
+            _engine(handler).parse_document(b"%PDF-1.4", "book.pdf", start_page=1, end_page=3)
 
 
 class TestBBoxSpaceDeclaration:

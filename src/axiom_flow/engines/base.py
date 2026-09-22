@@ -65,7 +65,7 @@ class ModelLoad:
 
 @runtime_checkable
 class ParseEngine(Protocol):
-    """解析引擎协议：健康探活、负载探测、全本解析（默认）、单页解析（重解析）。"""
+    """解析引擎协议：健康探活、负载探测、全本解析（默认，可按 1 基含两端窗口分块）、单页解析。"""
 
     name: str
 
@@ -75,6 +75,18 @@ class ParseEngine(Protocol):
         """当前负载；引擎不上报、服务未答或载荷不合预期时返回 `None`（无法判定，不是占用）。"""
         ...
 
-    def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult: ...
+    def parse_document(
+        self,
+        pdf_bytes: bytes,
+        filename: str,
+        *,
+        start_page: int | None = None,
+        end_page: int | None = None,
+    ) -> DocumentResult:
+        """一次提交；`start_page`/`end_page` 为 1 基**含两端**的书页号，缺省即整本。
+
+        返回页号恒为**全书绝对页号**（引擎的窗口内相对索引由适配层换算）。
+        """
+        ...
 
     def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult: ...

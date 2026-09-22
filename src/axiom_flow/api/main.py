@@ -141,6 +141,7 @@ def create_app(
         engine_factory=make_engine,
         data_root=data_root,
         background=background_jobs,
+        window_size=settings.parse_window_size,
     )
 
     @asynccontextmanager

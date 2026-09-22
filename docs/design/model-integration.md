@@ -3,8 +3,10 @@
 设计状态：Accepted
 确认状态：暂定
 实现状态：Current（config/engines 已实现，MinerU 适配器按 3.4.4 异步协议落地 + `factory.py` 显式
-分派 + `bbox_space` 坐标空间声明 + 归一化可见丢弃计数；paddleocr-vl/qwen-vl 预留；llm_client/fallback 已退役）
-最后更新：2026-09-21
+分派 + `bbox_space` 坐标空间声明 + 归一化可见丢弃计数 + **全本按页窗口提交（`start_page_id`/
+`end_page_id`，按块 deadline 与绝对页号还原，2026-09-22 W0 真机冻结）**；paddleocr-vl/qwen-vl 预留；
+llm_client/fallback 已退役）
+最后更新：2026-09-22
 关联代码：`src/axiom_flow/config.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`
 关联测试：`tests/unit/test_config.py`、`tests/unit/test_engines.py`、`tests/unit/test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：`docs/adr/0004-model-boundary-and-pipeline-ownership.md`
@@ -27,7 +29,7 @@ v0.1 的 `llm_client.py` 双模式（local 直连 qwen-vl / qed-engine 经 8900 
 **配置简化（2026-09-17 用户裁决，PLAN-002）**：Axiom-Flow 只做「模型 API 调用 + 预处理/
 后处理」，**模型调参（MinerU 等引擎参数）归 QED-Engine 侧**，本仓库不暴露调参入口。配置中心
 简化为三段式：服务（`AXIOM_PORT`）/ 数据与数据库（`QED_DATA_ROOT`、`QED_DB_*`）/ 解析引擎
-（`AXIOM_OCR_ENGINE`、`QED_OCR_MODEL_URL`、`AXIOM_OCR_TIMEOUT`）。服务启动不依赖 8900 与
+（`AXIOM_OCR_ENGINE`、`QED_OCR_MODEL_URL`、`AXIOM_OCR_TIMEOUT`、`AXIOM_PARSE_WINDOW_SIZE`）。服务启动不依赖 8900 与
 模型在线，仅解析时连接模型 API。
 
 **MinerU 直连契约（根仓库 PLAN-046 / REQ-075）**：`QED_MINERU_URL` 删除改为
@@ -40,7 +42,8 @@ v0.1 的 `llm_client.py` 双模式（local 直连 qwen-vl / qed-engine 经 8900 
 | --- | --- | --- |
 | `AXIOM_OCR_ENGINE` | 解析引擎：`mineru` / `paddleocr-vl` / `qwen-vl`（后两者预留） | `mineru` |
 | `QED_OCR_MODEL_URL` | 图像槽位本地端点（MinerU 容器，健康端点 `/health`） | `http://127.0.0.1:5002` |
-| `AXIOM_OCR_TIMEOUT` | 单次解析调用超时秒数（整本解析耗时长） | `600` |
+| `AXIOM_OCR_TIMEOUT` | **单块**一次调用的超时秒数（三段式提交/轮询/取结果共享；全本按窗口分块，每块独立计） | `600` |
+| `AXIOM_PARSE_WINDOW_SIZE` | 全本解析每块的页数（串行提交；默认值由真机 W0 冻结） | `56` |
 | `API_KEY` | 云端档位凭据（仅 qwen-vl 预留，注释态，不随解析默认路径读取） | — |
 | `AXIOM_VISION_MODEL` | qwen-vl 档位模型名（仅 qwen-vl 预留，注释态） | `qwen-vl-plus` |
 | `QED_DATA_ROOT` | 三项目统一数据根（`raw/` 只读输入、`parsed/` 本仓库产物） | 向上走查根 `.env` |
@@ -117,9 +120,16 @@ flowchart LR
   实验与复验留档 `data/probes/live-bringup-20260920/{L3d_coord_space.json,L3c_page0003.json}`、
   `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`。
 
-- 超时与两类重试分列：整次调用共享 `AXIOM_OCR_TIMEOUT` 推出的 `deadline`；**单页重试** 1 次
-  （编排层，见 [parsing-pipeline.md](parsing-pipeline.md)）与**轮询瞬时失败容忍** 连续 3 次
-  （适配层，成功一次即清零计数）互不吞并。
+- **窗口提交字段与页号还原（2026-09-22 W0 真机冻结，留档 `data/probes/window-req086-20260922/`）**：
+  `POST /tasks` 表单的 `start_page_id`/`end_page_id` 为 **0 基、含两端**（窗口大小 = `end − start + 1`），
+  本仓库对外的 `parse_document(start_page, end_page)` 用 **1 基含两端**并在适配器内换算；返回的
+  `content_list[].page_idx` 与 `middle_json.pdf_info[].page_idx` 都是**窗口内相对索引**（自 0 起），
+  适配器必须按窗口起点还原为**全书绝对页号**。不送窗口字段即整本（默认 `0`/`99999`）。
+- **超时按调用计**：每次调用（一次窗口或一页）各自从 `AXIOM_OCR_TIMEOUT` 起算 `deadline`，三段式
+  提交/轮询/取结果共享**本次调用**的 `deadline`；全本的挂钟上限因此是「块数 × 单块超时」，
+  而非整本一道墙。重试分列：**单页重试** 1 次（逐页路径，编排层）、**轮询瞬时失败容忍** 连续 3 次
+  （适配层，成功一次即清零计数）、**块级不重试**（全本窗口路径，恢复靠同 job 续跑）三者互不吞并，
+  见 [parsing-pipeline.md](parsing-pipeline.md)「全本窗口分块提交与空白页语义」。
 - 响应解析防御式双兼容：正文接受 `md_content` 或 `markdown`；`content_list` 与 `middle_json`
   兼容「JSON 字符串」与「已解析对象」两种载体；状态兼容顶层 `status` 与旧式 `data.state`；
   单文件提交时 `results` 按唯一键回落。非 JSON 或非 2xx 一律归一为 `EngineError`，`JSONDecodeError`

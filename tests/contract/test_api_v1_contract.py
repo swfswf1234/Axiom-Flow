@@ -43,7 +43,9 @@ class FakeEngine:
     def close(self) -> None:
         self.closed = True
 
-    def parse_document(self, pdf_bytes: bytes, filename: str) -> DocumentResult:
+    def parse_document(
+        self, pdf_bytes: bytes, filename: str, *, start_page: int | None = None, end_page: int | None = None
+    ) -> DocumentResult:
         return DocumentResult(
             pages=[
                 PageResult(
@@ -73,6 +75,33 @@ class FakeEngine:
         )
 
 
+class _WindowedEngine(FakeEngine):
+    """按窗口回**全书绝对页号**的假引擎：记录每次提交的 1 基含两端区间，可指定失败窗口。"""
+
+    def __init__(self, *, fail_spans: set[tuple[int, int]] | None = None) -> None:
+        super().__init__()
+        self.fail_spans = fail_spans or set()
+        self.spans: list[tuple[int, int]] = []
+
+    def parse_document(
+        self, pdf_bytes: bytes, filename: str, *, start_page: int | None = None, end_page: int | None = None
+    ) -> DocumentResult:
+        span = (start_page, end_page)
+        self.spans.append(span)
+        if span in self.fail_spans:
+            raise EngineError("MinerU 轮询超时：单块 deadline 到期")
+        return DocumentResult(
+            pages=[
+                PageResult(
+                    page=no,
+                    blocks=[{"type": "text", "text": f"第 {no} 页", "bbox": [72, 96, 540, 132]}],
+                    page_size=(595.0, 842.0),
+                )
+                for no in range(span[0], span[1] + 1)
+            ]
+        )
+
+
 def _make_pdf(path: Path, pages: int = 2) -> Path:
     doc = pymupdf.open()
     try:
@@ -85,14 +114,24 @@ def _make_pdf(path: Path, pages: int = 2) -> Path:
     return path
 
 
-def _build(tmp_path, monkeypatch, *, ocr_engine: str | None = None, engine_factory=None):
+def _build(
+    tmp_path,
+    monkeypatch,
+    *,
+    ocr_engine: str | None = None,
+    engine_factory=None,
+    book_pages: int = 2,
+    parse_window_size: int | None = None,
+):
     """隔离数据根 + SQLite 内存库 + 假引擎；返回 (client, session_factory)。"""
     monkeypatch.chdir(tmp_path)
     data_root = tmp_path / "data"
     raw_dir = data_root / "raw" / "math-advanced" / "math_analysis"
     raw_dir.mkdir(parents=True)
-    _make_pdf(raw_dir / "book.pdf", pages=2)
-    settings = load_settings(data_dir=data_root, ocr_engine=ocr_engine)
+    _make_pdf(raw_dir / "book.pdf", pages=book_pages)
+    settings = load_settings(
+        data_dir=data_root, ocr_engine=ocr_engine, parse_window_size=parse_window_size
+    )
     db_engine = create_engine(
         "sqlite+pysqlite://",
         connect_args={"check_same_thread": False},
@@ -363,6 +402,60 @@ class TestParseJobsEndpoints:
         assert book["last_parse_result"] == "completed"
         assert book["pages_done"] == 2
         assert job["failed_pages"] == []
+
+    def test_whole_book_window_failure_only_loses_that_window(self, tmp_path, monkeypatch):
+        """S1：单块失败只损失该块页（其余块照常完成），任务终态 `partial` 而非整本 `failed`。
+
+        块级**不做重试**：最坏挂钟 = 块数 × 单块超时，重试把它翻倍；同 job 重跑即续跑。
+        """
+        fake = _WindowedEngine(fail_spans={(3, 4)})
+        client, session_factory = _build(
+            tmp_path,
+            monkeypatch,
+            engine_factory=lambda name: fake,
+            book_pages=6,
+            parse_window_size=2,
+        )
+        _sync_book(client)
+        _ingest(client)
+
+        created = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()
+        job = client.get(f"/api/v1/parse-jobs/{created['id']}").json()
+
+        assert fake.spans == [(1, 2), (3, 4), (5, 6)], "每块一次独立提交：deadline 与失败域都按块计"
+        assert job["status"] == "partial"
+        assert job["failed_pages"] == [3, 4]
+        assert job["progress"]["parsed"] == 4
+        assert "窗口 3-4" in job["error"], "块失败原因要能在终态读出，不能只剩页号清单"
+        with session_factory() as reader:
+            rows = reader.execute(select(AfPage).where(AfPage.job_id == created["id"])).scalars()
+            statuses = {row.page_no: row.status for row in rows}
+        assert statuses == {
+            1: "parsed",
+            2: "parsed",
+            3: "failed",
+            4: "failed",
+            5: "parsed",
+            6: "parsed",
+        }, "失败域 = 该块目标页，不扩散到相邻块"
+        assert all("deadline" in row.error for row in rows if row.status == "failed")
+        assert client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"] is None
+
+    def test_whole_book_progress_advances_per_window(self, tmp_path, monkeypatch):
+        """S2：全本按窗口串行提交，进度与已提交窗口一致（真机非零中间值留档见 PLAN-007 W6）。"""
+        fake = _WindowedEngine()
+        client, _ = _build(
+            tmp_path, monkeypatch, engine_factory=lambda name: fake, book_pages=6, parse_window_size=2
+        )
+        _sync_book(client)
+        _ingest(client)
+
+        job = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()
+
+        assert fake.spans == [(1, 2), (3, 4), (5, 6)], "窗口必须连续、不重不漏、串行"
+        assert job["status"] == "completed"
+        assert job["progress"] == {"parsed": 6, "total": 6, "failed": 0, "error": ""}
+        assert client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"] == job["id"]
 
     def test_partial_job_reports_failed_pages_and_keeps_pointer(self, tmp_path, monkeypatch):
         """部分成功在契约面上不再被 `completed` 掩盖，也不夺走生效指针。"""

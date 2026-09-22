@@ -215,6 +215,10 @@ class QualityMetrics(BaseModel):
     dropped_types: list[str] = Field(
         default_factory=list, description="被丢弃条目的原始 type 字面值（去重升序，供人工判定映射缺口）"
     )
+    blank_page: bool = Field(
+        default=False,
+        description="引擎确认该页存在但未回任何内容（合法空白页）；与「解析失败」和「映射缺口」可区分",
+    )
 
 
 class BlocksPage(BaseModel):
