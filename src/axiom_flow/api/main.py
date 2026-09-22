@@ -7,6 +7,7 @@
 是 `_read_scope`，URL、响应结构与 `image_url` 字面量对根仓库前端保持不变。
 """
 
+import json
 import shutil
 import uuid
 from collections.abc import Callable, Iterator
@@ -53,6 +54,9 @@ from axiom_flow.schemas import (
     JobStatus,
     ManifestEntry,
     PageData,
+    PageListOut,
+    PageState,
+    PageStateOut,
     ParseJob,
     ParseJobCreate,
     ParseJobListItem,
@@ -356,6 +360,56 @@ def create_app(
         return IngestResponse(book_id=book_id, page_count=result.page_count, sha256=result.sha256)
 
     # ---------- ③ 解析结果与 PDF 对照 ----------
+
+    def _page_total(session: Session, book_id: str) -> int:
+        """页清单的枚举域：`af_books.page_count` 优先，NULL 时回落 `book.json` 的 `page_count`。
+
+        回落而不是直接报错：该列由 ingest 写入，迁移前存量书可能只剩 `book.json`。两者都取不到时
+        404（与产物目录缺失同一措辞）——「枚举域未知」不能伪装成空清单，否则客户端会判定全书齐备。
+        """
+        book = BookRepository(session).get(book_id)
+        if book is not None and book.page_count:
+            return int(book.page_count)
+        book_dir = _find_book_dir(session, book_id)
+        if book_dir is not None:
+            try:
+                raw = json.loads((book_dir / "book.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raw = {}
+            page_count = raw.get("page_count")
+            if isinstance(page_count, int) and page_count >= 1:
+                return page_count
+        raise HTTPException(status_code=404, detail=f"书目不存在或产物缺失：{book_id}")
+
+    @app.get("/api/v1/books/{book_id}/pages", response_model=PageListOut)
+    def list_page_states(book_id: SafeBookId, session: SessionDep) -> PageListOut:
+        """逐页状态清单（只读，**不分页**）：一次给全集，取代 1..page_count 的逐页试错。
+
+        `job_id`/`scope`/`has_artifact` 全部取自 `_read_scope` 的同一作用域；没有页行的页出行
+        `pending`。`status="parsed"` 且 `has_artifact=false` **如实暴露不改判**：该组合只可能来自
+        产物被外部删除，静默改判会让磁盘事故在台账上消失。
+        """
+        artifact_dir, job_id = _read_scope(session, book_id)
+        total = _page_total(session, book_id)
+        states = {state.page_no: state for state in PageRepository(session).list_states(book_id, job_id)}
+        edit_counts = EditRepository(session).count_by_page(book_id, job_id)
+        pages = [
+            PageStateOut(
+                page_no=page_no,
+                status=states[page_no].status if page_no in states else PageState.PENDING,
+                has_artifact=(artifact_dir / "pages" / f"p{page_no:04d}.blocks.json").is_file(),
+                error=states[page_no].error if page_no in states else "",
+                edit_count=edit_counts.get(page_no, 0),
+            )
+            for page_no in range(1, total + 1)
+        ]
+        return PageListOut(
+            book_id=book_id,
+            job_id=job_id,
+            scope="legacy" if job_id == LEGACY_JOB_ID else "active",
+            total=total,
+            pages=pages,
+        )
 
     @app.get("/api/v1/books/{book_id}/manifest", response_model=list[ManifestEntry])
     def get_manifest(book_id: SafeBookId, session: SessionDep) -> list[ManifestEntry]:

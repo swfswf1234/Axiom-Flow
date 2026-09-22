@@ -428,6 +428,33 @@ class EditRequest(BaseModel):
     corrected_bbox: BBox | None = None
 
 
+class PageStateOut(BaseModel):
+    """`GET /books/{id}/pages` 的清单行：**轻量**，不含 blocks / markdown / 质量信号。
+
+    客户端只需一条判据 `not has_artifact or status == "failed"` 即可覆盖「从未跑过 / 跑失败 /
+    产物被外部删除」三种形态；`status` 是页行原值，读取面不改写。
+    """
+
+    page_no: int
+    status: PageState
+    has_artifact: bool = Field(description="该页 blocks.json 在生效作用域目录内存在（磁盘事实）")
+    error: str = ""
+    edit_count: int = Field(default=0, description="本版本作用域内该页的 af_block_edits 行数")
+
+
+class PageListOut(BaseModel):
+    """`GET /books/{id}/pages` 响应：**不分页**，逐页连续覆盖 `1..total`。
+
+    `scope`/`job_id` 是作用域自证（读了哪一版），与 `af_books.active_job_id` 同源。
+    """
+
+    book_id: str
+    job_id: str
+    scope: Literal["active", "legacy"]
+    total: int
+    pages: list[PageStateOut] = Field(default_factory=list)
+
+
 class PageData(BaseModel):
     """GET /books/{id}/pages/{no} 响应：对照主数据源（已合并人工编辑）。"""
 

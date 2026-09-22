@@ -20,7 +20,15 @@ from sqlalchemy.pool import StaticPool
 from axiom_flow.api.main import create_app
 from axiom_flow.config import load_settings
 from axiom_flow.db.models import AfPage, AfParseJob, Base
-from axiom_flow.db.repositories import BookRepository, BookSyncRow, ParseJobRepository, ParseJobRow
+from axiom_flow.db.repositories import (
+    LEGACY_JOB_ID,
+    BookRepository,
+    BookSyncRow,
+    EditRepository,
+    PageRepository,
+    ParseJobRepository,
+    ParseJobRow,
+)
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
 
 
@@ -706,6 +714,161 @@ class TestParseJobListEndpoint:
         assert body["total"] == 1, "不带 book_id 过滤时 total 可大于现存书目的作业数（审计留痕）"
         assert body["jobs"][0]["active"] is False
         assert single.status_code == 200, "历史作业仍可查，删书不抹掉任务事实"
+
+
+class TestPageListEndpoint:
+    """`GET /api/v1/books/{id}/pages`（PLAN-008 W4）：逐页状态清单一次给全集。
+
+    存在理由：单页端点下「哪些页还没有产物」要 1..page_count 逐页试（486 页 = 486 次往返）。
+    客户端判据只有一条：`not has_artifact or status == "failed"` ⇒ 需重解析。
+    """
+
+    def _book_dir(self, tmp_path) -> Path:
+        return tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05"
+
+    def test_ingested_but_unparsed_book_lists_every_page_as_pending(self, tmp_path, monkeypatch):
+        """`pending` 的定义 = 该版本没有这一页的页行；页图在位不等于块产物在位。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+
+            response = client.get("/api/v1/books/mathanalysis-b05/pages")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["book_id"], body["job_id"], body["scope"], body["total"]) == (
+            "mathanalysis-b05",
+            "legacy",
+            "legacy",
+            2,
+        )
+        assert [page["page_no"] for page in body["pages"]] == [1, 2], "逐页连续覆盖 1..total，不缺项"
+        assert [page["status"] for page in body["pages"]] == ["pending", "pending"]
+        assert [page["has_artifact"] for page in body["pages"]] == [False, False]
+        assert [page["error"] for page in body["pages"]] == ["", ""]
+        assert [page["edit_count"] for page in body["pages"]] == [0, 0]
+
+    def test_completed_version_lists_parsed_pages_in_active_scope(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+
+            body = client.get("/api/v1/books/mathanalysis-b05/pages").json()
+
+        assert (body["job_id"], body["scope"]) == (job_id, "active"), "作用域自证：读的是哪一版必须可见"
+        assert [(p["status"], p["has_artifact"]) for p in body["pages"]] == [("parsed", True), ("parsed", True)]
+
+    def test_page_rows_in_the_read_scope_pass_through_verbatim(self, tmp_path, monkeypatch):
+        """`failed` 行与 `error` 原文透传，读取面不改写：失败清单是重跑按钮的输入。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with session_factory() as session:
+            BookRepository(session).upsert_many(
+                [
+                    BookSyncRow(
+                        book_id="mathanalysis-b05",
+                        domain_id="math-advanced",
+                        course_id="math_analysis",
+                        title="数学分析原理",
+                        file_path="raw/math-advanced/math_analysis/book.pdf",
+                    )
+                ]
+            )
+            session.commit()
+        with session_factory() as session:
+            pages = PageRepository(session)
+            pages.upsert("mathanalysis-b05", LEGACY_JOB_ID, 1, status="parsed", source="mineru")
+            pages.upsert("mathanalysis-b05", LEGACY_JOB_ID, 2, status="failed", error="引擎超时")
+            book_dir = self._book_dir(tmp_path)
+            book_dir.mkdir(parents=True)
+            # 不跑 ingest：只留 book.json，避免根视图页行被重新 ingest 作废（V8 的 reset_legacy）
+            (book_dir / "book.json").write_text('{"page_count": 2}', encoding="utf-8")
+            session.commit()
+
+        with test_client as client:
+            body = client.get("/api/v1/books/mathanalysis-b05/pages").json()
+
+        assert [(p["page_no"], p["status"], p["error"]) for p in body["pages"]] == [
+            (1, "parsed", ""),
+            (2, "failed", "引擎超时"),
+        ]
+
+    def test_parsed_page_with_deleted_artifact_is_exposed_not_rewritten(self, tmp_path, monkeypatch):
+        """`parsed` + 无产物只可能来自外部删除：如实暴露，静默改判会让磁盘事故从台账上消失。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            # 产物按**生效版本作用域**判定，故删版本目录内的那一份，不是根视图的
+            (self._book_dir(tmp_path) / "versions" / job_id / "pages" / "p0002.blocks.json").unlink()
+
+            body = client.get("/api/v1/books/mathanalysis-b05/pages").json()
+            single = client.get("/api/v1/books/mathanalysis-b05/pages/2")
+
+        assert [(p["status"], p["has_artifact"]) for p in body["pages"]] == [("parsed", True), ("parsed", False)]
+        assert single.status_code == 404, "清单如实暴露不一致，读该页仍然 404"
+
+    def test_edit_count_is_scoped_to_the_read_version(self, tmp_path, monkeypatch):
+        """`edit_count` 承载 ARCH-006「页清单暴露编辑存在性」，且按版本作用域计。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            assert client.put(
+                "/api/v1/books/mathanalysis-b05/pages/1/blocks/0/edit", json={"verdict": "bad", "note": "改"}
+            ).status_code == 200
+            assert client.put(
+                "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit", json={"verdict": "ok"}
+            ).status_code == 200
+            with session_factory() as session:
+                EditRepository(session).upsert("mathanalysis-b05", "other-version", 2, 0, verdict="bad")
+                session.commit()
+
+            body = client.get("/api/v1/books/mathanalysis-b05/pages").json()
+
+        assert [p["edit_count"] for p in body["pages"]] == [2, 0]
+        assert body["job_id"] == job_id
+
+    def test_total_falls_back_to_book_json_and_404_when_unavailable(self, tmp_path, monkeypatch):
+        """`total` 取 `af_books.page_count`，NULL 时回落 `book.json`；两者都取不到 → 404 而非空清单。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            with session_factory() as session:
+                book = BookRepository(session).get("mathanalysis-b05")
+                book.page_count = None
+                session.commit()
+
+            fallback = client.get("/api/v1/books/mathanalysis-b05/pages").json()
+            (self._book_dir(tmp_path) / "book.json").write_text("{}", encoding="utf-8")
+            missing = client.get("/api/v1/books/mathanalysis-b05/pages")
+
+        assert (fallback["total"], [p["page_no"] for p in fallback["pages"]]) == (2, [1, 2])
+        assert missing.status_code == 404
+        assert "产物缺失" in missing.json()["detail"]
+
+    def test_missing_book_missing_effective_directory_and_bad_segment(self, tmp_path, monkeypatch):
+        """404 书不存在 / 404 生效版本产物缺失（**不回落根视图**）/ 422 非法路径段。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            assert client.get("/api/v1/books/never-synced/pages").status_code == 404
+
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            shutil.rmtree(self._book_dir(tmp_path) / "versions" / job_id)
+
+            dropped = client.get("/api/v1/books/mathanalysis-b05/pages")
+            unsafe = client.get("/api/v1/books/bad!id/pages")
+
+        assert dropped.status_code == 404
+        assert dropped.json()["detail"].startswith("生效版本产物缺失"), "不得静默回落 legacy 根视图"
+        assert unsafe.status_code == 422
 
 
 class TestParseVersions:

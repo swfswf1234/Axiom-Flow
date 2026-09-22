@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现 + 任务状态六态与进度/结局分列（ADR 0007）已实现；8900 透传适配待 REQ-001；`GET /parse-jobs` 作业列表已实现（PLAN-008 W3）；`GET /books/{id}/pages` 页级状态清单＝契约先行（W1 本文成文，实现待 W4，未实现前返回 404））
+实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现 + 任务状态六态与进度/结局分列（ADR 0007）已实现；8900 透传适配待 REQ-001；`GET /parse-jobs` 作业列表与 `GET /books/{id}/pages` 页级状态清单均已实现（PLAN-008 W1 契约先行 → W3/W4 落地））
 最后更新：2026-09-22
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
@@ -168,8 +168,8 @@ NULL → 书目录根 = 根视图 legacy）。
 
 ### GET /api/v1/books/{book_id}/pages
 
-**生效版本**的逐页状态清单（只读；**契约先行**——PLAN-008 W1 于本文成文，实现待 W4，未实现前返回
-404）。存在理由：`GET /pages/{page_no}` 是单页端点，前端要判断「哪些页还没有产物」只能
+**生效版本**的逐页状态清单（只读；PLAN-008 W1 于本文成文、W4 已实现）。存在理由：
+`GET /pages/{page_no}` 是单页端点，前端要判断「哪些页还没有产物」只能
 1..page_count 逐页请求试错（486 页 = 486 次往返）；本端点一次给全集，供「失败页重解析按钮」直接
 算出待重跑集合。
 
@@ -210,7 +210,7 @@ NULL → 书目录根 = 根视图 legacy）。
 **作用域**：`job_id` / `scope` / `has_artifact` 三项全部取自 `_read_scope` 返回的 `(产物目录, job_id)`
 （见「强制规则」的唯一入口条），不得自行拼 `book_dir`——否则会把 legacy 根视图与版本视图混读。
 **错误：** 404 书目不存在或产物缺失 / 404 生效版本产物缺失（**不回落根视图**）；`book_id` 非法路径
-段 422。
+段 422（含 `%2F` 等编码分隔符的穿越会在路由层就不匹配而落 404，两者都是拒绝，不是放行）。
 
 ### GET /api/v1/books/{book_id}/pages/{page_no}
 
@@ -391,7 +391,9 @@ NULL → 书目录根 = 根视图 legacy）。
   parse-jobs 返回结构与 schemas 一致；`TestParseVersions` 守护版本化：两版本并存读生效版、
   `image_url` 字面量不变、重 ingest 后历史版本可直读、生效目录缺失 404；`TestParseJobListEndpoint`
   守护作业列表：六态原值、可重复 `status` 多值 OR、`created_at DESC, job_id DESC` 可复现翻页、
-  `total` 为过滤后总数、不存在的书 200 空集、删书审计行仍列出且 `active=false`）。
+  `total` 为过滤后总数、不存在的书 200 空集、删书审计行仍列出且 `active=false`；`TestPageListEndpoint`
+  守护页清单：`1..total` 连续覆盖、`pending` = 无页行、`parsed`+无产物如实暴露（读该页仍 404）、
+  `edit_count` 按版本作用域、`scope` 自证、生效目录缺失 404 不回落）。
 - 全量门禁 `pytest tests -q` + `ruff check src tests`。
 - 手动冒烟：`python scripts/axiom_flow_service.py start --wait` → `GET /api/v1/health` 200 →
   `GET /api/v1/books` 返回书目 → `status` → `stop` → `status stopped`。

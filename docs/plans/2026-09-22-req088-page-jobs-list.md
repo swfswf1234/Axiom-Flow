@@ -157,6 +157,38 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 `api.md` 同步三处措辞：端点节「契约先行…未实现前返回 404」→「W3 已实现」、头部实现状态、
 「验证」节守护清单补 `TestParseJobListEndpoint`。
 
+### W4 `GET /api/v1/books/{book_id}/pages`（2026-09-22）
+
+契约测试 7 条**先观察到红**（路由未注册时 7 条全红于 `404 Not Found`），实现后全绿。反向判据（变异复验，
+均已回退）：
+
+- 把 `parsed`+无产物悄悄改写成 `pending` → **2 条同时转红**（`test_page_rows_in_the_read_scope_
+  pass_through_verbatim` 与 `test_parsed_page_with_deleted_artifact_is_exposed_not_rewritten`），
+  证明「磁盘事故不被静默抹掉」这条不变式真的被钉子钉住。
+- `scope` 硬编成 `"active"` → 未解析书的清单用例转红，证明作用域自证不是装饰字段。
+
+实现要点与三处契约落地细节：
+
+- `schemas.py`：`PageStateOut`（`page_no/status/has_artifact/error/edit_count`，**不含** blocks/
+  markdown/quality）与 `PageListOut`（`book_id/job_id/scope/total/pages`）。
+- `main.py` 路由：`job_id`/`scope`/`has_artifact` 全部取自 `_read_scope` 的同一作用域（强制规则的唯一
+  入口条），`has_artifact` 是 `artifact_dir/pages/p<NNNN>.blocks.json` 的磁盘事实，独立于页行取。
+- `total` 由 `_page_total()` 决定：`af_books.page_count` → 回落 `book.json` → 都没有则 **404**。
+  回落用 `json.loads` 而不是 `BookMeta.model_validate_json`：迁移前存量 `book.json` 未必满足当前
+  schema，且 `total` 只需要一个整数；枚举域未知不能伪装成空清单（否则客户端会判定全书齐备）。
+
+**两处实现期发现的契约口径澄清（已回写 `api.md`）**：
+
+1. `%2F` 这类含编码分隔符的穿越尝试在**路径参数**上是路由不匹配 → 404，而不是 422（实测：
+   `bad!id` → 422，`..%2Fescape` → 404）。两者都是拒绝；`api.md` 该条已补这一句，避免被读成漏洞。
+   **查询参数**侧仍是 422（`GET /parse-jobs?book_id=..%2Fescape` 实测 422，W3 用例已钉）。
+2. 生效版本里 `failed` 页行**不是常态**：激活门槛要求目标页全部 `parsed` 且产物在位
+   （`pipeline.py:191-195` `_version_is_complete` → `:486-491` 才写 `active_job_id`），所以首次任务不会
+   激活一个带失败页的版本；失败页事实由 `GET /parse-jobs` 的 `failed_pages` 与 `versions` 承担。
+   仍可能出现 `failed` 行的路径是**同一 `job_id` 重放**（`interrupted` 续跑，已激活版本原地再跑）与
+   legacy 根视图存量。据此，W4 的 `failed`+`error` 原值透传用例走 legacy 作用域直证，而不是伪造一个
+   「已激活却失败」的版本——本端点只报告读取作用域里确实存在的行，不预测它怎么来的。
+
 ## 工作项
 
 | # | 工作项 | 产物 | 门禁 | 状态 |
@@ -164,7 +196,7 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 | W1 | 契约成文：`api.md` 两节 + 响应字段表 + 错误语义（404 书不存在 / 404 版本目录缺失） | 文档改动（先于实现） | 契约 | Done（2026-09-22，`architecture/api.md` ③ 类两节 + 两张字段表 + 错误语义两行 + 强制规则作用域条改写；取舍与事实依据见「实施登记 W1」） |
 | W2 | 仓储查询 + 红灯测试（原计划写「契约测试」，实际分层见登记） | `repositories.py` 三查询（`list_all`/`list_states`/`count_by_page`）+ `tests/unit/test_db.py` 先红后绿 | 单元 | Done（2026-09-22，13 条测试先红（三条方法 `AttributeError`）后绿；形状与对原工作项的两处偏差见「实施登记 W2」） |
 | W3 | `GET /parse-jobs` 端点（过滤/分页/排序稳定；响应字段与 `ParseJob` 一致） | `main.py` 路由 + 契约测试 | 契约 | Done（2026-09-22，`TestParseJobListEndpoint` 7 条绿 + 变异复验；`schemas.ParseJobListItem/ParseJobListOut`、`BookRepository.active_job_index`；`api.md` 三处措辞同步。详见「实施登记 W3」） |
-| W4 | `GET /books/{id}/pages` 端点（逐页状态清单 + `scope`/`job_id` 自证） | 同上 | 契约 | Pending |
+| W4 | `GET /books/{id}/pages` 端点（逐页状态清单 + `scope`/`job_id` 自证） | `main.py` 路由 + `_page_total()` + `schemas.PageStateOut/PageListOut` + 契约测试 | 契约 | Done（2026-09-22，`TestPageListEndpoint` 7 条先红（路由未注册 → 404）后绿；两条变异复验（悄悄改判 / `scope` 硬编）均转红。口径澄清两条见「实施登记 W4」） |
 | W5 | 文档与映射收口：`code-map.md`、`operations.md` 改号措辞、`parsing-management.md` 端点面 | 文档改动 | 架构/设计契约测试 | Pending |
 | W6 | 8903 联调（ARCH-005 对照与质量度量、ARCH-006 块编辑写入与合并回显）+ 跨项目回执 | 联调记录 + 回执正文（根侧自读登记） | 真机 | Pending |
 | W7 | 收口（六步，ADR 0006） | 本计划关闭与归档 | 全量门禁 | Pending |
