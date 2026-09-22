@@ -25,22 +25,40 @@
 | 能力 | 形态 | 状态 | 说明 |
 | --- | --- | --- | --- |
 | 8902 HTTP 服务（`/api/v1`） | 8902 | 已服务化 | FastAPI；sync/CRUD/ingest/异步 parse-jobs/pages/manifest/edit/chunks/**versions** 全端点，af_* 持久化；生命周期脚本 `scripts/axiom_flow_service.py`。 |
-| 解析管线（ingest/engines/normalize/orchestrator） | Windows 编排层 | 部分验证 | 预处理（150 DPI 页图 + book.json/manifest）→ MinerU 适配（全本默认/逐页重解析）→ 统一 blocks + 质量信号 → 分块 → 落盘 `parsed/` + af_* 回写。**2026-09-20 真机已打通（小样止）**：单页 PNG 提交（真书第 3 页）、5 页合成小样整本提交、失败注入与 kill 续跑四类路径全部落库并产出 blocks/md/chunks/manifest，L1~L8 判据全绿（证据 `data/probes/live-bringup-20260920/`，结论见 PLAN-003「收尾执行登记」）；**2026-09-21 真机链路固化为冒烟用例** `tests/smoke/test_live_mineru_chain.py`（默认门禁 skip，`QED_SMOKE_LIVE=1` 真机绿），DEFECT-002 随之关闭。**遗留缺陷**：~~bbox 坐标空间误判~~ **2026-09-21 已修复关闭**（DEFECT-004：适配器以 `PageResult.bbox_space` 声明 0–1000 归一化空间，`scale_bbox` 按空间换算，真机锚点复验 5/5 块 IoU 0.9314 / 偏移 ≤7px；修复前落盘的 `parsed/` 产物坐标仍是错的，需重解析）；剩余缺陷：~~块类型字面值缺口（真机 `header`/`footer` 不在映射表 → 页眉页脚块静默丢弃）~~ **2026-09-21 已修复关闭**（DEFECT-005：新旧字面值并存入 `_TYPE_MAP`，未覆盖字面值以 `QualityMetrics.dropped_block_count`/`dropped_types` **可见丢弃**计数，`index` 只在存活块连续编号；11 例单元两轮红→绿（映射与计数 6、整页回退收紧 1）+ 冒烟零丢弃对账断言，真机复跑待 MinerU 起服务）；两项修复都不回溯历史产物。**2026-09-22 代表书抽查窗口（ARCH-009 口径）类型分布取证**：两本各 20 页抽样内实际出现 8 种 `BlockType`（`paragraph / formula / header / footer / page_number / image / table`，`caption` 仅 b11 1 块），`heading`/`list` 两键从未命中（取证事实、非缺陷），b05 另有 26 块按可见丢弃计数；同轮发现并同日修复第三处归一缺陷（ARCH-018，已关闭）：引擎 `equation` 条目的 `latex` 自带 `$$…$$`，归一层原样存储致下游二次包裹成 `$$$…$$$`（KaTeX 不可渲染）、`display` 恒 False；现由 `split_math_delimiters()` 剥定界符并据其决定 `display`（裸 LaTeX 契约成文于 parsing-pipeline「公式定界符契约」），真机同批 20 页复解析后公式段可解析率 87.79%/91.95% → **100%/100%**。同轮暴露 `ref_text`（参考文献条目）未入 `_TYPE_MAP` ⇒ b05 抽样页 26 块**可见丢弃**，登记为 ARCH-019（映射目标待裁决） |
+| 解析管线（ingest/engines/normalize/orchestrator） | Windows 编排层 | 部分验证 | 预处理（150 DPI 页图 + book.json/manifest）→ MinerU 适配（**全本默认按 56 页窗口串行分块提交**、逐页重解析）→ 统一 blocks + 质量信号 → 分块 → 落盘 `parsed/` + af_* 回写。**2026-09-20 真机已打通（小样止）**：单页 PNG 提交（真书第 3 页）、5 页合成小样整本提交、失败注入与 kill 续跑四类路径全部落库并产出 blocks/md/chunks/manifest，L1~L8 判据全绿（证据 `data/probes/live-bringup-20260920/`，结论见 PLAN-003「收尾执行登记」）；**2026-09-21 真机链路固化为冒烟用例** `tests/smoke/test_live_mineru_chain.py`（默认门禁 skip，`QED_SMOKE_LIVE=1` 真机绿），DEFECT-002 随之关闭。**遗留缺陷**：~~bbox 坐标空间误判~~ **2026-09-21 已修复关闭**（DEFECT-004：适配器以 `PageResult.bbox_space` 声明 0–1000 归一化空间，`scale_bbox` 按空间换算，真机锚点复验 5/5 块 IoU 0.9314 / 偏移 ≤7px；修复前落盘的 `parsed/` 产物坐标仍是错的，需重解析）；剩余缺陷：~~块类型字面值缺口（真机 `header`/`footer` 不在映射表 → 页眉页脚块静默丢弃）~~ **2026-09-21 已修复关闭**（DEFECT-005：新旧字面值并存入 `_TYPE_MAP`，未覆盖字面值以 `QualityMetrics.dropped_block_count`/`dropped_types` **可见丢弃**计数，`index` 只在存活块连续编号；11 例单元两轮红→绿（映射与计数 6、整页回退收紧 1）+ 冒烟零丢弃对账断言，真机复跑待 MinerU 起服务）；两项修复都不回溯历史产物。**2026-09-22 代表书抽查窗口（ARCH-009 口径）类型分布取证**：两本各 20 页抽样内实际出现 8 种 `BlockType`（`paragraph / formula / header / footer / page_number / image / table`，`caption` 仅 b11 1 块），`heading`/`list` 两键从未命中（取证事实、非缺陷），b05 另有 26 块按可见丢弃计数；同轮发现并同日修复第三处归一缺陷（ARCH-018，已关闭）：引擎 `equation` 条目的 `latex` 自带 `$$…$$`，归一层原样存储致下游二次包裹成 `$$$…$$$`（KaTeX 不可渲染）、`display` 恒 False；现由 `split_math_delimiters()` 剥定界符并据其决定 `display`（裸 LaTeX 契约成文于 parsing-pipeline「公式定界符契约」），真机同批 20 页复解析后公式段可解析率 87.79%/91.95% → **100%/100%**。同轮暴露 `ref_text`（参考文献条目）未入 `_TYPE_MAP` ⇒ b05 抽样页 26 块**可见丢弃**，登记为 ARCH-019（映射目标待裁决） |
 | 模型与引擎对接 | 引擎适配器 | 已实现 | **解析直连本地模型服务**（`QED_OCR_MODEL_URL` 5002，不经 8900 网关）；MinerU 落地，PaddleOCR-VL/qwen-vl 预留，槽位由 `engines/factory.py` 显式分派（未实现即 400，不自动兜底）；模型生命周期与调参归 QED-Engine（[model-integration](../design/model-integration.md)，[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。 |
 | 模型生命周期 | 根仓库 8900 托管 | 已就绪 | 模型文件、启停、探针、资源互斥与调参归 QED-Engine（`scripts/image-model/`、`/models`）；本仓库只消费模型服务端点。 |
-| orchestrator 任务编排 | af_parse_jobs + af_pages | 部分实现 | 全本（pages 缺省）/逐页；单页失败不中断。**2026-09-20 PLAN-003 W2 代码侧修复**：每页成功/失败即 `commit`（产物写先于页行提交）、`progress` 按 ≥1s 或每 10 页节流、终态收尾必写。**2026-09-21 真机已证**：运行中 `progress.parsed` 单调递增（L4）、失败页不中断任务（L5）、kill 服务后按「无行 ∪ failed」续跑且前序页不重跑（L6，真 MySQL `qed`）。**MySQL 级提交边界回归网已就位（DEFECT-001 关闭）**：`tests/support/mysql.py` + `tests/integration/test_parse_persistence.py`（[ADR 0005](../adr/0005-mysql-integration-test-isolation.md) Accepted，`QED_TEST_MYSQL=1` 才连库、默认整层 skip）以双 Session 证明「flush 未提交对读侧不可见」与逐页提交序，并以 `persist_per_page=False` 反向判据自证有效性。**2026-09-21 状态语义收口（[ADR 0007](../adr/0007-parse-status-semantics.md) / PLAN-006；DEFECT-006/007 关闭）**：`JobStatus` 六态 `queued/running/completed/partial/failed/interrupted`——`completed` 与版本激活共用 `_version_is_complete()` 单判据（「`completed` 但未激活」结构上不可能）、有产出未齐备为 `partial`（旧契约在此只报 `completed`）、失败页结构化落 `af_parse_jobs.failed_pages`（整型数组、**不截断**，`error` 退回人类摘要）；书级 `parse_status` 收缩为纯进度（`pending`/`parsing`）、结局改由新列 `last_parse_result` 表达；`interrupted` **只由启动期归一产出**（`reconcile_on_startup()` 接在 lifespan 受理首个请求之前，单实例前提见 [operations.md](../guides/operations.md)）。**真机侧三条欠账已于 2026-09-22 R2 窗口清零（ARCH-003 关闭）**：业务库 `qed` 升 `20260921_0001`、长期孤儿行 `5f43593a12cc` 由 `reconcile_on_startup()` 归一为 `interrupted`、`QED_SMOKE_LIVE=1 pytest tests/smoke` **2 passed**（取证与「冒烟层默认 skip 致契约漂移」教训见 PLAN-003 R2 窗口 W-A 与 [completed.md](completed.md) ARCH-003 行）。**单一占用闸门（ARCH-017，2026-09-21 已关闭）**：`run_parse_job` 在 `health()` 与 `mark_running()` **之前**调 `_await_model_idle()`（`engine.model_load()` 读 MinerU `/health` 的 `queued_tasks/processing_tasks`，5s 复探 / 900s 截止）——本机 GPU 不敷并行解析，服务侧并发许可不替代调用方自我排他；等待期保持 `queued`（`started_at` 为空、零页行、不激活），超时文案 `模型服务被其他解析任务占用` 与 `模型服务不可用` **分列**，`model_load()` 返回 `None` 按可用放行（不臆造阻塞）。**已知容量限制（2026-09-22 承接登记为入站请求 REQ-086）**：全本（`pages:null`）走**整本单任务**，提交/轮询/取结果共用单一 `ocr_timeout=600s`（`config.py:54`），而 MinerU 侧按 64 页窗口分批推理 ⇒ 约 >60 页的书全本必 `failed` 且**进度恒为 0**；逐页/页区间路径每页各自计时、页级失败不杀 job，不受影响（根侧止血即走此路）。根治＝按窗口分块提交 + deadline 按块计，已立 **PLAN-007**（Accepted，2026-09-22，尚未开工；同计划并承载根侧入站 **REQ-087**「空白页合法化」——`mineru.py:170-173` 把「解析完成但无结构化产物」的空白页判成 `EngineError` ⇒ 页 `failed` ⇒ 激活门槛永不满，含空白页的书因此不可能激活） |
+| orchestrator 任务编排 | af_parse_jobs + af_pages | 部分实现 | 全本（pages 缺省）/逐页；单页失败不中断。**2026-09-20 PLAN-003 W2 代码侧修复**：每页成功/失败即 `commit`（产物写先于页行提交）、`progress` 按 ≥1s 或每 10 页节流、终态收尾必写。**2026-09-21 真机已证**：运行中 `progress.parsed` 单调递增（L4）、失败页不中断任务（L5）、kill 服务后按「无行 ∪ failed」续跑且前序页不重跑（L6，真 MySQL `qed`）。**MySQL 级提交边界回归网已就位（DEFECT-001 关闭）**：`tests/support/mysql.py` + `tests/integration/test_parse_persistence.py`（[ADR 0005](../adr/0005-mysql-integration-test-isolation.md) Accepted，`QED_TEST_MYSQL=1` 才连库、默认整层 skip）以双 Session 证明「flush 未提交对读侧不可见」与逐页提交序，并以 `persist_per_page=False` 反向判据自证有效性。**2026-09-21 状态语义收口（[ADR 0007](../adr/0007-parse-status-semantics.md) / PLAN-006；DEFECT-006/007 关闭）**：`JobStatus` 六态 `queued/running/completed/partial/failed/interrupted`——`completed` 与版本激活共用 `_version_is_complete()` 单判据（「`completed` 但未激活」结构上不可能）、有产出未齐备为 `partial`（旧契约在此只报 `completed`）、失败页结构化落 `af_parse_jobs.failed_pages`（整型数组、**不截断**，`error` 退回人类摘要）；书级 `parse_status` 收缩为纯进度（`pending`/`parsing`）、结局改由新列 `last_parse_result` 表达；`interrupted` **只由启动期归一产出**（`reconcile_on_startup()` 接在 lifespan 受理首个请求之前，单实例前提见 [operations.md](../guides/operations.md)）。**真机侧三条欠账已于 2026-09-22 R2 窗口清零（ARCH-003 关闭）**：业务库 `qed` 升 `20260921_0001`、长期孤儿行 `5f43593a12cc` 由 `reconcile_on_startup()` 归一为 `interrupted`、`QED_SMOKE_LIVE=1 pytest tests/smoke` **2 passed**（取证与「冒烟层默认 skip 致契约漂移」教训见 PLAN-003 R2 窗口 W-A 与 [completed.md](completed.md) ARCH-003 行）。**单一占用闸门（ARCH-017，2026-09-21 已关闭）**：`run_parse_job` 在 `health()` 与 `mark_running()` **之前**调 `_await_model_idle()`（`engine.model_load()` 读 MinerU `/health` 的 `queued_tasks/processing_tasks`，5s 复探 / 900s 截止）——本机 GPU 不敷并行解析，服务侧并发许可不替代调用方自我排他；等待期保持 `queued`（`started_at` 为空、零页行、不激活），超时文案 `模型服务被其他解析任务占用` 与 `模型服务不可用` **分列**，`model_load()` 返回 `None` 按可用放行（不臆造阻塞）。**已知容量限制（2026-09-22 承接登记为入站请求 REQ-086）**：全本（`pages:null`）走**整本单任务**，提交/轮询/取结果共用单一 `ocr_timeout=600s`（`config.py:54`），而 MinerU 侧按 64 页窗口分批推理 ⇒ 约 >60 页的书全本必 `failed` 且**进度恒为 0**；逐页/页区间路径每页各自计时、页级失败不杀 job，不受影响（根侧止血即走此路）。根治＝按窗口分块提交 + deadline 按块计 ⇒ **PLAN-007（2026-09-22 W0~W5 已落地，代码门禁全绿）**：
+`_page_windows()` 按 `AXIOM_PARSE_WINDOW_SIZE`（默认 56，真机 W0 实测 56 页 245s 冻结）把全本切成
+**串行窗口**，每块一次 `parse_document(start_page, end_page)` 并**独立计 deadline**；块级 `EngineError`
+只把该块目标页记 `failed`（原因 `窗口 {a}-{b}：…` 进 `progress.error`/终态 `error`）后继续下一块，
+**不做块级重试**（恢复靠同 job 续跑），块间 `health()` 失败即停止提交剩余块。空白页一并合法化：
+适配器以 `middle_json.pdf_info` 枚举页 ⇒ 空白页产 `blocks=[]` 的合法页并计 `parsed`，新增
+`QualityMetrics.blank_page`（与「解析失败」「映射缺口」三分，映射缺口页必为 false）。契约两条（S1 失败域、
+S2 按块进度）+ 单测 18 例常驻，并对「撤掉块级隔离」「取消分块」做过变异转红复验。
+**剩 W6**：b05 全本真机复测（只落 `qed_test` + 探针数据根）后本行才转「已验证」。 |
 | af_* 书目同步与块编辑 | MySQL `qed` 库 af_* 私有四表 | 已实现（真机已迁移版本布局并首次激活） | 四表一次迁移（`src/axiom_flow/migrations/`）+ 仓储层；sync 幂等、edit upsert 覆盖；MySQL 隔离测试网见 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（`qed_test` 内只 DROP 自有 `af_*` + `alembic_version`，`qed` 只读未触达）。**2026-09-21 PLAN-004 实施**：迁移 `20260920_0002`（`af_books.active_job_id` 生效指针 + `af_pages` 主键与 `af_block_edits` 唯一键纳入 `job_id` + `af_parse_jobs.source_sha256/page_count` + `engine` 死默认值 DROP）与仓储/编排/API 读取面全部落地，S1~S6 在 SQLite + `tmp_path` 上取证。**真机 B→C→D 单窗口已于 2026-09-21 执行完毕**：`alembic_version = 20260920_0002`、D-1 re-ingest 486 页并作废 39 行 legacy（现 0 行）、D-2 单次重解析 20/20 后 `active_job_id = 86ab56ae2b6c`（**真机首次激活**）。**迁移 `20260921_0001`（PLAN-006 / ADR 0007：`af_books.last_parse_result` + `af_parse_jobs.failed_pages`）已落地并做 SQLite 5 例 + 真 MySQL `qed_test` 升降级往返；**2026-09-22 R2 窗口在真机 `qed` 上 apply 完成**（备份先行、`alembic_version` 现为 `20260921_0001`，回滚按 `data/backups/window-20260922/af_backup_20260922.sql` 还原而非有损 downgrade）**。**REQ-080 双侧闭环（2026-09-22）**：根侧四条确认全部接受（不做切换/回滚写入端点、旧版本清理属 D 类另立、人工编辑不随版本继承），版本布局契约自此冻结，PLAN-004 关闭 |
 | 分块（blocks → chunks） | `chunks.json` + `GET /chunks` | 已实现（真机抽样取证完成） | 派生文件、不入库、可重建；参数（max_chars/overlap_blocks）可经端点重算。**REQ-080 归属约定成文并经真机验证**：`chunks.json` 每个解析版本一份、落 `versions/<job_id>/`（真机 `versions/86ab56ae2b6c/chunks.json` 存在），`GET /chunks` 读生效版本，**根视图不含 `chunks.json`**（实测 `root_view_has_no_chunks=True`）。**2026-09-21 抽样完整性取证（PLAN-002 标准 7）**：`scripts/tmp/live_check_chunk_formula_integrity.py` 对生效版本 20 页 / 159 原始块 / 17 chunk 跑四项判据全 PASS——18 个 formula 块按 `$$…$$`/`$…$` 规则整块出现在 chunk 文本中、逐 chunk `$` 定界符平衡、`block_refs` 零悬空、非噪声块 100% 覆盖；**反向判据**在临时副本上人为腰斩/悬空 ref/整删 chunk 全部变红；留档 `data/probes/chunk-integrity-20260921/C1_chunks.json`。规则本身由 `tests/unit/test_chunking.py::test_formula_and_table_never_split` 在默认门禁常驻守护。**2026-09-22 R2 窗口复跑**：ARCH-018 修复后两本代表书各 20 页的生效版本 chunk 完整性检查 **PASS**（公式整块出现、溯源无悬空、非噪声块全覆盖）；同轮实证一条**判据边界**：修复前的 b11 版本 `chunks.json` 含 126 处 `$$$` 而四项判据仍 PASS（留档 `data/probes/window-20260922/C8_chunk_prefix_b11.json`）——腰斩判据看块边界与 `$` 奇偶，不看定界符包裹层级，故公式渲染前的定界符契约由 `normalize/` 单测 + 代表书取证把住 |
-| 套1 代表书验收 | 教程 Rudin 中译 + 习题集吉米多维奇 | 抽查口径达成（全量待 ARCH-011） | ARCH-009；**2026-09-22 R2 窗口按用户裁决的抽查口径判定**（每本 20 页＝首 3 + 中 7 + 尾 5 + 公式密集 5；两本 PDF 均无文本层，密集页按**墨度**排序选页）：b05《数学分析原理》317 页 / b11《吉米多维奇》406 页，逐条判定 ①~⑤ PASS、公式段可解析率修复后 **100% / 100%**（判据为程序化结构可解析 + 人工留档，不引入 KaTeX 渲染依赖）、chunk 完整性两版本 PASS、`$$$` 归零；⑥类型分布取证未达成 ⇒ **ARCH-019**（`ref_text` 26 块可见丢弃）。**未做全量**：b05 生效版本是混合版本（20 页新 / 292 页继承修复前基线，跨旧页 chunk 仍有 `$$$` 485/525），其 5 个缺页与 `last_parse_result=failed` 未处理——全量重生已随根侧入站并入 **PLAN-007**（W6 全本复测，D 类逐步批准；原 ARCH-011 批量批次口径不变）。**当前（修复前）容量限制**：全本单任务受 600s 单墙限制（见 orchestrator 行的 REQ-086；根侧 b05 全本实测即因此 `failed`），在 PLAN-007 落地前全量须走页区间路径。 |
+| 套1 代表书验收 | 教程 Rudin 中译 + 习题集吉米多维奇 | 抽查口径达成（全量待 ARCH-011） | ARCH-009；**2026-09-22 R2 窗口按用户裁决的抽查口径判定**（每本 20 页＝首 3 + 中 7 + 尾 5 + 公式密集 5；两本 PDF 均无文本层，密集页按**墨度**排序选页）：b05《数学分析原理》317 页 / b11《吉米多维奇》406 页，逐条判定 ①~⑤ PASS、公式段可解析率修复后 **100% / 100%**（判据为程序化结构可解析 + 人工留档，不引入 KaTeX 渲染依赖）、chunk 完整性两版本 PASS、`$$$` 归零；⑥类型分布取证未达成 ⇒ **ARCH-019**（`ref_text` 26 块可见丢弃）。**未做全量**：b05 生效版本是混合版本（20 页新 / 292 页继承修复前基线，跨旧页 chunk 仍有 `$$$` 485/525），其 5 个缺页与 `last_parse_result=failed` 未处理——全量重生已随根侧入站并入 **PLAN-007**（W6 全本复测，D 类逐步批准；原 ARCH-011 批量批次口径不变）。**容量限制已在本轮消除（待真机复测）**：全本单任务的 600s 单墙由 PLAN-007 的按页窗口分块提交根治
+（见 orchestrator 行 REQ-086），W0~W5 代码与门禁落地；b05 全本真机复测（W6）未跑前，全量重生仍按
+页区间路径执行。 |
 
 ## 当前主线
 
-- **本轮主攻（全库唯一，2026-09-22 立项轮）**：**PLAN-003 去留收口**——用户裁决取 (A)「先转承载再关」：
-  先为活行另立两份 B 类计划 **PLAN-007**（全本解析按页窗口分块提交 + 空白页合法化）与 **PLAN-008**
-  （页级失败清单与 jobs 列表端点），把 PLAN-003 正文的**六条**活行（REQ-086/087/088、ARCH-005/006/009/019
-  中实际挂承载的六行）改挂过去，再关闭 PLAN-003（**Retain** 归档）。本轮**只立项不实施**：两计划状态
-  `Accepted`、工作项 `Pending`，PLAN-007 的 W0 冻结探测（窗口页码基准 / 空白页响应形状 / 56 页窗口耗时）
-  与 ARCH-019 映射裁决先于任何实现。
+- **本轮主攻（全库唯一，2026-09-22 PLAN-008 进场轮）**：**实施 PLAN-008**（页级失败清单 + jobs 列表
+  两条只读端点，承载 REQ-088 / ARCH-005 / ARCH-006）。进场三项裁决：① 原三条 `In Progress` 支线行
+  （ARCH-019、REQ-086、REQ-087）剩余判据**同源等 PLAN-007 W6** ⇒ 一并改判 **`Blocked`**（恢复条件与
+  责任位置＝根仓库 8900 / 本机 WSL 网络），使并发上限（支线 `In Progress` ≤3）在 REQ-088 开工后仍成立；
+  ② 主攻位由 PLAN-007 改指本计划；③ jobs 列表**行内补时间戳**（`ParseJob` 字段原样 + `created_at`/
+  `started_at`/`finished_at`/`active`）。**进度：W1 契约已成文**进 `architecture/api.md` ③ 类（两节 +
+  两张字段表 + 错误语义两行 + 「作用域唯一入口」强制规则改写），剩 W2~W5 实施与契约测试、W6 联调。
+- **等待中（不占主攻位）**：PLAN-007（全本窗口分块 + 空白页合法化，承载 REQ-086/087、ARCH-009/019）
+  **W0~W5 已落地**（四项协议假设真机冻结 ⇒ 默认 56 页/块；引擎窗口参数与按块 deadline、pipeline 串行
+  窗口循环与块级失败隔离、`blank_page`、`ref_text` 映射、契约两条与条文晋升；433 passed / ruff clean /
+  MySQL 层 8 passed，含两处变异转红复验）。**剩 W6 全本真机复测与 REQ-086/087 回执、W7 收口**：
+  `mineru-api` 容器被外部每 1~3 分钟 SIGTERM 重启、`127.0.0.1:5002` HTTP 通路断开 ⇒ 提交前 ABORT
+  （`memory=24GB` 已生效、`dmesg` 无新 OOM，故原「WSL 全局 OOM」归因**已更正**）。恢复条件＝停掉反复
+  重启容器者 + 恢复端口通路，责任在根仓库 8900 与本机 Docker/WSL 网络（详见 PLAN-007「W6 真机复测登记」）。
 - **已关闭（2026-09-22 立项轮）**：**PLAN-003 解析真机打通**（四面判定：契约条文全部晋升
   `design/`+`architecture/`、W0~W8 实现收口、R0/R1/R2 三个真机窗口取证、REQ-080/081/083/084/085 回执
   双侧闭环）。**新入站承接**：根侧 `REQ-087`「空白页合法化」以同号登记（其 00:35 早于本方 00:57），
@@ -49,10 +67,11 @@
 - **已关闭（2026-09-22 R2 窗口）**：**ARCH-003 解析编排语义真机复跑**（业务库升 `20260921_0001`、
   孤儿行归一、冒烟 2 passed）、**ARCH-018 公式定界符缺陷**（`split_math_delimiters`，两本 100.00%）；
   D3 真机删除演练已执行并登记。**新立 ARCH-019**（`ref_text` 映射缺口）。
-- **下一轮候选（均需你先定级/批准，本表不自行指派）**：① **PLAN-007 开工**（先 W0 冻结探测，再 TDD；
-  W6 的 b05 整本复测属 D 类真机写，逐步批准）；② **PLAN-008 开工**（两条只读端点 + 契约测试，语义前置
-  已由 ADR 0007 解除）；③ **ARCH-019 映射裁决**（`ref_text` → 哪个 `BlockType`，本方倾向 (A) PARAGRAPH，
-  裁决后随 PLAN-007 W3 实施）；④ ARCH-005/006 的 8903 前端联调排期（根侧动作，消费 PLAN-008 端点）。
+- **下一轮候选（均需你先定级/批准，本表不自行指派）**：① PLAN-008 的 **W6（8903 前端联调）**排期
+  （根侧动作，消费本计划的两个新端点）；② PLAN-007 落地后是否把同一全本复测在**业务库 `qed` +
+  真实数据根**上再做一次（现判据只落 `qed_test` + 探针根，属 D 类，需另行批准）；③ PLAN-008 收口后
+  把两条新端点补进 `tests/contract/test_architecture_documents.py` 的 ③ 类端点守护清单（W5 已含
+  code-map 行，该清单是白名单式包含检查，补入即冻结）。
 - **已关闭（2026-09-22）**：**PLAN-004 解析产物按版本划分**（迁移 `20260920_0002` +
   `versions/<job_id>/` + 生效指针 + 只读 `/versions`；根侧四条确认全部接受 ⇒ 同批关 **REQ-080**；
   壳按 **Retain** 移至 `docs/history/plans/2026-09/`）与**六个跨项目行**（**REQ-001/080/081/083/084/085**
@@ -267,10 +286,11 @@ IoU 0.9314 / 最大偏移 7px、冒烟加「块与 PDF 原生文字 IoU ≥ 0.5�
   ARCH-014 书目同步与 CRUD、
   ARCH-015 ingest 与 `QED_DATA_ROOT/parsed/` 布局（真机迁移 + 486 页 E2E 证据见
   [completed.md](completed.md)）。
-- **待启动**：**PLAN-007**（全本解析按页窗口分块提交 + 空白页合法化；根治 `ocr_timeout=600` 的整本单墙
-  与「空白页过不了激活门槛」，承载 REQ-086/087、ARCH-009/019；先 W0 冻结探测）；**PLAN-008**（页级失败
-  清单 + jobs 列表两个只读端点，承载 REQ-088、ARCH-005/006）；**ARCH-019**（`ref_text` → 哪个 `BlockType`
-  待裁决，含回归网；`Blocked`）。ARCH-009 的**全量**阶段随 PLAN-007 全本复测推进，批量批次仍属 ARCH-011。
+- **进行中**：**PLAN-008**（页级失败清单 + jobs 列表两个只读端点，承载 REQ-088、ARCH-005/006；语义前置
+  已由 ADR 0007 解除，W1 契约成文达成，剩 W2~W5 实施与契约测试、W6 联调）。**等待环境恢复**：
+  PLAN-007（全本窗口分块 + 空白页合法化）剩 W6 真机复测与回执、W7 收口，其连带行 ARCH-019 /
+  REQ-086 / REQ-087 已改判 `Blocked`。ARCH-009 的**全量**阶段随 PLAN-007 W6 复测推进，批量批次
+  仍属 ARCH-011。
   **跨项目侧无待启动项**：六个请求行已于 2026-09-22 全部关闭（含 REQ-001，其承载行改判为根侧
   `PLAN-044`/`ARCH-020-D` 后由根侧登记读取）；新入站 REQ-087（空白页）已承接进 PLAN-007，本方 REQ-088
   已改号入站台账。

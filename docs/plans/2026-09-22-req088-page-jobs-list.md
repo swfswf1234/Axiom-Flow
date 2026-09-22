@@ -1,6 +1,6 @@
 # 页级失败清单与 jobs 列表端点（REQ-088，原 REQ-087）
 
-状态：Accepted
+状态：In Progress
 任务类型：B
 最后更新：2026-09-22
 关联 ADR：[ADR 0007](../adr/0007-parse-status-semantics.md)（本计划只是把已裁决的语义暴露为只读端点，不新增语义）
@@ -46,8 +46,10 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 - `db/repositories.py`：`ParseJobRepository` 增全局列表查询（现仅 `list_for_book(book_id)`
   `:231`，无状态过滤/分页）；`PageRepository` 增按 `(book_id, job_id)` 的**逐页状态清单**查询
   （现 `list_for_book` `:341` 返回整页内容、`count_parsed` `:349` 只数 `parsed`，**无 failed 查询**）。
-- `schemas.py`：两个响应模型（列表项复用 `ParseJob`；页清单为轻量 `{page_no, status, has_artifact, error?}`
-  + 顶层 `job_id`/`scope`/`total`）。
+- `schemas.py`：两个响应模型（作业行 `ParseJobListItem` **继承** `ParseJob` 原样字段并追加
+  `created_at/started_at/finished_at/active`，信封 `ParseJobListOut`；页清单 `PageStateOut`
+  `{page_no, status, has_artifact, error, edit_count}` + 顶层 `PageListOut`
+  `{book_id, job_id, scope, total}`，形状与理由见「实施登记 W1」）。
 - 文档：`api.md` ③类端点两节（该文件 `:294` 治理规则＝**先更新本文件与契约测试，再实现**）+
   `code-map.md` 行更新 + `operations.md:134` 的「按既有 job_id 续跑属 REQ-087 范围」措辞随改号更新。
 - 联调面：与根仓库约定消费方式（轮询间隔、抽屉只列活跃 or 全书历史的默认取法），ARCH-005/006
@@ -66,7 +68,8 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 
 1. **三条根侧裁决输入**（PLAN-003 承载节已发出，作为排期输入而非本方阻塞；未回时按**保守默认**实现）：
    ① 任务中心要「全书 jobs 历史（分页）」还是「仅活跃 jobs」→ 默认：两者同一端点，`status` 可选过滤、
-   默认不过滤、按 `created_at` 倒序 + 分页；
+   默认不过滤、按 `created_at` 倒序 + 分页（W1 已按此默认成文，并把 `status` 设计为**可重复**多值 OR，
+   使「仅活跃」= `?status=queued&status=running` 与「全书历史」= 不带参数落在同一条端点上）；
    ② 页级清单是否覆盖 `legacy` 哨兵行 → 默认：跟随 `_read_scope`，`active_job_id` 为 NULL 时读 legacy
    并在响应里显式标 `scope="legacy"`；
    ③ 失败页重解析粒度 → 默认：单页 `pages:[n]`（现有能力），批价格式等根侧明确要求再加。
@@ -74,11 +77,52 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 3. 可联调产物面现状：三本生效版本（b01 `86ab56ae2b6c`、b05 `185a37d55985`、b11 `bbe0d401ce83`，
    各 20 页几何与类型可信），`af_block_edits` 现 0 行。
 
+## 实施登记
+
+### W1 契约成文（2026-09-22，进场三项用户裁决）
+
+进场时台账已有三条支线行 `In Progress`（ARCH-019 / REQ-086 / REQ-087，剩余判据同源等 PLAN-007 W6），
+开 REQ-088 会撞并发上限。用户裁决：① 三行**一并改判 `Blocked`**（恢复条件与责任位置已在案）；
+② `project-status.md` 的**本轮主攻**由 PLAN-007 改指本计划；③ jobs 列表**行内补时间戳**（不采用
+「严格复用 `ParseJob`」的字面口径）。据此成文内容全部落在 `architecture/api.md` ③ 类，事实口径如下。
+
+**`GET /api/v1/books/{book_id}/pages`**（页清单）
+
+- **不分页**，一次给全集：「齐备与否」是全集判据，分页会退回逐页试（与 S2 的「不再逐页试」同源）。
+- 行 `{page_no, status, has_artifact, error, edit_count}` + 顶层 `{book_id, job_id, scope, total}`；
+  `scope ∈ active|legacy` 为 S3 要求的自证字段，`edit_count` 承载 ARCH-006 的「暴露编辑存在性」。
+- **`pending` 的定义写死为「该版本没有这一页的页行」**——核实依据：全库无任何写 `pending` 页行的代码
+  （`PageState.PENDING` 只是列默认值），故不必为它编造第三种磁盘形态。
+- 客户端只需一条判据 `not has_artifact or status == "failed"` 即覆盖「从未跑过 / 跑失败 / 产物被外部
+  删除」三种形态。
+- `status="parsed"` 且 `has_artifact=false` **如实暴露不改判**：编排层不变式「有页行必有产物」由
+  `_inherit_page_rows` 与 `_resumed_pages` 两处逐个校验产物在位维持（`pipeline.py:230-256`、`:164-181`），
+  该组合只可能来自外部删除；静默改判会让磁盘事故在台账上消失。
+
+**`GET /api/v1/parse-jobs`**（作业列表）
+
+- 信封 `{jobs, total, limit, offset}`，`total` = **过滤后**总行数（分页可用性必需）。
+- `status` **可重复**（多值 OR）：任务中心「只列活跃」天然是 `queued`+`running` 两值，单值过滤会逼
+  客户端发两次请求；`book_id` 缺省 = 不过滤（覆盖前置条件 ① 的保守默认，两者仍同一端点）。
+- 排序 `created_at DESC, job_id DESC`，第二键理由是 `MySQL DATETIME` 只到秒（与
+  `ParseJobRepository.list_for_book` `repositories.py:231-241` 的定序注释同源）。
+- `ParseJobListItem` = `ParseJob` 原样 + `created_at/started_at/finished_at/active`。裁决取舍：默认排序键
+  若在响应里不可见，客户端无法稳定翻页，故「复用 `ParseJob`」按**继承并追加**理解，不改其任何字段。
+- **不读磁盘产物，故不经 `_read_scope`**（跨书列表没有单一 per-book 作用域）。为避免与 `api.md`
+  强制规则「新增只读端点必须经它」字面冲突，该条已改写为限定「**读磁盘产物**的只读端点」，并补一句
+  「纯数据库读的列表端点不得另造作用域判定，版本事实只有 `af_books.active_job_id` 一列」。
+- **含已删书的审计行**：`DELETE /books/{id}` 保留 `af_parse_jobs`（既有契约），全局列表不排除、其
+  `active` 恒 `false`；据此明确「不带 `book_id` 过滤时 `total` 可能大于现存书目作业数」属预期。
+- `?book_id=<不存在的书>` → **200 + 空列表**（列表过滤不判资源存在性），与单本读取面 404 分列。
+
+**「范围」节已按上述形状改写**；S1~S4 判据不变（S1 六态原值、S2 三类形态、S3 自证字段、S4 零写入
+零磁盘路径泄漏全部已落进上述形状）。
+
 ## 工作项
 
 | # | 工作项 | 产物 | 门禁 | 状态 |
 | --- | --- | --- | --- | --- |
-| W1 | 契约成文：`api.md` 两节 + 响应字段表 + 错误语义（404 书不存在 / 404 版本目录缺失） | 文档改动（先于实现） | 契约 | Pending |
+| W1 | 契约成文：`api.md` 两节 + 响应字段表 + 错误语义（404 书不存在 / 404 版本目录缺失） | 文档改动（先于实现） | 契约 | Done（2026-09-22，`architecture/api.md` ③ 类两节 + 两张字段表 + 错误语义两行 + 强制规则作用域条改写；取舍与事实依据见「实施登记 W1」） |
 | W2 | 仓储查询 + 红灯契约测试（复用 `tests/contract/test_api_v1_contract.py:88-109` 的 `_build`/`client` fixtures 与 `_sync_book`/`_ingest` 助手） | `repositories.py` 两方法 + 契约测试先红后绿 | 契约 | Pending |
 | W3 | `GET /parse-jobs` 端点（过滤/分页/排序稳定；响应字段与 `ParseJob` 一致） | `main.py` 路由 + 契约测试 | 契约 | Pending |
 | W4 | `GET /books/{id}/pages` 端点（逐页状态清单 + `scope`/`job_id` 自证） | 同上 | 契约 | Pending |
@@ -113,7 +157,8 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 **目的**：为根侧「任务中心抽屉」与「失败页重解析按钮」提供可信只读数据源。
 **关闭条件**：两端点成文实施带契约测试，根侧确认可用。
 **工作项**：W1~W5（+ W6 联调）。
-**状态**：Pending（计划已立，实施未开工）。
+**状态**：In Progress（W1 契约已于 2026-09-22 成文进 `architecture/api.md`；剩 W2~W5 实施与契约测试、
+W6 联调）。
 **登记事实**：根侧未单独立号（其 ARCH-020-E 证据列「待 8902 页级失败清单与 running jobs 数据源
 确认后排期」），本仓库登记为请求接收行；本仓库现况确无该两端点（路由清单 16 条，见「范围」）。
 

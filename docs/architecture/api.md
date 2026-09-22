@@ -2,8 +2,8 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现 + 任务状态六态与进度/结局分列（ADR 0007）已实现；8900 透传适配待 REQ-001）
-最后更新：2026-09-21
+实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现 + 任务状态六态与进度/结局分列（ADR 0007）已实现；8900 透传适配待 REQ-001；**页级状态清单与 jobs 列表两条只读端点＝契约先行**（PLAN-008 W1 本文成文，实现待 W2~W4，未实现前两者返回 404））
+最后更新：2026-09-22
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)
@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | ① 生命周期与健康 | `GET /health` + `scripts/axiom_flow_service.py {start\|stop\|restart\|status}` | 服务启停/重启/健康检测 |
 | ② 数据查询（af_*） | `GET /books`、`GET/PATCH/DELETE /books/{id}`、`POST /books/sync`、`POST /books/{id}/ingest` | 书目同步与 CRUD、页图 ingest |
-| ③ 解析结果与 PDF 对照 | `GET /books/{id}/manifest`、`/pages/{no}`、`/pages/{no}/image`、`PUT /blocks/{index}/edit`、`GET /pages/{no}/edits`、`GET /books/{id}/chunks`、`GET /books/{id}/versions`、`POST /parse-jobs`、`GET /parse-jobs/{id}` | 解析进度、对照供给、块编辑、分块预览、版本列举 |
+| ③ 解析结果与 PDF 对照 | `GET /books/{id}/manifest`、`/pages`、`/pages/{no}`、`/pages/{no}/image`、`PUT /blocks/{index}/edit`、`GET /pages/{no}/edits`、`GET /books/{id}/chunks`、`GET /books/{id}/versions`、`POST /parse-jobs`、`GET /parse-jobs`、`GET /parse-jobs/{id}` | 解析进度、逐页状态清单、对照供给、块编辑、分块预览、版本列举、作业列表 |
 | ④ 未来 RAG·知识图谱预留 | 见「④ 预留分类」节 | Milvus 接入占位、检索端点设计 |
 
 **生效解析版本（2026-09-21，PLAN-004 / REQ-080）**：一本书的解析产物按版本落在
@@ -166,6 +166,52 @@ NULL → 书目录根 = 根视图 legacy）。
 **生效版本**的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对该版本目录自身，响应为
 `ManifestEntry` 列表。根视图清单**排除 `versions/` 子树**（历史版本不混入当前版对账）。
 
+### GET /api/v1/books/{book_id}/pages
+
+**生效版本**的逐页状态清单（只读；**契约先行**——PLAN-008 W1 于本文成文，实现待 W4，未实现前返回
+404）。存在理由：`GET /pages/{page_no}` 是单页端点，前端要判断「哪些页还没有产物」只能
+1..page_count 逐页请求试错（486 页 = 486 次往返）；本端点一次给全集，供「失败页重解析按钮」直接
+算出待重跑集合。
+
+**不分页**：一本书一次给全（486 页量级 ≈ 数十 KB）。「齐备与否」是**全集**判据，分页会让客户端无法在
+一次往返内判定，反而退回逐页试。
+
+响应 `PageListOut`：
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `book_id` | str | 路径参数回显 |
+| `job_id` | str | 本次读取的**版本作用域**（= `af_books.active_job_id`；无生效版本时为 `"legacy"`） |
+| `scope` | `"active"` \| `"legacy"` | 作用域自证：`active` = 读生效版本目录，`legacy` = 读根视图 |
+| `total` | int | 清单长度 = 枚举域页数 |
+| `pages` | `PageStateOut[]` | 按 `page_no` 升序，**逐页连续覆盖 `1..total`**（没有页行的页也要出行，不缺项） |
+
+`PageStateOut`（轻量行，**不含 blocks / markdown / 质量信号**——正文仍走 `/pages/{page_no}`）：
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `page_no` | int | 页码（1 基，与 `p<NNNN>.png` 对齐） |
+| `status` | `"parsed"` \| `"failed"` \| `"pending"` | `af_pages.status` **原值透传**；**`pending` = 该版本没有这一页的页行**（管线从不写 `pending` 页行，列默认值只是约束） |
+| `has_artifact` | bool | 该页 `pages/p<NNNN>.blocks.json` 在**生效作用域目录**内存在（磁盘事实，独立于页行取） |
+| `error` | str | 页行 `error` 原值（写入时已截断至 500 字符）；无页行时为 `""` |
+| `edit_count` | int | 该页在**本版本作用域**内的 `af_block_edits` 行数（块编辑存在性，ARCH-006 消费） |
+
+**两条判据（客户端只需实现这两条）**：
+
+- **需重解析** = `not has_artifact or status == "failed"`——一条规则覆盖「从未跑过」「跑失败」「产物
+  被外部删除」三种形态，客户端不必自己组合三态。
+- **`status="parsed"` 且 `has_artifact=false`** 属**数据不一致**：编排层的不变式是「有页行必有产物」
+  （继承来的页行也逐个校验产物在位才复制），故该组合只可能来自产物被外部删除。本端点**如实暴露**
+  该组合而不静默改判为 `pending`——静默改判会让磁盘事故在台账上消失。读该页仍然 404（`页产物缺失`）。
+
+**枚举域**：`total` 取 `af_books.page_count`；该列为 NULL 时回落书目录 `book.json` 的 `page_count`；
+两者都取不到 → 404（与产物目录缺失同一措辞）。
+
+**作用域**：`job_id` / `scope` / `has_artifact` 三项全部取自 `_read_scope` 返回的 `(产物目录, job_id)`
+（见「强制规则」的唯一入口条），不得自行拼 `book_dir`——否则会把 legacy 根视图与版本视图混读。
+**错误：** 404 书目不存在或产物缺失 / 404 生效版本产物缺失（**不回落根视图**）；`book_id` 非法路径
+段 422。
+
 ### GET /api/v1/books/{book_id}/pages/{page_no}
 
 单页完整数据（对照主数据源）：**生效版本**的结构化 blocks + 页级 markdown + 原页图 URL + 已合并的
@@ -244,6 +290,48 @@ NULL → 书目录根 = 根视图 legacy）。
 `progress` 只描述做到哪（`parsed`/`total`/`failed`/`error`），**不再兼任结局**；书目侧同一分列：
 `af_books.parse_status` ∈ `pending`/`parsing`，任务结局独立落 `last_parse_result`（`""` = 从未有任务）。
 
+### GET /api/v1/parse-jobs
+
+解析作业列表（只读；**契约先行**——PLAN-008 W1 于本文成文，实现待 W3，未实现前返回 404）。供 8903
+「任务中心抽屉」列举与过滤作业；`GET /parse-jobs/{job_id}` 只能按**已知 id** 查单个，无法枚举。
+
+查询参数（全部可选、可组合）：
+
+| 参数 | 类型 | 默认 | 语义 |
+| --- | --- | --- | --- |
+| `book_id` | 安全路径段 | 不过滤 | 只列该书的作业；**书不存在时返回 200 + 空列表**（列表过滤不是资源定位，不 404）；非法路径段 422 |
+| `status` | `JobStatus`，**可重复** | 不过滤 | 多值 **OR** 过滤（`?status=queued&status=running` = 只看活跃）；值不在六态内 → 422 |
+| `limit` | int，`1..200` | `50` | 本页行数上限；越界 422 |
+| `offset` | int，`≥0` | `0` | 分页偏移；越界 422 |
+
+响应 `ParseJobListOut` = `{jobs: ParseJobListItem[], total, limit, offset}`。`total` 是**过滤后的总行数**
+（不是本页行数），客户端据此判定还有没有下一页。
+
+**排序稳定**：`created_at DESC, job_id DESC`。第二键是必需的而非装饰——`MySQL DATETIME` 只到秒，
+同秒创建的多条作业仅按时间排序结果不可重复，翻页会漏行或重行（与
+`ParseJobRepository.list_for_book` 的定序理由同源）。
+
+`ParseJobListItem` = **`ParseJob` 全部字段原样**（`id`/`book_id`/`pages`/`engine`/`status`/`progress`/
+`failed_pages`/`error`）再加四个列表专用字段：
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `created_at` | `datetime \| null` | 排序键，**必须在响应里可见**——客户端看不到它就无法稳定翻页，也无法展示 |
+| `started_at` | `datetime \| null` | `null` = 仍在 `queued`（含单一占用闸门的等待期，见下条端点） |
+| `finished_at` | `datetime \| null` | `null` = 未进终态 |
+| `active` | bool | 该行是否为其所属书的**当前生效版本**（与 `af_books.active_job_id` 相等） |
+
+**三条不变式**：
+
+- **六态原值透传**：`status` 不做任何「看起来更好」的归并与改写（`interrupted` 就是 `interrupted`，
+  不并入 `failed`）。读取面一旦加工，就把语义分歧冻结给了前端（ADR 0004 不做静默兼容层）。
+- **不读产物**：作业行事实全在 `af_parse_jobs`，因此本端点**不经** `_read_scope`——那是 per-book 的
+  产物作用域解析，跨书列表没有单一作用域，硬套会造出第二套作用域语义。`active` 经 `af_books` 联结
+  取得，仍然只是数据库读、不摸磁盘，与「只读端点不依赖模型服务与凭据」一致。
+- **含已删书的审计行**：`DELETE /books/{book_id}` 保留 `af_parse_jobs` 历史行（见 ② 该节），全局列表
+  **不排除**它们，其 `active` 恒为 `false`。故不带 `book_id` 过滤时 `total` 可能大于现存书目的作业数
+  ——这是审计留痕的预期结果，不是脏数据。
+
 ### GET /api/v1/parse-jobs/{job_id}
 
 任务状态与进度（`ParseJob`：id/book_id/pages/engine/status/progress/**failed_pages**/error）。
@@ -263,6 +351,8 @@ NULL → 书目录根 = 根视图 legacy）。
 | book / page / job / 产物不存在 | 404（中文 detail，如「书目不存在：{id}」） |
 | **生效版本产物目录缺失** | 404 `生效版本产物缺失：{book_id} @ {job_id}`（指针所指版本目录被外部删除等；**不回落根视图**，ADR 0004 无自动兜底） |
 | 入参 schema 违规（安全路径段、引擎字面值、`file_path` 形态、**`pages` 页码越界**） | 422 |
+| **列表端点**查询参数违规（`status` 不在六态内、`limit` 非 `1..200`、`offset` 为负、`book_id` 非法路径段） | 422 |
+| `GET /parse-jobs?book_id=<不存在的书>` | **200 + 空 `jobs`**（列表过滤不判资源存在性；单本读取面仍是 404） |
 | 模型服务不可用（**提交期探活失败**，MinerU 未起等） | 503（提示经 8900 `/models/{slot}` 启停模型或检查 `QED_OCR_MODEL_URL`（5002））；**不创建任务行** |
 | 模型服务在任务受理后故障 | 202 已受理 → job `failed`（`error` 记原因），已解析页保留 |
 | 模型服务被其他解析占用至闸门超时 | 202 已受理 → job `failed`，`error` 写「模型服务被其他解析任务占用」（**不冒充**「模型服务不可用」）；不写页行、不激活版本 |
@@ -288,8 +378,10 @@ NULL → 书目录根 = 根视图 legacy）。
   （`tests/contract/test_api_v1_contract.py`）同步守护。
 - 只读端点（books/pages/manifest/image/chunks/versions/health）不依赖模型服务与凭据（独立性降级）；
   仅提交解析任务时按需初始化引擎适配器，并只做**提交期探活**（不可用 503，不落任务行）。
-- **读取面的版本作用域只有一个入口**（`api/main.py:_read_scope`）：新增只读端点必须经它取
+- **读取面的版本作用域只有一个入口**（`api/main.py:_read_scope`）：**读磁盘产物**的只读端点必须经它取
   `(产物目录, job_id)`，不得自行拼 `book_dir`——否则会绕过生效指针、把 legacy 与版本视图混读。
+  纯数据库读的列表端点（`GET /parse-jobs` 跨书枚举）不套此入口，但也**不得另造作用域判定**：
+  「哪一版生效」的事实源只有 `af_books.active_job_id` 一列，`active` 只能由它比出。
 - 错误响应不泄漏堆栈与凭据；模型服务不可达映射为可读中文错误信息。
 - 新增/变更端点：先更新本文件与契约测试，再实现（根仓库 REQ-002 文档治理）。
 
