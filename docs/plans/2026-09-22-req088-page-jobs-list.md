@@ -11,7 +11,7 @@
 > 本计划从 [PLAN-003](../history/plans/2026-09/2026-09-20-parse-live-bringup.md) 关闭时转移承载。
 > **编号沿革**：本行 2026-09-21 首登为 `REQ-086` → 2026-09-22 00:57 改号 `REQ-087`（根侧把 086 用给了
 > 「全本分块提交」）→ 同日再改号为 **`REQ-088`**：根仓库 2026-09-22 00:35 已用 `REQ-087` 登记
-> 「空白页合法化」（本仓库同号承接，见 [PLAN-007](2026-09-22-req086-whole-book-window.md)），
+> 「空白页合法化」（本仓库同号承接，见 [PLAN-007](../history/plans/2026-09/2026-09-22-req086-whole-book-window.md)），
 > 本仓库为该号的**后占者**，按「后占者让号」（判例同 `REQ-001`/`REQ-086`）让号。改号零外部代价：
 > 本行由本仓库自登、根侧从未引用该号。
 
@@ -189,6 +189,22 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
    legacy 根视图存量。据此，W4 的 `failed`+`error` 原值透传用例走 legacy 作用域直证，而不是伪造一个
    「已激活却失败」的版本——本端点只报告读取作用域里确实存在的行，不预测它怎么来的。
 
+### W5 文档与映射收口（2026-09-22）
+
+- `code-map.md`：`api/` 行补两条列表端点与「`GET /parse-jobs` 不走 `_read_scope`、也不另造作用域判定」
+  的口径，并登记 `_page_total()` 为页清单枚举域；`db/` 行补四个读取方法
+  （`list_all`/`list_states`/`count_by_page`/`active_job_index`）。
+- `design/parsing-management.md`：端点表两行（排序第二键、`total` 语义、200 空集、审计行、`pending`
+  定义与「一条判据」），错误语义补「列表端点查询参数 422」，Mermaid 加读取交互两行。
+- `guides/operations.md`：**改号措辞按事实改写**——原文「按既有 `job_id` 续跑的端点属 `REQ-087` 范围」
+  已失真（该号 2026-09-22 让给根侧「空白页合法化 + 跨版本续跑语义」，本方端点行为 `REQ-088`），现改写为
+  「续跑端点至今没有承载行」并接上两条新端点作为定位入口；故障排查表 `partial` 行补批量定位法。
+- 守护补强：`test_architecture_documents.py` 对两条列表端点**改为锚定节标题**
+  （`### GET /api/v1/parse-jobs\n` / `### GET /api/v1/books/{book_id}/pages\n`）——它们的路径是更具体
+  路径的前缀，只查子串会永远为真（原白名单里 `GET /api/v1/books` 同此问题，本轮不扩大范围）。
+- 提交边界：`guides/operations.md` 与 `trackers/todo.md` 同文件里有用户 PLAN-007 W7 在办改动，本轮
+  **只改不提交**，随其收口轮一并入库；本仓库不带他人的台账快照（W5 提交只含上列四处）。
+
 ## 工作项
 
 | # | 工作项 | 产物 | 门禁 | 状态 |
@@ -197,7 +213,7 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 | W2 | 仓储查询 + 红灯测试（原计划写「契约测试」，实际分层见登记） | `repositories.py` 三查询（`list_all`/`list_states`/`count_by_page`）+ `tests/unit/test_db.py` 先红后绿 | 单元 | Done（2026-09-22，13 条测试先红（三条方法 `AttributeError`）后绿；形状与对原工作项的两处偏差见「实施登记 W2」） |
 | W3 | `GET /parse-jobs` 端点（过滤/分页/排序稳定；响应字段与 `ParseJob` 一致） | `main.py` 路由 + 契约测试 | 契约 | Done（2026-09-22，`TestParseJobListEndpoint` 7 条绿 + 变异复验；`schemas.ParseJobListItem/ParseJobListOut`、`BookRepository.active_job_index`；`api.md` 三处措辞同步。详见「实施登记 W3」） |
 | W4 | `GET /books/{id}/pages` 端点（逐页状态清单 + `scope`/`job_id` 自证） | `main.py` 路由 + `_page_total()` + `schemas.PageStateOut/PageListOut` + 契约测试 | 契约 | Done（2026-09-22，`TestPageListEndpoint` 7 条先红（路由未注册 → 404）后绿；两条变异复验（悄悄改判 / `scope` 硬编）均转红。口径澄清两条见「实施登记 W4」） |
-| W5 | 文档与映射收口：`code-map.md`、`operations.md` 改号措辞、`parsing-management.md` 端点面 | 文档改动 | 架构/设计契约测试 | Pending |
+| W5 | 文档与映射收口：`code-map.md`、`operations.md` 改号措辞、`parsing-management.md` 端点面 | 文档改动 | 架构/设计契约测试 | Done（2026-09-22，四处收口 + 守护补强（节标题锚定），见「实施登记 W5」） |
 | W6 | 8903 联调（ARCH-005 对照与质量度量、ARCH-006 块编辑写入与合并回显）+ 跨项目回执 | 联调记录 + 回执正文（根侧自读登记） | 真机 | Pending |
 | W7 | 收口（六步，ADR 0006） | 本计划关闭与归档 | 全量门禁 | Pending |
 

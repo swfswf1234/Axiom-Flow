@@ -66,12 +66,16 @@ def test_api_document_declares_four_categories_and_contract_endpoints():
         "POST /api/v1/books/sync",
         "POST /api/v1/books/{book_id}/ingest",
         "POST /api/v1/parse-jobs",
+        "GET /api/v1/books/{book_id}/pages",
         "GET /api/v1/books/{book_id}/pages/{page_no}",
         "GET /api/v1/books/{book_id}/manifest",
         "GET /api/v1/parse-jobs/{job_id}",
         "PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit",
     ):
         assert endpoint in content, endpoint
+    # 逐条锚定节标题：列表类端点的路径是更具体路径的前缀，只查子串会永远为真
+    for section in ("### GET /api/v1/parse-jobs\n", "### GET /api/v1/books/{book_id}/pages\n"):
+        assert section in content, section
     assert "src/axiom_flow/schemas.py" in content
 
 

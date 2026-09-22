@@ -56,6 +56,8 @@ sequenceDiagram
     GW->>AX: 202 任务受理（af_parse_jobs）
     AX->>AX: 播种版本基线 + 引擎解析 + 归一化 + 分块 → versions/<job_id>/
     AX->>AX: 页行按 (book_id, job_id, page_no) 落 af_pages；校验通过后置 af_books.active_job_id
+    FE->>GW: 作业列表/页清单（GET /parse-jobs、GET /books/{id}/pages）
+    GW->>AX: af_parse_jobs + af_pages 聚合（只读，不触模型）
     FE->>GW: 对照（GET /books/{id}/pages/{no}）
     FE->>GW: 编辑（PUT /books/{id}/pages/{no}/blocks/{index}/edit）
     GW->>AX: upsert af_block_edits
@@ -91,6 +93,8 @@ sequenceDiagram
 | `PATCH /books/{id}`、`DELETE /books/{id}` | 修改（notes）/删除：删 `af_books` 与该书**所有版本**的 `af_pages`/`af_block_edits` 行，`?purge=true` 连整本产物目录（含 `versions/`）一并删除；`af_parse_jobs` 历史行一律保留为审计 |
 | `POST /books/{id}/ingest` | 渲染页图 + book.json（不调模型），回写 ingest_status/page_count/sha256。**重复 ingest 只替换根视图**（`book.json` + `pages/` 原子交换，`versions/` 完整保留），并置 `active_job_id=NULL`、`parse_status=pending`、`pages_done=0`，页行只清 `job_id='legacy'` 一批；历史版本状态与任务行保留，但旧版本不再对生效端点可见（源文件已变，需重新解析） |
 | `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页重解析，两者都产出一个**完整快照**版本；`pages` 越界在受理前 422，不探活不落任务行——DEFECT-006）。`status` 六态与判据见 [parsing-pipeline.md](parsing-pipeline.md) 条文 S1~S7；查询响应含 `failed_pages` |
+| `GET /parse-jobs` | 作业列表（只读，PLAN-008 / REQ-088）：`?book_id=&status=`（`status` **可重复**＝多值 OR）、`limit 1..200`/`offset`，信封 `{jobs, total, limit, offset}` 且 `total` 为**过滤后**总数；排序 `created_at DESC, job_id DESC`（秒级精度需第二键）。行 = `ParseJob` 原样 + `created_at/started_at/finished_at/active`。**不读磁盘、不经 `_read_scope`**；`?book_id=<不存在的书>` 是 200 空集；已删书的审计行照常列出且 `active=false` |
+| `GET /books/{id}/pages` | **逐页状态清单**（只读、不分页）：`{book_id, job_id, scope, total, pages[]}`，行 = `{page_no, status, has_artifact, error, edit_count}`；逐页连续覆盖 `1..total`，没有页行的页出行 `pending`。客户端判据一条：`not has_artifact or status == "failed"` ⇒ 需重解析（取代 1..page_count 逐页试错）。`parsed`+无产物**如实暴露不改判**（只可能来自外部删除）。PLAN-008 / REQ-088 |
 | `GET /books/{id}/versions` | 解析版本只读列举（`job_id/engine/status/page_count/parsed/source_sha256/created_at/active`）；不改生效指针 |
 | `GET /books/{id}/pages/{no}` | 单页 blocks+markdown+image_url+已合并 edits（**作用域 = 生效版本**；`active_job_id` 为空时读根视图 legacy） |
 | `PUT /books/{id}/pages/{no}/blocks/{index}/edit`、`GET .../edits` | 块编辑 upsert / 页内编辑列表（写入生效版本的 `job_id`） |
@@ -99,7 +103,8 @@ sequenceDiagram
 
 **错误语义**：400 参数非法（含块下标越界、引擎槽位未实现）；404 book/page/job 不存在**或生效版本
 目录缺失**（显式报错，不回落根视图）；422 入参 schema 违规（安全路径段、`file_path` 形态、引擎字面值、
-`pages` 页码越界）；503 模型服务不可用（仅提交期探活失败，且不创建任务行）。
+`pages` 页码越界、**列表端点查询参数**：`status` 非六态、`limit` 非 `1..200`、`offset` 为负）；
+503 模型服务不可用（仅提交期探活失败，且不创建任务行）。
 
 **引擎选择**：`POST /parse-jobs` 的 `engine` 可选，缺省回落 `AXIOM_OCR_ENGINE`；未实现/未知名称
 一律显式报错，**绝不回落到其他引擎**（见 [model-integration](model-integration.md)）。
