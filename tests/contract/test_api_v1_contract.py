@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pymupdf
@@ -558,6 +559,153 @@ class TestParseJobsEndpoints:
         assert "服务重启中断" in ghost["error"]
         assert book["parse_status"] == "pending"
         assert book["last_parse_result"] == "interrupted"
+
+
+class TestParseJobListEndpoint:
+    """`GET /api/v1/parse-jobs`（PLAN-008 W3）：六态原值、多值 OR 过滤、稳定倒序与过滤后总数。
+
+    契约条文见 `docs/architecture/api.md` ③ 类同名节；存在理由是 8903「任务中心抽屉」要能枚举
+    与过滤作业，而 `GET /parse-jobs/{id}` 只能按已知 id 查单个。
+    """
+
+    def _seed_job(
+        self,
+        session_factory,
+        job_id: str,
+        *,
+        book_id: str = "mathanalysis-b05",
+        status: str = "queued",
+        error: str = "",
+        failed_pages: list[int] | None = None,
+    ) -> None:
+        with session_factory() as session:
+            jobs = ParseJobRepository(session)
+            jobs.create(ParseJobRow(job_id=job_id, book_id=book_id, engine="mineru"))
+            if status != "queued":
+                jobs.mark_finished(job_id, status=status, error=error, failed_pages=failed_pages)
+            session.commit()
+
+    def test_lists_newest_first_with_parsejob_fields_and_timestamps(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            first = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            second = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+
+            response = client.get("/api/v1/parse-jobs")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert set(body) == {"jobs", "total", "limit", "offset"}
+        assert (body["total"], body["limit"], body["offset"]) == (2, 50, 0)
+
+        rows = body["jobs"]
+        assert [row["id"] for row in rows] == [second, first], "默认倒序：任务中心首屏要看到最新一次"
+        for row in rows:
+            assert {"id", "book_id", "pages", "engine", "status", "progress", "failed_pages", "error"} <= set(row)
+            assert {"created_at", "started_at", "finished_at", "active"} <= set(row)
+            assert row["status"] == "completed"
+            assert row["created_at"] is not None and row["started_at"] is not None
+        assert rows[0]["active"] is True, "生效版本必须可从列表判断，否则前端要再查一次书"
+        assert rows[1]["active"] is False
+
+    def test_status_filter_is_repeatable_or_and_values_pass_through_verbatim(self, tmp_path, monkeypatch):
+        """S1：六态原值透传（`interrupted` 不并入 `failed`）；多值 OR 让「只列活跃」一次请求即可。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        self._seed_job(session_factory, "done1", status="completed")
+        with test_client as client:
+            # queued 行只能在进入 lifespan 之后写入：启动期归一会把它改成 interrupted（ADR 0007）
+            self._seed_job(session_factory, "wait1", status="queued")
+            self._seed_job(session_factory, "half1", status="partial", failed_pages=[2])
+            self._seed_job(session_factory, "boot1", status="interrupted", error="服务重启中断，可重跑")
+
+            active = client.get("/api/v1/parse-jobs?status=queued&status=running")
+            finished = client.get("/api/v1/parse-jobs?status=interrupted")
+            two = client.get("/api/v1/parse-jobs?status=partial&status=interrupted")
+
+        assert {row["id"] for row in active.json()["jobs"]} == {"wait1"}
+        assert active.json()["total"] == 1
+        assert [row["id"] for row in finished.json()["jobs"]] == ["boot1"]
+        assert finished.json()["jobs"][0]["error"] == "服务重启中断，可重跑"
+        assert {row["id"] for row in two.json()["jobs"]} == {"half1", "boot1"}
+        assert two.json()["total"] == 2
+
+    def test_invalid_query_params_return_422(self, tmp_path, monkeypatch):
+        """枚举与区间在 API 层判掉（仓储面对未知 status 只给空集，不能把非法入参变成合法空结果）。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            responses = [
+                client.get("/api/v1/parse-jobs?status=not-a-status"),
+                client.get("/api/v1/parse-jobs?limit=0"),
+                client.get("/api/v1/parse-jobs?limit=201"),
+                client.get("/api/v1/parse-jobs?offset=-1"),
+                client.get("/api/v1/parse-jobs?book_id=..%2Fescape"),
+            ]
+
+        assert [r.status_code for r in responses] == [422, 422, 422, 422, 422]
+
+    def test_book_id_filter_and_missing_book_is_empty_not_404(self, tmp_path, monkeypatch):
+        """列表过滤不是资源定位：不存在的书给 200 + 空集，与单本读取面 404 分列。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        self._seed_job(session_factory, "own1")
+        self._seed_job(session_factory, "other1", book_id="other-book")
+        with test_client as client:
+            scoped = client.get("/api/v1/parse-jobs?book_id=mathanalysis-b05")
+            missing = client.get("/api/v1/parse-jobs?book_id=never-synced")
+
+        assert [row["id"] for row in scoped.json()["jobs"]] == ["own1"]
+        assert scoped.json()["total"] == 1
+        assert missing.status_code == 200
+        assert (missing.json()["jobs"], missing.json()["total"]) == ([], 0)
+
+    def test_pagination_slices_rows_but_total_stays_filtered_count(self, tmp_path, monkeypatch):
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        for index in range(3):
+            self._seed_job(session_factory, f"job{index}", status="completed")
+        with test_client as client:
+            page1 = client.get("/api/v1/parse-jobs?limit=2&offset=0").json()
+            page2 = client.get("/api/v1/parse-jobs?limit=2&offset=2").json()
+            beyond = client.get("/api/v1/parse-jobs?limit=2&offset=9").json()
+
+        assert [row["id"] for row in page1["jobs"]] == ["job2", "job1"]
+        assert [row["id"] for row in page2["jobs"]] == ["job0"]
+        assert (page1["total"], page2["total"], beyond["total"]) == (3, 3, 3)
+        assert beyond["jobs"] == [], "越界偏移给空行集而不是报错，客户端按 total 自行收敛"
+
+    def test_same_instant_orders_by_job_id_desc(self, tmp_path, monkeypatch):
+        """MySQL `DATETIME` 只到秒：排序键必须在响应里可复现，否则翻页漏行/重行。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        same = datetime(2026, 9, 22, 12, 0, tzinfo=UTC)
+        for job_id in ("aaa", "bbb", "ccc"):
+            self._seed_job(session_factory, job_id, status="completed")
+        with session_factory() as session:
+            for job_id in ("aaa", "bbb", "ccc"):
+                ParseJobRepository(session).get(job_id).created_at = same
+            session.commit()
+        with test_client as client:
+            ids = [row["id"] for row in client.get("/api/v1/parse-jobs?limit=2").json()["jobs"]]
+            next_page = [row["id"] for row in client.get("/api/v1/parse-jobs?limit=2&offset=2").json()["jobs"]]
+
+        assert (ids, next_page) == (["ccc", "bbb"], ["aaa"])
+
+    def test_deleted_book_audit_rows_stay_listed_and_inactive(self, tmp_path, monkeypatch):
+        """不读产物（不经 `_read_scope`）：书与版本目录已删，作业行仍以 200 列出且 `active=false`。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).json()["id"]
+            assert client.delete("/api/v1/books/mathanalysis-b05?purge=true").status_code == 200
+            assert not (tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05").exists()
+
+            body = client.get("/api/v1/parse-jobs").json()
+            single = client.get(f"/api/v1/parse-jobs/{job_id}")
+
+        assert [row["id"] for row in body["jobs"]] == [job_id]
+        assert body["total"] == 1, "不带 book_id 过滤时 total 可大于现存书目的作业数（审计留痕）"
+        assert body["jobs"][0]["active"] is False
+        assert single.status_code == 200, "历史作业仍可查，删书不抹掉任务事实"
 
 
 class TestParseVersions:

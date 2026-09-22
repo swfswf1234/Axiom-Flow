@@ -55,6 +55,8 @@ from axiom_flow.schemas import (
     PageData,
     ParseJob,
     ParseJobCreate,
+    ParseJobListItem,
+    ParseJobListOut,
     ParseStatus,
     ParseVersionOut,
     SyncResponse,
@@ -522,6 +524,50 @@ def create_app(
             status=job.status,
             progress=job.progress,
             failed_pages=list(job.failed_pages or []),
+        )
+
+    @app.get("/api/v1/parse-jobs", response_model=ParseJobListOut)
+    def list_parse_jobs(
+        session: SessionDep,
+        book_id: Annotated[str | None, Query(pattern=SAFE_SEGMENT_PATTERN)] = None,
+        status_filter: Annotated[list[JobStatus] | None, Query(alias="status")] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> ParseJobListOut:
+        """解析作业列表（只读）：过滤组合 + 稳定倒序 + 过滤后总数。
+
+        本端点**不经** `_read_scope` 也不摸磁盘：作业事实全在 `af_parse_jobs`，跨书列表没有单一
+        per-book 产物作用域，硬套会造出第二套作用域语义（`api.md` 强制规则的同一条）。
+        已删书的审计行不排除、其 `active` 恒为 `False`。
+        """
+        jobs, total = ParseJobRepository(session).list_all(
+            status=[job_status.value for job_status in status_filter] if status_filter else None,
+            book_id=book_id,
+            limit=limit,
+            offset=offset,
+        )
+        active_by_book = BookRepository(session).active_job_index()
+        return ParseJobListOut(
+            jobs=[
+                ParseJobListItem(
+                    id=job.job_id,
+                    book_id=job.book_id,
+                    pages=job.pages,
+                    engine=job.engine,
+                    status=job.status,
+                    progress=job.progress,
+                    failed_pages=list(job.failed_pages or []),
+                    error=job.error,
+                    created_at=job.created_at,
+                    started_at=job.started_at,
+                    finished_at=job.finished_at,
+                    active=active_by_book.get(job.book_id) == job.job_id,
+                )
+                for job in jobs
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
         )
 
     @app.get("/api/v1/parse-jobs/{job_id}", response_model=ParseJob)

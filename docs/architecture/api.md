@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现 + 任务状态六态与进度/结局分列（ADR 0007）已实现；8900 透传适配待 REQ-001；**页级状态清单与 jobs 列表两条只读端点＝契约先行**（PLAN-008 W1 本文成文，实现待 W2~W4，未实现前两者返回 404））
+实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现 + 任务状态六态与进度/结局分列（ADR 0007）已实现；8900 透传适配待 REQ-001；`GET /parse-jobs` 作业列表已实现（PLAN-008 W3）；`GET /books/{id}/pages` 页级状态清单＝契约先行（W1 本文成文，实现待 W4，未实现前返回 404））
 最后更新：2026-09-22
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
@@ -292,7 +292,7 @@ NULL → 书目录根 = 根视图 legacy）。
 
 ### GET /api/v1/parse-jobs
 
-解析作业列表（只读；**契约先行**——PLAN-008 W1 于本文成文，实现待 W3，未实现前返回 404）。供 8903
+解析作业列表（只读；PLAN-008 W1 于本文成文、W3 已实现）。供 8903
 「任务中心抽屉」列举与过滤作业；`GET /parse-jobs/{job_id}` 只能按**已知 id** 查单个，无法枚举。
 
 查询参数（全部可选、可组合）：
@@ -389,7 +389,9 @@ NULL → 书目录根 = 根视图 legacy）。
 
 - 契约测试 `tests/contract/test_api_v1_contract.py` 全绿（health/books/pages/image/manifest/
   parse-jobs 返回结构与 schemas 一致；`TestParseVersions` 守护版本化：两版本并存读生效版、
-  `image_url` 字面量不变、重 ingest 后历史版本可直读、生效目录缺失 404）。
+  `image_url` 字面量不变、重 ingest 后历史版本可直读、生效目录缺失 404；`TestParseJobListEndpoint`
+  守护作业列表：六态原值、可重复 `status` 多值 OR、`created_at DESC, job_id DESC` 可复现翻页、
+  `total` 为过滤后总数、不存在的书 200 空集、删书审计行仍列出且 `active=false`）。
 - 全量门禁 `pytest tests -q` + `ruff check src tests`。
 - 手动冒烟：`python scripts/axiom_flow_service.py start --wait` → `GET /api/v1/health` 200 →
   `GET /api/v1/books` 返回书目 → `status` → `stop` → `status stopped`。

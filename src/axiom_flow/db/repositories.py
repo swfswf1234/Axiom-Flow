@@ -96,6 +96,14 @@ class BookRepository:
     def get(self, book_id: str) -> AfBook | None:
         return self.session.get(AfBook, book_id)
 
+    def active_job_index(self) -> dict[str, str]:
+        """`book_id -> active_job_id` 全量索引（只含有生效指针的书）。
+
+        跨书作业列表用它判 `active`：逐行查会让一页 50 条变成 50 次 SQL。
+        """
+        stmt = select(AfBook.book_id, AfBook.active_job_id).where(AfBook.active_job_id.is_not(None))
+        return {book_id: job_id for book_id, job_id in self.session.execute(stmt) if job_id}
+
     def upsert_many(self, rows: Sequence[BookSyncRow]) -> SyncResult:
         """以 book_id 为幂等键 upsert；重复同步不产生重复行。
 

@@ -461,3 +461,25 @@ class ParseJob(BaseModel):
     progress: dict[str, Any] = Field(default_factory=dict, description="如 {'parsed': 2, 'total': 5}")
     failed_pages: list[int] = Field(default_factory=list, description="失败页码（ADR 0007 决定 2，不截断）")
     error: str = ""
+
+
+class ParseJobListItem(ParseJob):
+    """`GET /parse-jobs` 的行：`ParseJob` 字段原样继承 + 列表专用四字段。
+
+    排序键 `created_at` 必须出现在响应里——客户端看不到它就无法稳定翻页，列表默认倒序也无处展示；
+    `status` 仍由 `JobStatus` 六态原值透传，读取面不做归并（ADR 0004 无静默兼容层）。
+    """
+
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    active: bool = Field(default=False, description="是否为所属书目的当前生效版本（= af_books.active_job_id）")
+
+
+class ParseJobListOut(BaseModel):
+    """`GET /parse-jobs` 响应信封：`total` 是**过滤后的总行数**，客户端据此判定还有没有下一页。"""
+
+    jobs: list[ParseJobListItem] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0

@@ -140,13 +140,30 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 `TestPageRepository`/`TestEditRepository` 同文件同层，API 契约红灯随 W3/W4 的路由一起补；② 方法是
 三条不是两条（`edit_count` 需要独立聚合查询，不能在页清单里逐页发 SQL）。
 
+### W3 `GET /api/v1/parse-jobs`（2026-09-22）
+
+契约测试 7 条（形状与倒序/多值 OR/非法参数 422/书过滤/分页 `total`/同秒定序/删书审计行）。红→绿证据：
+把路由路径临时改名后 **7 条全红**；去掉 `job_id` 第二排序键后**契约与单元两层同时转红**（反向判据成立，
+变异均已回退）。实现落在三处：
+
+- `schemas.py`：`ParseJobListItem`（继承 `ParseJob` 全部字段 + `created_at/started_at/finished_at/active`）
+  与 `ParseJobListOut`。继承而非新造，兑现 W1 裁决 ③「追加字段但不改 `ParseJob` 任何字段」。
+- `BookRepository.active_job_index()`（`repositories.py:99`）：`active` 经 `af_books` 一次批量取（不逐行查、不摸磁盘），
+  与「本端点不经 `_read_scope`」同条不变式。
+- `main.py` 路由：`status` 用 `Query(alias="status")` 的 `list[JobStatus]`——FastAPI 自动把非法枚举判成
+  422，仓储面因此只需处理合法值；`limit` 由 `Query(ge=1, le=200)` 守住契约区间。参数名用
+  `status_filter` 是为避开模块级 `from fastapi import status`。
+
+`api.md` 同步三处措辞：端点节「契约先行…未实现前返回 404」→「W3 已实现」、头部实现状态、
+「验证」节守护清单补 `TestParseJobListEndpoint`。
+
 ## 工作项
 
 | # | 工作项 | 产物 | 门禁 | 状态 |
 | --- | --- | --- | --- | --- |
 | W1 | 契约成文：`api.md` 两节 + 响应字段表 + 错误语义（404 书不存在 / 404 版本目录缺失） | 文档改动（先于实现） | 契约 | Done（2026-09-22，`architecture/api.md` ③ 类两节 + 两张字段表 + 错误语义两行 + 强制规则作用域条改写；取舍与事实依据见「实施登记 W1」） |
 | W2 | 仓储查询 + 红灯测试（原计划写「契约测试」，实际分层见登记） | `repositories.py` 三查询（`list_all`/`list_states`/`count_by_page`）+ `tests/unit/test_db.py` 先红后绿 | 单元 | Done（2026-09-22，13 条测试先红（三条方法 `AttributeError`）后绿；形状与对原工作项的两处偏差见「实施登记 W2」） |
-| W3 | `GET /parse-jobs` 端点（过滤/分页/排序稳定；响应字段与 `ParseJob` 一致） | `main.py` 路由 + 契约测试 | 契约 | Pending |
+| W3 | `GET /parse-jobs` 端点（过滤/分页/排序稳定；响应字段与 `ParseJob` 一致） | `main.py` 路由 + 契约测试 | 契约 | Done（2026-09-22，`TestParseJobListEndpoint` 7 条绿 + 变异复验；`schemas.ParseJobListItem/ParseJobListOut`、`BookRepository.active_job_index`；`api.md` 三处措辞同步。详见「实施登记 W3」） |
 | W4 | `GET /books/{id}/pages` 端点（逐页状态清单 + `scope`/`job_id` 自证） | 同上 | 契约 | Pending |
 | W5 | 文档与映射收口：`code-map.md`、`operations.md` 改号措辞、`parsing-management.md` 端点面 | 文档改动 | 架构/设计契约测试 | Pending |
 | W6 | 8903 联调（ARCH-005 对照与质量度量、ARCH-006 块编辑写入与合并回显）+ 跨项目回执 | 联调记录 + 回执正文（根侧自读登记） | 真机 | Pending |
