@@ -67,8 +67,9 @@
   运行时事实源不在壳内，而以晋升后的 [api.md 磁盘作用域段](../architecture/api.md)（识别只看产物标记）与
   [operations.md runbook 第 2 步](../guides/operations.md)（核对 `targets` 层数形状）为准；
   关闭证据见 [completed.md](../trackers/completed.md) PLAN-011 / ARCH-026 行。
-  **归档判定本为 `Delete`，因壳与修复均未提交（用户「暂不推送」且本轮未要求 commit）⇒「Git 锚点有效」
-  不成立，改判 `Retain`；后续提交完成后可在下一轮按 `Delete` 重判并删壳。**
+  **归档判定本为 `Delete`，因壳与修复均未提交 ⇒「Git 锚点有效」不成立而改判 `Retain`；
+  2026-09-24 清理轮结案**：壳已随 `fb7eb5a` 入库，但本行留档属**已执行的 D 类数据操作**
+  （业务侧全项目真删 + 书目回灌）⇒ `Retain` 为终态判定，不再重判。**
 - PLAN-007 全本解析按页窗口分块提交与空白页合法化（Axiom-Flow）已完成（2026-09-22，S1~S5 逐条判定后
   关闭；同日用户裁决「环境侧与根侧复测归根仓库图像模型维护线」⇒ 原条文里的根侧确认移出本计划），
   计划按 **`Retain`** 归档至
@@ -88,8 +89,9 @@
   [parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)、
   [model-integration.md](../design/model-integration.md) 与 [design/index.md](../design/index.md) 为准；
   关闭证据见 [completed.md](../trackers/completed.md) PLAN-012 行，长期行 ARCH-010 保持 `In Progress`。
-  **归档判定本为 `Delete`，因壳与 `docs/design/` 改动均未提交（用户「暂不推送」且本轮未要求 commit）
-  ⇒「Git 锚点有效」不成立，改判 `Retain`；后续提交完成后可在下一轮按 `Delete` 重判并删壳。**
+  **归档判定本为 `Delete`，因壳与 `docs/design/` 改动均未提交 ⇒ 改判 `Retain`；
+  2026-09-24 清理轮结案**：壳已随 `23664c2` 入库，而「现有章节 → 新骨架」逐节映射与三条硬规则的
+  立法理由只在壳内、`design/` 不留推导过程 ⇒ `Retain` 为终态判定，不再重判。**
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-23-design-narrative-framework.md` 处须改指上述归档位置
   （本批已同步 `docs/design/` 三篇「叙述框架」行与 `docs/trackers/project-status.md`）。
 - PLAN-014 V0.1 固定文档形式正规化（Axiom-Flow）已完成（2026-09-23，W0~W8 全绿后关闭；执行
@@ -100,9 +102,9 @@
   运行时事实源不在壳内，而以正规化后的 [architecture 四篇](../architecture/index.md)、
   [design 三篇](../design/index.md) 与守护 `tests/contract/test_fixed_document_form.py` 为准；
   关闭证据见 [completed.md](../trackers/completed.md) PLAN-014 行，长期行 ARCH-010 保持 `In Progress`。
-  **归档判定 `Retain`（立项时即为 Retain）**：S1~S7 判定与 25 例变异复验属不可再生证据，且壳与
-  `docs/architecture/` 改动均未提交（用户「暂不推送」且本轮未要求 commit）⇒ Delete 所需「Git 锚点有效」
-  本就不成立；提交完成后可在下一轮按 `Delete` 重判并删壳。
+  **归档判定 `Retain`（立项时即为 Retain）**：S1~S7 判定与 25 例变异复验属不可再生证据；
+  2026-09-24 清理轮结案**：壳已随 `6bf2ff9` 入库 ⇒ 立项时「锚点不成立」的附带理由已消失，
+  但 Retain 判定本身不变（守护复验记录不可再生）。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-23-arch010-v01-architecture-form-normalization.md` 处须改指
   上述归档位置（本批已同步 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 的「取代」节链接）。
 - PLAN-008 页级失败清单与 jobs 列表端点（Axiom-Flow，REQ-088 承载计划）已完成（2026-09-24，W1~W7 判据

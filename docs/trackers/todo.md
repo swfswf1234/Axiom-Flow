@@ -5,44 +5,20 @@
 
 本表是全部未关闭工作的统一导航，按「轮次 → 阶段」分节。本表只回答「做什么、为了什么目的、
 现在到哪/卡在哪」；日期化进度与证据一律写入承载计划（[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)）。
-已关闭任务见[关闭台账](completed.md)，实时现状见[项目状态快照](project-status.md)。v1 台账已归档
-（`docs/history/v1-20260814/trackers/todo.md`）。
-
-## v0.1 主线：解析管理闭环（**已收口 2026-09-24，本节无开放行**）
-
-v0.1 的全部任务行均已进入终态，证据与逐条判定唯一安家于 [completed.md](completed.md)（实时现状见
-[项目状态快照](project-status.md)）。收口批＝**PLAN-013**（A 类，W0~W6）关掉最后四行：
-ARCH-005 `Achieved`、ARCH-006 `Partial`（按用户裁决「以清除前那次 PASS 为准」改判关闭）、PLAN-008
-与主线聚合行 ARCH-001。链路事实：书目同步（af_books）→ ingest（页图 + 产物落 `QED_DATA_ROOT/parsed/`）
-→ 解析（引擎适配，逐页/全本，ADR 0007 六态语义与质量信号）→ 对照渲染（只读端点）→ 块级人工校验修改；
-设计见 [parsing-management](../design/parsing-management.md)、[parsing-pipeline](../design/parsing-pipeline.md)、
-[model-integration](../design/model-integration.md)。
-
-**版本声明**：v0.1 **开发完成**（交付/未交付边界见 [project-status.md](project-status.md)「当前版本」段
-与 [roadmap.md](roadmap.md)）。唯一移交项＝重建后代际的块编辑真机写入证据，由根仓库在下一联调窗口自证。
-
-**仍然生效的三条运维事实**（原「数据面运维」「文档形式正规化」「跨项目请求」三节压缩至此，均无开放行）：
-
-1. **产物代际**：2026-09-23 的 `POST /api/v1/admin/purge` 全项目清除已把三本生效版本产物与 2 条人工
-   校验行删净，当晚仅重建 b05（全本 317/317 激活）与 LA-b01（3/486）⇒ **任何新联调或验收必须先重新
-   ingest + 解析**，下一重建窗口须用户另批 D 类（可与 ARCH-011 批量合并）。
-2. **环境侧交接**：WSL 容量、发行版空闲回收与 `mineru-api` 容器归 QED-Engine 图像模型维护线（用户裁决
-   2026-09-22），鉴别判据与处置见 [operations.md](../guides/operations.md)，本仓库不再投入。
-3. **文档面**：形式正规化两轮（PLAN-012 design、PLAN-014 architecture）均已关闭且七篇 `确认状态` 转
-   「已确认」；剩余长尾（`src`/`scripts` 文件头旧条文编号、`scripts/tmp/`、版本号双源）挂在长期行
-   ARCH-010。新入站跨项目请求按 [跨项目协作流程](../standards/cross-project-collaboration.md) 登记。
+已关闭任务见[关闭台账](completed.md)，实时现状见[项目状态快照](project-status.md)；**已收口版本
+不在本表设节**，终态判据只在关闭台账安家。v1 台账已归档（`docs/history/v1-20260814/trackers/todo.md`）。
 
 ## v1.0 主线：解析与知识库优化轮（对齐根仓库 ARCH-025，2026-09-22 用户裁决立项登记）
 
 根仓库 ARCH-025 轮（REQ-089 第一批 DeepTutor 对照调研）产出的优化项下沉本仓库承载，
-作为本仓库 1.0 版本任务登记。**本轮只立项登记，不排实施**：实施前置 = v0.1 已收口（ARCH-005/006、
-PLAN-008 与 ARCH-001 于 2026-09-24 关闭）⇒ 只剩产物重建（D 类窗口）与你的排期裁决；条目清单与判据见
+作为本仓库 1.0 版本任务登记。**本轮只立项登记，不排实施**：实施前置 = 产物重建（D 类窗口）+
+你的排期裁决；条目清单与判据见
 [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)。
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
 | ARCH-021 | 主线 | 中 | Open | V1.0 解析与知识库优化轮（聚合行）：解析产物易消费优化 + 知识库面（RAG 切片与检索）向本仓库 1.0 版本收敛 | PLAN-009 登记条目全部关闭且 V1.0 端到端验收通过 | 子行：ARCH-022/023、PLAN-009。登记来源＝根仓库 ARCH-025 滚动壳「REQ-089 第一批调研承接」节；本轮只登记不排期（用户裁决 2026-09-22） |
-| ARCH-022 | 支线 | 中 | Open | 解析产物大模型易消费优化（P1 重跑判定签名、P2 manifest-last 就绪、P3 blocks 语义分诊 ledger） | P1~P3 实施带契约测试且全本复测通过 | 承载 ⇒ [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)；前置＝产物重建（D 类窗口）+ 用户排期裁决（v0.1 已收口） |
+| ARCH-022 | 支线 | 中 | Open | 解析产物大模型易消费优化（P1 重跑判定签名、P2 manifest-last 就绪、P3 blocks 语义分诊 ledger） | P1~P3 实施带契约测试且全本复测通过 | 承载 ⇒ [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)；前置＝产物重建（D 类窗口）+ 用户排期裁决 |
 | ARCH-023 | 支线 | 中 | Open | 知识库面（R1 索引版本行增量、R2 块级知识单元 self_ref、R3 向量+BM25+RRF+rerank 检索配方、R4 数学感知切分；检索端点入 8902 契约） | R1~R4 实施带契约测试且根侧探索验证界面验收 | 承载 ⇒ [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)；知识图谱暂不做（roadmap 预留） |
 | PLAN-009 | 主线 | 中 | Accepted | [V1.0 解析与知识库优化轮（v1-parsing-knowledge-optimization）](../plans/2026-09-22-v1-parsing-knowledge-optimization.md) | 登记条目全部关闭且 V1.0 形态交付 | 2026-09-22 登记（用户裁决下沉本仓库为 1.0 任务）；条目台账与目标形态见壳 |
 

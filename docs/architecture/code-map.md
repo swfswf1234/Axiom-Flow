@@ -65,7 +65,8 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | --- | --- | --- |
 | `scripts/axiom_flow_service.py` | 8902 服务唯一启停脚本 | [api.md](api.md)「服务生命周期脚本」 |
 | `scripts/`（其余） | 数据与运维辅助脚本（重解析、备份、探针驱动） | [operations.md](../guides/operations.md) |
-| `scripts/tmp/` | 临时/试验 scratch，不入库、不作为事实源 | 无（治理规范：不入引用） |
+| `scripts/tmp/` | 真机窗口驱动与只读取证脚本（**已入库**，被运维手册按路径引用）
+ | [operations.md](../guides/operations.md) runbook |
 | `alembic.ini` | Alembic CLI 入口（URL 解析见 `migrations/env.py`） | [database-design.md](database-design.md)「迁移序列」 |
 | `data/` | 仓库内兜底数据根（无 `QED_DATA_ROOT` 时；ignore、可再生） | [local-dev.md](../standards/local-dev.md) |
 | `evaluation/` | 评估专区（样本与报告，与主链路隔离） | [testing.md](../standards/testing.md) |
