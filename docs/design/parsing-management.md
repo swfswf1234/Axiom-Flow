@@ -1,7 +1,7 @@
 # 解析管理闭环设计（parsing-management）
 
 设计状态：Accepted
-确认状态：暂定
+确认状态：已确认
 实现状态：Verified（af_* 四表 + 8902 管理与对照端点已实现并真机取证）
 最后更新：2026-09-23
 关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`（含 `api/admin.py` 管理面）、`src/axiom_flow/orchestrator/`
@@ -45,7 +45,7 @@
 | 部署与运维 | 单实例前提的归属 | 操作口径：[operations.md](../guides/operations.md) |
 
 **配置语境**（不是本篇契约，只登记边界）：af_* 落共享 MySQL `qed` 库（`qed_test` 为本仓库自有测试库）；
-本服务读自身 `.env`，由 QED-Engine 启动时经向上走查跟随根 `.env`，两边允许不一致（用户裁决 2026-09-17）；
+本服务读自身 `.env`，由 QED-Engine 启动时经向上走查跟随根 `.env`，两边允许不一致（明确裁决，非默认行为）；
 `af_books.file_path` 是数据根相对路径（同源 `qt_books.file_path`），产物落点见
 [parsing-pipeline.md](parsing-pipeline.md)。
 
@@ -77,130 +77,58 @@ sequenceDiagram
     GW->>AX: chunks.json（可带参数重算）
 ```
 
-### 已确定守则
+### 确定规范
 
-> **怎么读**：加粗一行是该条守则的**结论**（编号 `PM-n` 只在本篇内解析），其下分列「**判据**」＝可检验的
-> 事实，「**为什么**」＝立法理由与实证来源，「**例外**／**后果**／**边界**」＝该条守则的适用限制；缺某项
-> 即无该项；「**归属**／**反向约束**」等按字面理解。
-> 表结构与列语义、端点参数与响应形状**不在本篇复制**（事实源见文首指针），实现落点与守护测试统一登记在
-> 篇末「条文表」。
+> 每条守则一行：**结论 ＋ 判据**在左，**理由／例外／边界**居中，**实现落点 → 守护测试**在右（原「条文表」
+> 并入本段，编号 `PM-n` 只在本篇内解析）。缺某项即无该项，以「—」占位。表结构与列语义、端点参数与响应形状
+> 不在本篇复制（事实源见文首指针）。
 
 #### 数据来源与独立性
 
-**PM-1 af_* 是私有表族，只读快照自上游**
-
-- **判据**：af_* 是 Axiom-Flow 私有表族，只从 `qt_books` 同步「已验证」书行的只读快照；8901 的任何故障或
-  结构变更都不进入本篇读取路径。
-- **为什么**：课程归属字段冗余进 `af_books` 正是为此——上游改表不该传导到解析管理面。
-
-**PM-2 同步幂等，且不回写上游变更**
-
-- **判据**：以 `book_id`（同源 `qt_books.book_id`）为幂等键，重复同步只 upsert 不产生重复行。
-- **例外**：qt_books 侧删除或改名**不回写**已同步行（快照语义，重新同步才会带回）。
+| 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
+| --- | --- | --- | --- |
+| PM-1 | **af_* 是私有表族**：只从 `qt_books` 同步「已验证」书行的只读快照；8901 的任何故障或结构变更都不进入本篇读取路径 | 课程归属字段冗余进 `af_books` 正是为此——上游改表不传导到解析管理面 | `db/repositories.py:BookRepository.upsert_many` → `tests/unit/test_db.py` |
+| PM-2 | **同步幂等**：以 `book_id`（同源 `qt_books.book_id`）为幂等键，重复同步只 upsert 不产生重复行 | 例外：qt_books 侧删除或改名**不回写**已同步行（快照语义，重新同步才会带回） | `db/repositories.py:BookRepository.upsert_many` → `tests/unit/test_db.py`（重复同步不产生重复行） |
 
 #### 幂等键、进度与覆盖层
 
-**PM-3 编辑幂等键含解析版本**
-
-- **判据**：`af_block_edits` 以 `(book_id, job_id, page_no, block_index)` 为唯一键 upsert，同版本同版面块
-  重复提交＝覆盖更新。
-- **边界**：`edit_id` 只是幂等标识，仓储一律按唯一键读写，故迁移前的存量行（旧摘要不含 `job_id`）升级后
-  仍可达。
-
-**PM-4 进度由本篇自持，且只描述生效版本**
-
-- **判据**：`ingest_status`/`parse_status`/`pages_done` 由本篇维护，不依赖 qt_books 之外的上游字段；且
-  `pages_done` 与 `active_job_id` 一致地描述**生效版本**，不是全书历史累计。
-
-**PM-5 人工编辑是覆盖层，不改产物文件**
-
-- **判据**：解析产物文件是模型产物事实源，人工编辑只入 `af_block_edits`、**不改文件**；读取端在响应里按
-  生效版本合并编辑。
-- **后果**：「产物没变、校验结论变了」两件事可分别追溯。
+| 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
+| --- | --- | --- | --- |
+| PM-3 | **编辑幂等键含解析版本**：`af_block_edits` 以 `(book_id, job_id, page_no, block_index)` 为唯一键 upsert，同版本同版面块重复提交＝覆盖更新 | 边界：`edit_id` 只是幂等标识，仓储一律按唯一键读写，故迁移前的存量行（旧摘要不含 `job_id`）升级后仍可达 | `db/repositories.py:BlockEditRepository.upsert`、`edit_id_for()` → `tests/unit/test_db.py`（edit upsert 覆盖） |
+| PM-4 | **进度由本篇自持，且只描述生效版本**：`ingest_status`/`parse_status`/`pages_done` 由本篇维护，不依赖 qt_books 之外的上游字段；`pages_done` 与 `active_job_id` 一致地描述**生效版本**，不是全书历史累计 | — | `db/repositories.py:BookRepository.update_parse` → `tests/unit/test_db.py` |
+| PM-5 | **人工编辑是覆盖层，不改产物文件**：解析产物文件是模型产物事实源，人工编辑只入 `af_block_edits`、**不改文件**；读取端在响应里按生效版本合并编辑 | 后果：「产物没变、校验结论变了」两件事可分别追溯 | `api/main.py` 单页端点合并 edits → `tests/contract/test_api_v1_contract.py` |
 
 #### 生效指针与引擎边界
 
-**PM-6 「哪一版生效」只有一列**
-
-- **判据**：唯一事实源是 `af_books.active_job_id`（`NULL` = 根视图 `legacy`），`af_parse_jobs` **不设布尔
-  生效列**；改写只经 `BookRepository.set_active_job()` 的单列 UPDATE。
-- **为什么**：同一事实两处存必漂移。
-- **归属**：产物目录布局与齐备判据见 [parsing-pipeline.md](parsing-pipeline.md)。
-
-**PM-7 闭环对模型无感知**
-
-- **判据**：闭环只传引擎名称，不感知模型、参数与服务地址（见
-  [model-integration.md](model-integration.md)）；换模型不影响任何状态列的语义。
+| 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
+| --- | --- | --- | --- |
+| PM-6 | **「哪一版生效」只有一列**：唯一事实源是 `af_books.active_job_id`（`NULL` = 根视图 `legacy`），`af_parse_jobs` **不设布尔生效列**；改写只经 `BookRepository.set_active_job()` 的单列 UPDATE | 为什么：同一事实两处存必漂移。产物目录布局与齐备判据见 [parsing-pipeline.md](parsing-pipeline.md) | `db/repositories.py:BookRepository.set_active_job` → `tests/unit/test_orchestrator.py` |
+| PM-7 | **闭环对模型无感知**：闭环只传引擎名称，不感知模型、参数与服务地址；换模型不影响任何状态列的语义 | 协议事实源见 [model-integration.md](model-integration.md) | `orchestrator/pipeline.py:run_parse_job` → `tests/unit/test_orchestrator.py` |
 
 #### 任务与书目状态语义
 
-**PM-8 任务状态六态，原值透传**
-
-- **判据**：`queued`/`running` 为活动态；终态 `completed`（目标页齐备）、`partial`（≥1 页 `parsed` 但未
-  齐备）、`failed`（0 页产出或引擎整体异常）、`interrupted`（上次进程遗留）。
-- **边界**：六态**原值透传给前端**，不做「看起来更好」的归并。
-- **为什么**：读取面一旦加工，就把语义分歧冻结给了前端。
-
-**PM-9 失败页结构化且不截断**
-
-- **判据**：`af_parse_jobs.failed_pages` 存页码数组——「哪些页失败」必须是可机读的事实。
-- **边界**：`error`（≤500）与 `progress.error`（≤200）只是给人看的摘要，摘要截断不丢页码。
-
-**PM-10 书目进度与结局分列**
-
-- **判据**：`parse_status` ∈ `pending`/`parsing` 只表进度；`last_parse_result` ∈
-  `completed`/`partial`/`failed`/`interrupted`（`""` = 从未有任务）**只在终态写入**。
-- **为什么**：运行中的进度刷新不得覆盖结局——DEFECT-007 的根因就是旧 `parse_status` 一列两用。
-
-**PM-11 `completed` 与版本激活同一判据**
-
-- **判据**：齐备判定一次产出「任务终态」与「指针动作」，因此「`completed` 但未激活」在**结构上不可能**，
-  不是靠文档约定。
-- **例外**：`partial`/`failed`/中断一律不激活，产物保留在 `versions/` 供排查（自然回滚 = 指针从未动过）。
+| 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
+| --- | --- | --- | --- |
+| PM-8 | **任务状态六态，原值透传**：`queued`/`running` 为活动态；终态 `completed`（目标页齐备）、`partial`（≥1 页 `parsed` 但未齐备）、`failed`（0 页产出或引擎整体异常）、`interrupted`（上次进程遗留） | 边界：六态**原值透传给前端**，不做「看起来更好」的归并——读取面一旦加工，就把语义分歧冻结给了前端 | `schemas.py:JobStatus`、`api/main.py` 响应 → `tests/contract/test_api_v1_contract.py` |
+| PM-9 | **失败页结构化且不截断**：`af_parse_jobs.failed_pages` 存页码数组——「哪些页失败」必须是可机读的事实 | 边界：`error`（≤500）与 `progress.error`（≤200）只是给人看的摘要，摘要截断不丢页码 | `db/repositories.py:ParseJobRepository.mark_finished` → `tests/unit/test_db.py` |
+| PM-10 | **书目进度与结局分列**：`parse_status` ∈ `pending`/`parsing` 只表进度；`last_parse_result` ∈ `completed`/`partial`/`failed`/`interrupted`（`""` = 从未有任务）**只在终态写入** | 为什么：运行中的进度刷新不得覆盖结局——根因是旧 `parse_status` 一列两用（该缺陷已修，判据由本条固定） | `db/repositories.py:BookRepository.update_parse`、`mark_parse_idle` → `tests/unit/test_db.py` |
+| PM-11 | **`completed` 与版本激活同一判据**：齐备判定一次产出「任务终态」与「指针动作」，故「`completed` 但未激活」在**结构上不可能**，不是靠文档约定 | 例外：`partial`/`failed`/中断一律不激活，产物保留在 `versions/` 供排查（自然回滚 = 指针从未动过） | `orchestrator/pipeline.py:_version_is_complete` → `tests/unit/test_orchestrator.py` |
 
 #### 中断、续跑与进度写入
 
-**PM-12 `interrupted` 的唯一写入者是启动期归一**
-
-- **判据**：`JobRunner.reconcile_on_startup()` 在 FastAPI `lifespan` 内、**受理首个请求之前**把遗留
-  `queued`/`running` 行改写为 `interrupted`，书目进度归 `pending`；结局仅在该任务是这本书的**最新**任务时
-  置 `interrupted`（更早的中断行不得覆盖后来的真实结局）。
-- **反向约束**：管线自身不产出 `interrupted`，迁移与运维脚本也不改写历史任务的 `status`（回填旧行为新
-  三态＝伪造历史）。
-
-**PM-13 单实例部署前提**
-
-- **判据**：PM-12 成立的前提是「写活动态的只有这个进程」。
-- **后果**：多实例会让存活实例的任务被同伴误判为中断——本契约显式承担该部署约束，代价与运维口径见
-  [operations.md](../guides/operations.md)。
-
-**PM-14 `interrupted` 的续跑 = 同 `job_id` 重放**
-
-- **判据**：不新建版本，已 `parsed` 且产物在位的页跳过引擎调用（产物侧判据见
-  [parsing-pipeline.md](parsing-pipeline.md)）；重放方式因此是「再提交一次同 id」而不是「从头再来」。
-
-**PM-15 进度写入节流，但失败即时可见**
-
-- **判据**：`progress` 在「距上次写入 ≥1 秒」或「每处理满 10 页」时覆写一次，终态必写一次，单页失败节点
-  强制写入（使 `progress.error` 实时可见）。
-- **边界**：全本任务按**解析窗口**推进，因此运行中读到非零中间值是常态；`persist_per_page=False` 仅供性能
-  排查退回调用方统一提交，不是静默兜底路径。
+| 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
+| --- | --- | --- | --- |
+| PM-12 | **`interrupted` 的唯一写入者是启动期归一**：`JobRunner.reconcile_on_startup()` 在 FastAPI `lifespan` 内、**受理首个请求之前**把遗留 `queued`/`running` 行改写为 `interrupted`，书目进度归 `pending`；结局仅在该任务是这本书的**最新**任务时置 `interrupted` | 反向约束：管线自身不产出 `interrupted`，迁移与运维脚本也不改写历史任务的 `status`（回填旧行为新三态＝伪造历史） | `orchestrator/jobs.py:JobRunner.reconcile_on_startup` → `tests/unit/test_orchestrator.py` |
+| PM-13 | **单实例部署前提**：PM-12 成立的前提是「写活动态的只有这个进程」 | 后果：多实例会让存活实例的任务被同伴误判为中断——本契约显式承担该部署约束，代价与运维口径见 [operations.md](../guides/operations.md) | 部署边界（无独立代码落点） → `docs/guides/operations.md` 口径 |
+| PM-14 | **`interrupted` 的续跑 = 同 `job_id` 重放**：不新建版本，已 `parsed` 且产物在位的页跳过引擎调用；重放方式因此是「再提交一次同 id」而不是「从头再来」 | 产物侧判据见 [parsing-pipeline.md](parsing-pipeline.md) | `orchestrator/pipeline.py:_resumed_pages` → `tests/unit/test_orchestrator.py` |
+| PM-15 | **进度写入节流，但失败即时可见**：`progress` 在「距上次写入 ≥1 秒」或「每处理满 10 页」时覆写一次，终态必写一次，单页失败节点强制写入（使 `progress.error` 实时可见） | 边界：全本任务按**解析窗口**推进，运行中读到非零中间值是常态；`persist_per_page=False` 仅供性能排查退回调用方统一提交，不是静默兜底路径 | `orchestrator/pipeline.py:_flush_progress` → `tests/unit/test_orchestrator.py` |
 
 #### 书目生命周期动作
 
-**PM-16 重复 ingest 只作废根视图**
-
-- **判据**：`POST /books/{id}/ingest` 成功后把 `active_job_id` 置 `NULL`、`parse_status` 归 `pending`、
-  `pages_done` 归零，并只清 `job_id='legacy'` 的页行；历史版本作用域的页行、任务行与编辑行全部保留。
-- **为什么**：源文件已变，旧版本不再对生效端点可见，但不会被伪造或删除。
-- **例外**：`last_parse_result` **不回置**——ingest 不是任务。
-
-**PM-17 删除保审计，一键清除是唯一例外**
-
-- **判据**：`DELETE /books/{id}` 删书目行与该书**所有版本**的页行/编辑行（`?purge=true` 连产物目录一并
-  删），但 `af_parse_jobs` 历史行保留为审计线索。
-- **例外**：唯一能删任务行的路径是 `POST /api/v1/admin/purge`（见下「管理面」），它存在的目的正是回到干净
-  状态。
+| 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
+| --- | --- | --- | --- |
+| PM-16 | **重复 ingest 只作废根视图**：`POST /books/{id}/ingest` 成功后把 `active_job_id` 置 `NULL`、`parse_status` 归 `pending`、`pages_done` 归零，并只清 `job_id='legacy'` 的页行；历史版本作用域的页行、任务行与编辑行全部保留 | 为什么：源文件已变，旧版本不再对生效端点可见，但不会被伪造或删除。例外：`last_parse_result` **不回置**——ingest 不是任务 | `db/repositories.py:PageRepository.reset_legacy`、`api/main.py` ingest 路由 → `tests/contract/test_api_v1_contract.py` |
+| PM-17 | **删除保审计，一键清除是唯一例外**：`DELETE /books/{id}` 删书目行与该书**所有版本**的页行/编辑行（`?purge=true` 连产物目录一并删），但 `af_parse_jobs` 历史行保留为审计线索 | 例外：唯一能删任务行的路径是 `POST /api/v1/admin/purge`（见下「管理面」），它存在的目的正是回到干净状态 | `api/admin.py`、`db/repositories.py:ParseJobRepository.delete_for_book` → `tests/contract/test_api_v1_contract.py` |
 
 ### 端点语义（形状一律见 api.md）
 
@@ -222,28 +150,6 @@ sequenceDiagram
 - **管理面**（`POST /admin/purge`）：**非公开**——默认不挂载、需管理 token 与逐字确认、`dry_run` 缺省，
   且只执行 DML（无 DDL、无 `DROP DATABASE`）。六条不变式与错误语义的事实源在
   [api.md「非公开管理面」](../architecture/api.md)；8900 与 8903 不得透传。
-
-### 条文表
-
-| 条文 | 实现落点 | 守护测试 |
-| --- | --- | --- |
-| PM-1 | `db/repositories.py:BookRepository.upsert_many` | `tests/unit/test_db.py` |
-| PM-2 | `db/repositories.py:BookRepository.upsert_many` | `tests/unit/test_db.py`（重复同步不产生重复行） |
-| PM-3 | `db/repositories.py:BlockEditRepository.upsert`、`edit_id_for()` | `tests/unit/test_db.py`（edit upsert 覆盖） |
-| PM-4 | `db/repositories.py:BookRepository.update_parse` | `tests/unit/test_db.py` |
-| PM-5 | `api/main.py` 单页端点合并 edits | `tests/contract/test_api_v1_contract.py` |
-| PM-6 | `db/repositories.py:BookRepository.set_active_job` | `tests/unit/test_orchestrator.py` |
-| PM-7 | `orchestrator/pipeline.py:run_parse_job` | `tests/unit/test_orchestrator.py` |
-| PM-8 | `schemas.py:JobStatus`、`api/main.py` 响应 | `tests/contract/test_api_v1_contract.py` |
-| PM-9 | `db/repositories.py:ParseJobRepository.mark_finished` | `tests/unit/test_db.py` |
-| PM-10 | `db/repositories.py:BookRepository.update_parse`、`mark_parse_idle` | `tests/unit/test_db.py` |
-| PM-11 | `orchestrator/pipeline.py:_version_is_complete` | `tests/unit/test_orchestrator.py` |
-| PM-12 | `orchestrator/jobs.py:JobRunner.reconcile_on_startup` | `tests/unit/test_orchestrator.py` |
-| PM-13 | 部署边界（无独立代码落点） | `docs/guides/operations.md` 口径 |
-| PM-14 | `orchestrator/pipeline.py:_resumed_pages` | `tests/unit/test_orchestrator.py` |
-| PM-15 | `orchestrator/pipeline.py:_flush_progress` | `tests/unit/test_orchestrator.py` |
-| PM-16 | `db/repositories.py:PageRepository.reset_legacy`、`api/main.py` ingest 路由 | `tests/contract/test_api_v1_contract.py` |
-| PM-17 | `api/admin.py`、`db/repositories.py:ParseJobRepository.delete_for_book` | `tests/contract/test_api_v1_contract.py` |
 
 ## 失败与质量语义
 
@@ -268,7 +174,7 @@ sequenceDiagram
 3. 版本作用域读写与删除面（含审计保留）→ `tests/unit/test_db.py`、契约测试的 `delete`/`purge` 用例。
 4. 只读端点结构与 schemas 一致、不泄漏磁盘绝对路径与凭据 → `tests/contract/test_api_v1_contract.py`。
 5. 端到端联调（8903 → 8900 → 8901/8902：同步 → ingest → 解析 → 对照 → 编辑 → 回显）与 8901/8902
-   离线降级 → 需 8903 排期窗口，当前为 `Blocked`（承载见 [PLAN-008](../plans/2026-09-22-req088-page-jobs-list.md)）。
+   离线降级 → 需 8903 排期窗口，联调证据归根仓库侧（`docs/trackers/completed.md` 的对照/编辑两行）。
 
 ## 追溯
 

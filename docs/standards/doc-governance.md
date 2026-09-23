@@ -2,10 +2,12 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-21
-治理对象：文档分类与事实边界、确认状态、文档生命周期、代码与文档追溯、写作命名索引元数据、版本末期整理、归档与删除
-依据：QED-Tracker `docs/standards/doc-governance.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)），上游参照 QED-Engine 根仓库标准
-关联测试：`tests/contract/test_document_structure.py`、`tests/contract/test_standard_governance.py`、`tests/contract/test_markdown_links.py`、`tests/contract/test_code_document_mapping.py`
+最后更新：2026-09-23
+治理对象：文档分类与事实边界、确认状态、文档生命周期、代码与文档追溯、写作命名与体裁化元数据、固定文档骨架与可对账契约、版本末期整理、归档与删除
+依据：QED-Tracker `docs/standards/doc-governance.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)），
+元数据体裁、骨架与对账规则由 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 立法；上游参照 QED-Engine 根仓库标准
+关联测试：`tests/contract/test_document_structure.py`、`tests/contract/test_standard_governance.py`、
+`tests/contract/test_fixed_document_form.py`、`tests/contract/test_markdown_links.py`、`tests/contract/test_code_document_mapping.py`
 
 ## 目的与边界
 
@@ -126,11 +128,19 @@ flowchart LR
 
 ### 元数据
 
-- 架构和设计声明设计状态、实现状态、最后更新、关联代码、关联测试和关联 ADR。
+元数据按**体裁**分三类（[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)）：
+
+- **契约正文类**（`architecture/` 的 overview、api、database-design 与 `design/` 三篇）声明
+  `设计状态`、`确认状态`、`实现状态`、`最后更新`、`关联代码`、`关联测试`、`关联 ADR`。`实现状态`
+  一行只允许「枚举值 + 至多一个未达条件从句」，从句内不得出现任务编号或日期。
+- **映射与索引类**（`architecture/code-map.md` 等登记表）声明 `状态`（只允许 `Current` /
+  `Superseded`）、`确认状态`、`最后更新`、`覆盖范围`；**不得**声明 `设计状态` / `实现状态`——
+  映射表不是方案，没有「实现与否」可言。
+- **目录索引类**（各目录 `index.md`）只声明 `状态` 与 `最后更新`，纯导航、不保存正文事实。
 - 标准声明状态、确认状态、最后更新、治理对象、依据、关联测试，并使用统一公共章节
   （目的与边界 / 强制规则 / 执行与门禁 / 变更与取代）。
 - ADR 元数据与状态按 [ADR 治理](adr-governance.md) 执行。
-- 指南、索引和 tracker 至少声明 `状态` 与 `最后更新`。
+- 指南和 tracker 至少声明 `状态` 与 `最后更新`。
 - 设计状态只允许 `Draft`、`Proposed`、`Accepted`、`Rejected`、`Superseded`、`Historical`；
   实现状态只允许 `Not Started`、`In Progress`、`Implemented`、`Verified`、`Blocked`、
   `Completed`；确认状态只允许 `暂定`、`已确认`。
@@ -141,6 +151,24 @@ flowchart LR
 **设计状态与确认状态正交**：设计状态描述设计方案本身的成熟度与命运，确认状态描述文档作为
 事实源的权威性。禁止组合 `Historical + 暂定`（历史文档若保留应标已确认，否则不应保留）。
 参考同类文档只能借用组织方式，必须重新确认状态、关联、范围和项目事实。
+
+### 固定文档骨架与可对账契约
+
+- **四段骨架**：`architecture/` 的契约正文固定为 `目的与边界 / 当前契约 / 失败与兼容语义 /
+  验证与追溯`，H2 顺序固定、白名单穷举，缺段或多段即守护转红；`design/` 三篇用六段骨架，
+  守则段统一名「确定规范」（见[设计索引](../design/index.md)）。
+- **正文去日期化**：固定文档的**契约正文段**（除末段追溯段以外的全部段落）不得出现任务编号
+  （`REQ-`/`PLAN-`/`ARCH-`/`DEFECT-`）与具体日期。来源与判例只写在末段追溯段
+  （`architecture/` 的 `## 验证与追溯`、`design/` 的 `## 追溯`），那里允许 Accepted ADR、在地条文编号
+  （`PP-n`/`PM-n`/`MI-n`）与「来源：PLAN-0xx（已归档）」式的归档壳链接；但追溯段也不得把条文编号
+  指向已归档壳。日期化过程的事实源是 `trackers/completed.md` 与承载计划，不是固定文档头部或正文。
+- **契约表必须可对账**：`architecture/api.md` 每个端点一节、节标题固定为 `#### METHOD /path`
+  （四段骨架占 H2、接口分类占 H3）；管理面端点同形但单独成节、不进公共契约总表；
+  `architecture/database-design.md` 每张表一张列清单表。守护以**运行态真源**（FastAPI `app.routes`、
+  SQLAlchemy `Model.__table__.columns`）双向对账，「文档有码无」与「码有文档无」都判失败——固定文档
+  的 `实现状态` 因此不能靠措辞虚报完成。
+- **守护只校结构与枚举**：契约测试不得把历史字符串、commit 锚点或具体用例名写进断言；新增守护
+  逐条做变异转红复验。
 
 ### 版本末期文档整理
 
@@ -165,16 +193,19 @@ flowchart LR
 4. **trackers/ 实时状态同步与清理**：`todo.md` 已完成任务移除并追加 `completed.md`；暂停/
    低优先级任务评估去留；长期任务逐项审视；`project-status.md` 刷新当前主线与服务状态；
    `roadmap.md` 无执行状态。
-5. **确认状态补登记**：architecture/design 文档确认状态字段补齐并核对。
+5. **确认状态统一处置**：`architecture/` 与 `design/` 正文逐篇转「已确认」或写明留在「暂定」的
+   评审项，不得出现同目录内权威等级随机不一致（[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 决定 6）。
 6. **链接与引用完整**：`tests/contract/` 守护全部通过（入口集合/元数据/链接/代码引用/
    tracker ID）。
-7. **metadata 规范化**：架构/设计文档的设计状态与实现状态取值合法、最后更新刷新、关联代码/
-   关联测试准确。
+7. **metadata 规范化**：按「元数据」节的体裁分类逐字段核对（契约正文类 / 映射与索引类 / 目录
+   索引类），取值合法、最后更新刷新、关联代码/关联测试准确。
 8. **框架结构审视**：版本末期评估文档架构是否需要调整（拆分、合并或新建）；结构变更走
    「文档架构变更约束」流程。
 9. **项目流程重梳理**：刷新 `project-status.md` 当前主线与里程碑；刷新 `guides/development.md`
    门禁命令与 `guides/operations.md` 操作流程；评估 `AGENTS.md` 任务路由表与 `docs/index.md`
    文档域导航。
+10. **形式与对账复扫**：跑「固定文档骨架与可对账契约」节的守护（骨架白名单、正文去日期化、
+    端点与列清单对账），确认没有把过程叙述写回固定文档、也没有靠措辞虚报实现状态。
 
 **执行流程**：读取 `code-map.md` 与 `project-status.md` 掌握当前状态 → 按检查清单逐项整理 →
 每轮执行记录在 ARCH-010 todo 证据列登记 → 运行 `tests/contract/` 定向门禁，再运行完整门禁

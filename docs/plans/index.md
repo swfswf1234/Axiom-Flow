@@ -92,3 +92,16 @@
   ⇒「Git 锚点有效」不成立，改判 `Retain`；后续提交完成后可在下一轮按 `Delete` 重判并删壳。**
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-23-design-narrative-framework.md` 处须改指上述归档位置
   （本批已同步 `docs/design/` 三篇「叙述框架」行与 `docs/trackers/project-status.md`）。
+- PLAN-014 V0.1 固定文档形式正规化（Axiom-Flow）已完成（2026-09-23，W0~W8 全绿后关闭；执行
+  [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)），计划按 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-23-arch010-v01-architecture-form-normalization.md)
+  （保留 S1~S7 逐条判定、25 例守护变异复验、零丢失证明的**判据替代说明**（反引号 token 覆盖比对取代
+  8-gram）、七篇 `确认状态` 转正的逐篇依据，以及 `code-map.md` 备注列「删 → 存于哪条条文」的逐条登记）；
+  运行时事实源不在壳内，而以正规化后的 [architecture 四篇](../architecture/index.md)、
+  [design 三篇](../design/index.md) 与守护 `tests/contract/test_fixed_document_form.py` 为准；
+  关闭证据见 [completed.md](../trackers/completed.md) PLAN-014 行，长期行 ARCH-010 保持 `In Progress`。
+  **归档判定 `Retain`（立项时即为 Retain）**：S1~S7 判定与 25 例变异复验属不可再生证据，且壳与
+  `docs/architecture/` 改动均未提交（用户「暂不推送」且本轮未要求 commit）⇒ Delete 所需「Git 锚点有效」
+  本就不成立；提交完成后可在下一轮按 `Delete` 重判并删壳。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-23-arch010-v01-architecture-form-normalization.md` 处须改指
+  上述归档位置（本批已同步 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 的「取代」节链接）。

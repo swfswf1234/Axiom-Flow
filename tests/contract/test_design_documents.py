@@ -73,6 +73,9 @@ def test_design_directory_has_one_index_and_one_current_contract():
 
 # 叙述框架（PLAN-012）：三篇同构的六段骨架，H2 顺序固定、白名单穷举。
 SECTION_SKELETON = ("目标与非目标", "边界与事实源", "核心设计", "失败与质量语义", "验收判据", "追溯")
+# 核心设计内的守则段统一名（2026-09-23 呈现轮：由「不变式与条文」→「已确定守则」→「确定规范」，
+# 并把篇末「条文表」并入同一张表）。
+CLAUSE_SECTION = "确定规范"
 # R2：条文编号必须在本篇内解析（`PP-n`/`PM-n`/`MI-n`），跨壳引用一律降级为「来源：PLAN-0xx（已归档）」。
 CROSS_SHELL_CLAUSE = re.compile(r"PLAN-\d+[^\n。]{0,16}条文")
 # R3：不做第二份契约表——列名清单与响应字段清单的事实源在 `architecture/`。
@@ -100,7 +103,11 @@ def test_design_clauses_resolve_inside_their_own_document():
 
 
 def test_design_documents_declare_numbered_clauses_with_carriers():
-    """S3：条文表逐条给出实现落点；编号在本篇内唯一、从 1 起连续。"""
+    """S3（表格化后）：守则表逐行给出「结论 ＋ 判据 / 理由／例外／边界 / 实现落点 → 守护测试」四列。
+
+    编号在篇内唯一、从 1 起**按序连续**；结论必须以加粗一行开头；落点与守护合并在末列，
+    故该列必须含 `→` 分隔且两侧非空（原「条文表」并入本表后不再有第二处登记表）。
+    """
     carriers = {
         "PM": "parsing-management.md",
         "PP": "parsing-pipeline.md",
@@ -108,15 +115,19 @@ def test_design_documents_declare_numbered_clauses_with_carriers():
     }
     for prefix, document in carriers.items():
         content = (DESIGN / document).read_text(encoding="utf-8")
-        declared = set(re.findall(rf"^\*\*{prefix}-(\d+)", content, re.MULTILINE))
+        assert f"### {CLAUSE_SECTION}" in content, f"{document}: 缺守则段标题"
+        assert "### 条文表" not in content, f"{document}: 条文表应已并入守则表"
         rows = re.findall(rf"^\| {prefix}-(\d+) \|(.+)$", content, re.MULTILINE)
-        listed = {number for number, _ in rows}
-        assert declared == listed, f"{document}: 条文 {sorted(declared ^ listed)} 正文与条文表不符"
-        assert listed == {str(n) for n in range(1, len(listed) + 1)}, f"{document}: 编号不连续"
+        listed = [number for number, _ in rows]
+        assert listed == [str(n) for n in range(1, len(listed) + 1)], f"{document}: 编号 {listed} 不按序连续"
         for number, tail in rows:
             cells = [cell.strip() for cell in tail.strip().rstrip("|").split("|")]
-            assert len(cells) == 2, f"{document}: {prefix}-{number} 条文表列数不是「实现落点 + 守护」"
-            assert cells[0] and cells[0] != "—", f"{document}: {prefix}-{number} 缺实现落点"
+            assert len(cells) == 3, f"{document}: {prefix}-{number} 列数不是「结论＋判据 / 理由 / 落点→守护」"
+            clause, _, carrier = cells
+            assert clause.startswith("**"), f"{document}: {prefix}-{number} 缺加粗结论"
+            assert carrier and carrier != "—", f"{document}: {prefix}-{number} 缺实现落点"
+            left, sep, right = carrier.partition(" → ")
+            assert sep and left.strip() and right.strip(), f"{document}: {prefix}-{number} 落点与守护未用 → 分列"
 
 
 

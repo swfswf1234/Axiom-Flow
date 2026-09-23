@@ -1,7 +1,7 @@
 # ADR 索引
 
 状态：Current
-最后更新：2026-09-21
+最后更新：2026-09-23
 
 本目录登记影响长期约束的决定。编号从 0001 重新开始（v2 新纪元，v1 决策已归档至
 `docs/history/v1-20260814/adr/`）。规则见 [ADR 治理](../standards/adr-governance.md)。
@@ -22,5 +22,6 @@
 | [0005](0005-mysql-integration-test-isolation.md) | MySQL 集成测试的隔离边界（`QED_TEST_MYSQL=1` 显式 opt-in，只用 `qed_test` 库内本方自有的 `af_*` 四表 + `alembic_version`，绝不 `DROP DATABASE`，缺开关时 skip） | Accepted |
 | [0006](0006-ledger-plan-carrier-contract.md) | 任务台账与计划承载契约（一任务一承载、进度单源、关闭条件成文、In Progress ≤3、DEFECT 前缀退役） | Accepted |
 | [0007](0007-parse-status-semantics.md) | 解析状态语义三分（任务结局三态 + `failed_pages`、书级进度/结局分列、启动期归一（单实例前提）） | Accepted |
+| [0008](0008-fixed-doc-form-and-metadata-genres.md) | 固定文档的体裁化元数据、统一四段骨架、正文去日期化与可对账契约表 | Accepted |
 
-下一个可用编号：0008
+下一个可用编号：0009

@@ -19,8 +19,9 @@ CURRENT_DOCUMENTS = {
     "database-design.md",
     "code-map.md",
 }
-# `code-map.md` 与 `index.md` 声明 `状态`（表格/索引类），其设计/实现状态补登记归 ARCH-010；
-# 本守护只覆盖声明 `实现状态` 的架构正文。取值事实源：docs/standards/doc-governance.md「元数据」节
+# 体裁规则见 docs/adr/0008-fixed-doc-form-and-metadata-genres.md：`code-map.md` 属映射与索引类（只声明
+# `状态`）、`index.md` 属目录索引类，两者都不声明 `实现状态`；本守护只覆盖声明 `实现状态` 的架构正文。
+# 取值事实源：docs/standards/doc-governance.md「元数据」节
 STATUS_DOCUMENTS = {"overview.md", "api.md", "database-design.md"}
 IMPLEMENTATION_STATUSES = {
     "Not Started",
@@ -97,25 +98,19 @@ def test_code_map_lists_v2_modules_with_design_references():
     assert "docs/design/parsing-pipeline.md" in content
 
 
-def test_api_document_declares_four_categories_and_contract_endpoints():
+def test_api_document_declares_interface_categories():
+    """四类公共契约面 + 非公开管理面必须成类可查；**端点清单不在本守护硬编码**——
+    它由 `test_fixed_document_form.py` 与运行时路由表双向对账（钉字符串会让清单两头漂移）。"""
     content = (ARCHITECTURE / "api.md").read_text(encoding="utf-8")
     for heading in ("生命周期与健康", "数据查询", "解析结果与 PDF 对照", "RAG·知识图谱预留"):
         assert heading in content, heading
-    for endpoint in (
-        "GET /api/v1/health",
-        "GET /api/v1/books",
-        "POST /api/v1/books/sync",
-        "POST /api/v1/books/{book_id}/ingest",
-        "POST /api/v1/parse-jobs",
-        "GET /api/v1/books/{book_id}/pages",
-        "GET /api/v1/books/{book_id}/pages/{page_no}",
-        "GET /api/v1/books/{book_id}/manifest",
-        "GET /api/v1/parse-jobs/{job_id}",
-        "PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit",
+    for section in (
+        "### ① 生命周期与健康\n",
+        "### ② 数据查询（af_*）\n",
+        "### ③ 解析结果与 PDF 对照\n",
+        "### ④ 未来 RAG·知识图谱预留（无端点）\n",
+        "### 非公开管理面（af_* 与产物一键清除）\n",
     ):
-        assert endpoint in content, endpoint
-    # 逐条锚定节标题：列表类端点的路径是更具体路径的前缀，只查子串会永远为真
-    for section in ("### GET /api/v1/parse-jobs\n", "### GET /api/v1/books/{book_id}/pages\n"):
         assert section in content, section
     assert "src/axiom_flow/schemas.py" in content
 
