@@ -63,7 +63,8 @@
 - 不改激活门槛、不改任务六态/`last_parse_result`/`progress` 字段形状（ADR 0007 冻结）。
 - 不做旧版本磁盘清理、不改 `versions/<job_id>/` 布局（PLAN-004 冻结）。
 - 不引入 PDF 切分依赖（不装 `pypdf`）：窗口由引擎侧 `start_page_id/end_page_id` 表达，本仓库仍提交整本字节。
-- 不改 `api.md` 端点集（列表/失败清单端点属 [PLAN-008](2026-09-22-req088-page-jobs-list.md)）。
+- 不改 `api.md` 端点集（列表/失败清单端点属 PLAN-008，其壳已按 `Delete` 删除，判据见
+  [completed.md](../../../trackers/completed.md)）。
 
 ## 前置条件
 

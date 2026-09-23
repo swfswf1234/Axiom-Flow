@@ -1,90 +1,48 @@
 # 待做任务
 
 状态：Current
-最后更新：2026-09-23
+最后更新：2026-09-24
 
 本表是全部未关闭工作的统一导航，按「轮次 → 阶段」分节。本表只回答「做什么、为了什么目的、
 现在到哪/卡在哪」；日期化进度与证据一律写入承载计划（[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)）。
 已关闭任务见[关闭台账](completed.md)，实时现状见[项目状态快照](project-status.md)。v1 台账已归档
 （`docs/history/v1-20260814/trackers/todo.md`）。
 
-## v0.1 主线：解析管理闭环（对齐根仓库 ARCH-020 第三轮）
+## v0.1 主线：解析管理闭环（**已收口 2026-09-24，本节无开放行**）
 
-链路：书目同步（af_books）→ ingest（页图 + 产物落 `QED_DATA_ROOT/parsed/`）→ 解析（引擎适配，
-逐页/全本）→ 对照渲染 → 块级人工校验修改。设计见 [parsing-management](../design/parsing-management.md)、
-[parsing-pipeline](../design/parsing-pipeline.md)、[model-integration](../design/model-integration.md)。
+v0.1 的全部任务行均已进入终态，证据与逐条判定唯一安家于 [completed.md](completed.md)（实时现状见
+[项目状态快照](project-status.md)）。收口批＝**PLAN-013**（A 类，W0~W6）关掉最后四行：
+ARCH-005 `Achieved`、ARCH-006 `Partial`（按用户裁决「以清除前那次 PASS 为准」改判关闭）、PLAN-008
+与主线聚合行 ARCH-001。链路事实：书目同步（af_books）→ ingest（页图 + 产物落 `QED_DATA_ROOT/parsed/`）
+→ 解析（引擎适配，逐页/全本，ADR 0007 六态语义与质量信号）→ 对照渲染（只读端点）→ 块级人工校验修改；
+设计见 [parsing-management](../design/parsing-management.md)、[parsing-pipeline](../design/parsing-pipeline.md)、
+[model-integration](../design/model-integration.md)。
 
-**推进顺序**：v0.1 的**实现与工具面已全部关闭**——真机打通（PLAN-003）、产物按版本划分（PLAN-004）、
-解析状态语义（PLAN-006）、全本窗口分块 + 空白页合法化（PLAN-007）、页级失败清单与 jobs 端点（PLAN-008
-本方侧）、一键清除端点（PLAN-010）及其真机布局修复（PLAN-011），以及 ARCH-003/009/016/018/019/024/026、
-REQ-001/080/081/083/084/085/086/087/088。日期化的逐轮过程与判据一律在 [completed.md](completed.md) 与各承载
-壳（`docs/history/plans/2026-09/`），本表不复述。
-**本表 v0.1 只剩 ARCH-005/006 两行联调**，两行**共享同一前置**：2026-09-23 的全项目清除已把可联调产物
-（三本生效版本 + `parsed/`）删净 ⇒ 联调前必须重新 ingest + 解析。**同日晚已重建部分产物**
-（b05 全本 317/317 激活、LA-b01 仅 3/486 页；`af_block_edits` 0 行），实测读数与判据走向见
-**PLAN-013 V0.1 收口轮**（本轮主攻）。**本仓库侧无可自证的联调动作**：下一动作只在你的排期裁决里：
-① ARCH-005/006 判据走向（补做窗口 / 改判移交）；② 其余书目产物重建（D 类，可与 ARCH-011 批量合并）；
-③ v1.0 线开工。
+**版本声明**：v0.1 **开发完成**（交付/未交付边界见 [project-status.md](project-status.md)「当前版本」段
+与 [roadmap.md](roadmap.md)）。唯一移交项＝重建后代际的块编辑真机写入证据，由根仓库在下一联调窗口自证。
 
-### 主线聚合
+**仍然生效的三条运维事实**（原「数据面运维」「文档形式正规化」「跨项目请求」三节压缩至此，均无开放行）：
 
-| ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
-| --- | --- | --- | --- | --- | --- | --- |
-| ARCH-001 | 主线 | 高 | In Progress | 解析管理闭环（聚合行）：同步/ingest/解析/对照/块编辑全链路达成（对齐根仓库 ARCH-020） | 下列全部支线行关闭且 8903 联调通过 | 子行：ARCH-005/006 + PLAN-008（`Blocked`）+ 本轮主攻 **PLAN-013**（V0.1 收口与文档清理）。同日晚产物已部分重建（b05 全本激活、LA-b01 仅 3/486 页），余下＝两行判据走向 + 四行终态 ⇒ [PLAN-013](../plans/2026-09-23-v01-closeout-doc-cleanup.md)「W0 实测读数」
-| PLAN-008 | 主线 | 高 | Blocked | [页级失败清单与 jobs 列表端点（REQ-088，原 REQ-087）](../plans/2026-09-22-req088-page-jobs-list.md) | S1~S4 契约测试全绿且根侧确认数据源可用 | S1~S4 达成（14 条契约测试绿 + 变异复验、文档四处收口），**REQ-088 于 2026-09-23 关闭**；剩 W6 联调（等根侧 8903）与 W7 收口。阻塞四要素见承载 ⇒ [PLAN-008](../plans/2026-09-22-req088-page-jobs-list.md)「阻塞与恢复」 |
-| PLAN-013 | 主线 | 高 | In Progress | [V0.1 收口与文档清理（v01-closeout-doc-cleanup）](../plans/2026-09-23-v01-closeout-doc-cleanup.md) | v0.1 节零开放行、四行终态入 completed.md、壳与旧路径引用零残余、门禁全绿 | **本轮主攻**。W0 只读取证已成交（四源实测读数，含「页清单端点零消费」「`af_block_edits` 0 行」两处失真）；剩 W1 判据裁决 → W2~W6。承载 ⇒ [PLAN-013](../plans/2026-09-23-v01-closeout-doc-cleanup.md) |
-
-### 对照、分块与验收
-
-**推进顺序**：代表书验收（**ARCH-009**）、映射缺口（**ARCH-019**）与端点交付（**REQ-088**）已关闭 ⇒
-本节只剩 **ARCH-005/006 的 8903 前端联调**（消费 PLAN-008 的两个只读端点），等根侧排期；两行的共同前置
-＝先重建产物（见「数据面运维」）。
-
-| ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
-| --- | --- | --- | --- | --- | --- | --- |
-| ARCH-005 | 支线 | 高 | Open | 解析对照与质量度量：页图 vs 重渲染叠框与质量信号进对照视图 | 8903 前端真机联调通过（根仓库 ARCH-020-D/UI） | **可联调产物已随 2026-09-23 全项目清除消失**（三本生效版本与 `parsed/` 一并删，见 PLAN-011 留档）⇒ 联调前需重新 ingest + 解析（依赖根侧图像模型服务）。剩 8903 排期。承载 ⇒ [PLAN-008](../plans/2026-09-22-req088-page-jobs-list.md) |
-| ARCH-006 | 支线 | 高 | Open | 渲染数据供给与块编辑真机闭环：edit 写入与 pages 合并回显交付 | 代表书重解析后 af_block_edits 真机写入且联调通过 | 端点与仓储已交付、读取面 L7 全绿；`af_block_edits` 现 0 行（原 2 行人工校验随 2026-09-23 全项目清除消失，备份见 PLAN-011 留档）。剩产物重建 + 真机写入 + 8903 联调。承载：[PLAN-008](../plans/2026-09-22-req088-page-jobs-list.md)「承载 ARCH-006」 |
-
-### 数据面运维（一键清除）
-
-**推进顺序**：**清理轮已于 2026-09-23 执行完毕并当日收口**（用户裁决＝`scope.all=true` 全项目真删、
-不备份磁盘产物；四表 JSON 备份照做）。执行前首次业务侧 dry-run 暴露的真实布局缺陷以 **ARCH-026 /
-PLAN-011** 当日立、当日关；删除计数、门禁与留档见 [completed.md](completed.md) PLAN-011 / ARCH-026 行
-（`data/probes/purge-business-20260923/`）。**本节当前无开放行**（下轮重建窗口批准时在本节登记）。
-
-**清理的直接后果（v0.1 以下所有行的前置）**：三本生效版本产物（b01 `86ab56ae2b6c`、b05 `185a37d55985`、
-b11 `bbe0d401ce83`）与 2 条人工校验行一并消失，`ingest_status` 回到 `none`、`active_job_id` 全 NULL
-⇒ **任何联调/验收都要先重新 ingest + 解析**，而解析依赖根侧图像模型服务；下一重建窗口须你另批 D 类。
-
-### 文档形式正规化（ARCH-010 版本末期执行轮）
-
-**推进顺序**：**本轮已于 2026-09-23 关闭**（PLAN-014 依 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)
-把 `architecture/` 四篇与 `design/` 三篇统一到体裁化元数据 + 四段骨架 + 零过程叙述正文，并把端点表与
-列清单改为对运行态真源双向对账；七篇 `确认状态` 统一转「已确认」）。逐条判定、变异复验与零丢失证据在
-[已归档壳](../history/plans/2026-09/2026-09-23-arch010-v01-architecture-form-normalization.md)，结果行见
-[completed.md](completed.md)。**本节当前无开放行**；ARCH-010 长期行的剩余遗留（`src`/`scripts` 旧条文编号、
-`scripts/tmp`、版本号双源）见该行长尾。
-
-### 跨项目请求
-
-**推进顺序**：**当前无开放跨项目行**。历史批次——六项回执（REQ-001/080/081/083/084/085）、三条入站与两次
-让号判例（REQ-086/087/088）、欠账回收（REQ-036/057/074）——均已由根侧自读登记并逐条入
-[completed.md](completed.md)。**环境侧交接仍生效**：WSL 容量、发行版空闲回收与 `mineru-api` 容器归
-QED-Engine 图像模型维护线（用户裁决 2026-09-22），鉴别判据与处置见
-[operations.md](../guides/operations.md)，本仓库不再投入。新入站按
-[跨项目协作流程](../standards/cross-project-collaboration.md) 在本节登记。
+1. **产物代际**：2026-09-23 的 `POST /api/v1/admin/purge` 全项目清除已把三本生效版本产物与 2 条人工
+   校验行删净，当晚仅重建 b05（全本 317/317 激活）与 LA-b01（3/486）⇒ **任何新联调或验收必须先重新
+   ingest + 解析**，下一重建窗口须用户另批 D 类（可与 ARCH-011 批量合并）。
+2. **环境侧交接**：WSL 容量、发行版空闲回收与 `mineru-api` 容器归 QED-Engine 图像模型维护线（用户裁决
+   2026-09-22），鉴别判据与处置见 [operations.md](../guides/operations.md)，本仓库不再投入。
+3. **文档面**：形式正规化两轮（PLAN-012 design、PLAN-014 architecture）均已关闭且七篇 `确认状态` 转
+   「已确认」；剩余长尾（`src`/`scripts` 文件头旧条文编号、`scripts/tmp/`、版本号双源）挂在长期行
+   ARCH-010。新入站跨项目请求按 [跨项目协作流程](../standards/cross-project-collaboration.md) 登记。
 
 ## v1.0 主线：解析与知识库优化轮（对齐根仓库 ARCH-025，2026-09-22 用户裁决立项登记）
 
 根仓库 ARCH-025 轮（REQ-089 第一批 DeepTutor 对照调研）产出的优化项下沉本仓库承载，
-作为本仓库 1.0 版本任务登记。**本轮只立项登记，不排实施**：实施前置 = v0.1 只剩 ARCH-005/006 联调
-（等根侧 8903 排期，且需先重建产物）与你的排期裁决；条目清单与判据见
+作为本仓库 1.0 版本任务登记。**本轮只立项登记，不排实施**：实施前置 = v0.1 已收口（ARCH-005/006、
+PLAN-008 与 ARCH-001 于 2026-09-24 关闭）⇒ 只剩产物重建（D 类窗口）与你的排期裁决；条目清单与判据见
 [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)。
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
 | ARCH-021 | 主线 | 中 | Open | V1.0 解析与知识库优化轮（聚合行）：解析产物易消费优化 + 知识库面（RAG 切片与检索）向本仓库 1.0 版本收敛 | PLAN-009 登记条目全部关闭且 V1.0 端到端验收通过 | 子行：ARCH-022/023、PLAN-009。登记来源＝根仓库 ARCH-025 滚动壳「REQ-089 第一批调研承接」节；本轮只登记不排期（用户裁决 2026-09-22） |
-| ARCH-022 | 支线 | 中 | Open | 解析产物大模型易消费优化（P1 重跑判定签名、P2 manifest-last 就绪、P3 blocks 语义分诊 ledger） | P1~P3 实施带契约测试且全本复测通过 | 承载 ⇒ [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)；前置＝v0.1 收口（PLAN-008 `Blocked` 等根侧 8903）+ 产物重建 + 用户排期裁决 |
+| ARCH-022 | 支线 | 中 | Open | 解析产物大模型易消费优化（P1 重跑判定签名、P2 manifest-last 就绪、P3 blocks 语义分诊 ledger） | P1~P3 实施带契约测试且全本复测通过 | 承载 ⇒ [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)；前置＝产物重建（D 类窗口）+ 用户排期裁决（v0.1 已收口） |
 | ARCH-023 | 支线 | 中 | Open | 知识库面（R1 索引版本行增量、R2 块级知识单元 self_ref、R3 向量+BM25+RRF+rerank 检索配方、R4 数学感知切分；检索端点入 8902 契约） | R1~R4 实施带契约测试且根侧探索验证界面验收 | 承载 ⇒ [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)；知识图谱暂不做（roadmap 预留） |
 | PLAN-009 | 主线 | 中 | Accepted | [V1.0 解析与知识库优化轮（v1-parsing-knowledge-optimization）](../plans/2026-09-22-v1-parsing-knowledge-optimization.md) | 登记条目全部关闭且 V1.0 形态交付 | 2026-09-22 登记（用户裁决下沉本仓库为 1.0 任务）；条目台账与目标形态见壳 |
 

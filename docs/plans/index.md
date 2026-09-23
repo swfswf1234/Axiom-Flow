@@ -1,7 +1,7 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-09-23
+最后更新：2026-09-24
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
@@ -105,3 +105,18 @@
   本就不成立；提交完成后可在下一轮按 `Delete` 重判并删壳。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-23-arch010-v01-architecture-form-normalization.md` 处须改指
   上述归档位置（本批已同步 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 的「取代」节链接）。
+- PLAN-008 页级失败清单与 jobs 列表端点（Axiom-Flow，REQ-088 承载计划）已完成（2026-09-24，W1~W7 判据
+  全部消耗后关闭），计划按立项判定 **`Delete`** 删除：端点契约事实源已晋升
+  [architecture/api.md](../architecture/api.md) ③ 类两节与 [code-map.md](../architecture/code-map.md)，
+  逐条判定与真机复验读数见 [completed.md](../trackers/completed.md) 的 PLAN-008 / ARCH-005 / ARCH-006 /
+  REQ-088 四行；壳正文可 `git show 8fca39b:docs/plans/2026-09-22-req088-page-jobs-list.md` 找回
+  （`8fca39b`＝复验读数与 ARCH-006 改判入册，`21bc8cf`＝本方侧收口，`650cfef`/`a710ddf`＝端点实施）。
+  **S5 的两面判定**：ARCH-005 页清单与质量信号经 8903 真实消费 ⇒ Achieved；ARCH-006 块编辑在重建后的
+  当代际无写入样本 ⇒ 按用户裁决以清除前那次 PASS 改判关闭，记 Partial，当代际证据移交根仓库下一窗口。
+- PLAN-013 V0.1 收口与文档清理（Axiom-Flow，A 类）已完成（2026-09-24，S1~S5 逐条判定后关闭），计划按
+  立项判定 **`Delete`** 删除：收口结论以 [completed.md](../trackers/completed.md) 的 PLAN-013 / ARCH-001
+  两行与 [project-status.md](../trackers/project-status.md)「当前版本」段为事实源（壳立项时即自证「无
+  不可替代证据」，W0 实测读数与 D1~D4 裁决已分别入二十/二十一轮与 completed 行）。壳正文可
+  `git show 268b7d2:docs/plans/2026-09-23-v01-closeout-doc-cleanup.md` 找回（进场裁决 D1~D4、工作项 W0~W6
+  逐条状态、B1~B6 收口步骤与阻塞四要素皆在锚点提交内）。**v0.1 主线四行由此全部关闭**，ARCH-011 批量
+  与 v1.0 线（PLAN-009）为下一里程碑的前置。
