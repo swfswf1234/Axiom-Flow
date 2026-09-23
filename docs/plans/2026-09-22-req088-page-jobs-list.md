@@ -1,8 +1,8 @@
 # 页级失败清单与 jobs 列表端点（REQ-088，原 REQ-087）
 
-状态：In Progress
+状态：Blocked
 任务类型：B
-最后更新：2026-09-22
+最后更新：2026-09-23
 关联 ADR：[ADR 0007](../adr/0007-parse-status-semantics.md)（本计划只是把已裁决的语义暴露为只读端点，不新增语义）
 关联设计：[parsing-management.md](../design/parsing-management.md)、[parsing-pipeline.md](../design/parsing-pipeline.md)、[api.md](../architecture/api.md)
 关联 Tracker：docs/trackers/todo.md（PLAN-008、REQ-088、ARCH-005、ARCH-006）
@@ -76,6 +76,27 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 2. ARCH-005/006 联调需 8903 前端排期（根侧动作）；本方端点与产物就绪不构成联调完成的证据。
 3. 可联调产物面现状：三本生效版本（b01 `86ab56ae2b6c`、b05 `185a37d55985`、b11 `bbe0d401ce83`，
    各 20 页几何与类型可信），`af_block_edits` 现 0 行。
+
+## 阻塞与恢复
+
+本计划**本方侧已全部做完**（S1~S4 达成、契约测试 14 条绿 + 变异复验、文档与映射四处收口、REQ-088 关闭），
+剩余唯一工作项 W6 是根侧动作，故 2026-09-23 由 `In Progress` 改判 `Blocked`（不关闭：ARCH-005/006 的
+承载就是本壳，且本计划的 Delete 归档判定要求三行全关）。
+
+阻塞证据：W6 的两条判据（ARCH-005 对照与质量度量、ARCH-006 `af_block_edits` 真机写入与合并回显）都要
+8903 前端真机联调才成立，而我方侧不可自证——「本方端点与产物就绪不构成联调完成的证据」（前置条件 2）。
+可核验的现状：`af_block_edits` 现 0 行，三本生效版本各 20 页可联调（b01 `86ab56ae2b6c`、
+b05 `185a37d55985`、b11 `bbe0d401ce83`）。
+
+恢复条件：根仓库在其台账把 ARCH-020-D/UI 的 8903 对照联调排上日期并实际调用本计划两条端点
+（`GET /api/v1/parse-jobs`、`GET /api/v1/books/{book_id}/pages`）；联调记录回到本壳 W6 即恢复。
+
+责任位置：QED-Engine 根仓库（8903 前端与 ARCH-020-D/UI 排期）；本仓库负责端点契约与产物可信度，已交付。
+本仓库不代根仓库做前端联调，也不因根侧未排期而收缩判据（ADR 0004 边界，环境侧同日移交见 PLAN-007 W7 裁决）。
+
+复核触发点：① 根侧 todo/completed 出现 ARCH-020-D 或 UI 联调行的排期/回执；② 本仓库下一次获批 D 类真机
+窗口（届时顺带把 `af_block_edits` 真机写入面取证）；③ 根侧对两条端点形状提出改动（按「契约事实源先改文档」
+另立计划，见「回滚」）。
 
 ## 实施登记
 
@@ -205,6 +226,28 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 - 提交边界：`guides/operations.md` 与 `trackers/todo.md` 同文件里有用户 PLAN-007 W7 在办改动，本轮
   **只改不提交**，随其收口轮一并入库；本仓库不带他人的台账快照（W5 提交只含上列四处）。
 
+### 局部收口登记（2026-09-23，本方侧）
+
+用户裁决「**先收 PLAN-008，再立清除行**」后的收口执行记录。收口口径：**能收的本方侧全部收掉，不能收的
+改判 `Blocked` 并写清责任位置**，不为了「看起来关闭」而收缩 S5。
+
+1. **S1~S4 逐条判定（本方侧达成）**：S1 `GET /parse-jobs` 六态原值透传 + 过滤/分页/排序稳定
+   （`TestParseJobListEndpoint` 7 条）；S2 `GET /books/{id}/pages` 逐页状态清单，含 `failed` 与「无产物」
+   两类（`TestPageListEndpoint` 7 条）；S3 两条读取端点与既有页读取端点**同一作用域事实源**
+   （`_read_scope`；跨书 jobs 列表按强制规则明文不套该入口、也不另造作用域判定）；S4 零写入面、
+   响应无磁盘绝对路径、无凭据。S5（真机联调）**未达成且非本方侧可控** ⇒ 计划 `Blocked`。
+2. **REQ-088 关闭判据的冲突统一**：壳内原有两处口径互斥——「验证与验收」写 *未确认前 REQ-088 可关闭
+   （端点交付判据）*，「关闭与归档」写 *S1~S4 达成**且根侧确认可用** ⇒ REQ-088 关闭*。本按**前者**统一：
+   REQ-088 的行判据是「两端点成文实施带契约测试」（本方侧可自证），根侧确认属 S5、随 ARCH-005/006 行
+   一起判定。判例同 REQ-086/087（回执正文成文于壳、由根仓库自读登记，本仓库不写根仓库文件）。
+   「关闭与归档」与「承载 REQ-088」两处正文已按此改写，冲突消除。
+3. **台账动作**：REQ-088 行自 todo.md 压缩关闭 → 迁 `completed.md`（2026-09-23）；todo 的 PLAN-008 行
+   状态与本壳 `状态：Blocked` 逐字镜像；ARCH-001 聚合行子行收缩为 ARCH-005/006；`project-status.md`
+   新增十八轮并把**本轮主攻**移交新立行（清除接口，见 todo ARCH-024）。
+4. **门禁（本轮零代码改动，只动台账与本壳）**：`pytest tests -q` 与 `ruff check src tests scripts`
+   结果见提交信息与 `project-status.md` 十八轮行。
+5. **未包含**：W6 联调、W7 全量收口与删壳、任何实现或契约形状改动、任何提交/推送（按用户「暂不推送」）。
+
 ## 工作项
 
 | # | 工作项 | 产物 | 门禁 | 状态 |
@@ -214,8 +257,8 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 | W3 | `GET /parse-jobs` 端点（过滤/分页/排序稳定；响应字段与 `ParseJob` 一致） | `main.py` 路由 + 契约测试 | 契约 | Done（2026-09-22，`TestParseJobListEndpoint` 7 条绿 + 变异复验；`schemas.ParseJobListItem/ParseJobListOut`、`BookRepository.active_job_index`；`api.md` 三处措辞同步。详见「实施登记 W3」） |
 | W4 | `GET /books/{id}/pages` 端点（逐页状态清单 + `scope`/`job_id` 自证） | `main.py` 路由 + `_page_total()` + `schemas.PageStateOut/PageListOut` + 契约测试 | 契约 | Done（2026-09-22，`TestPageListEndpoint` 7 条先红（路由未注册 → 404）后绿；两条变异复验（悄悄改判 / `scope` 硬编）均转红。口径澄清两条见「实施登记 W4」） |
 | W5 | 文档与映射收口：`code-map.md`、`operations.md` 改号措辞、`parsing-management.md` 端点面 | 文档改动 | 架构/设计契约测试 | Done（2026-09-22，四处收口 + 守护补强（节标题锚定），见「实施登记 W5」） |
-| W6 | 8903 联调（ARCH-005 对照与质量度量、ARCH-006 块编辑写入与合并回显）+ 跨项目回执 | 联调记录 + 回执正文（根侧自读登记） | 真机 | Pending |
-| W7 | 收口（六步，ADR 0006） | 本计划关闭与归档 | 全量门禁 | Pending |
+| W6 | 8903 联调（ARCH-005 对照与质量度量、ARCH-006 块编辑写入与合并回显）+ 跨项目回执 | 联调记录 + 回执正文（根侧自读登记） | 真机 | Blocked（2026-09-23 改判：本方侧无剩余动作，等根仓库 8903 排期，四要素见「阻塞与恢复」） |
+| W7 | 收口（六步，ADR 0006） | 本计划关闭与归档 | 全量门禁 | Pending（等 S5；**本方侧已于 2026-09-23 做局部收口**——REQ-088 关闭 + 计划改判 Blocked，见「局部收口登记」） |
 
 ## 验证与验收
 
@@ -225,6 +268,7 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 - 若 W6 涉及真机重解析或块编辑写入：显式跑 `QED_TEST_MYSQL=1 pytest tests/integration` 与
   `QED_SMOKE_LIVE=1 pytest tests/smoke -m smoke`（`guides/development.md` 收口轮口径）。
 - S1~S4 由本方判定；S5 由根侧确认，未确认前 REQ-088 可关闭（端点交付判据）但 ARCH-005/006 保持开放。
+  **2026-09-23 起本行为 REQ-088 判据的唯一口径**（「关闭与归档」原文与此互斥，已按本行统一）。
 
 ## 回滚
 
@@ -233,21 +277,53 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 
 ## 关闭与归档
 
-- **关闭条件**：S1~S4 达成且根侧确认可用 ⇒ REQ-088 行关闭；ARCH-005/006 需 S5（真机联调通过）才关闭。
-  三行全关后本计划按 **Delete** 删壳（事实已在 `api.md`/`code-map.md`，Git 锚点有效），
-  在 `plans/index.md` 登记去处与锚点。
+- **关闭条件**（2026-09-23 统一，见「局部收口登记」第 2 条）：REQ-088 的判据＝**两端点成文、实施、带契约测试**
+  （S1~S4，本方侧自证）⇒ 已达成并关闭；根侧「确认可用」与 S5 同属 ARCH-005/006 的联调判据，不再是
+  REQ-088 的门槛。ARCH-005/006 需 S5（真机联调通过）才关闭，**三行全关后**本计划才按 **Delete** 删壳
+  （事实已在 `api.md`/`code-map.md`，Git 锚点有效），在 `plans/index.md` 登记去处与锚点。
+  当前状态：REQ-088 已关闭，ARCH-005/006 开放 ⇒ **本计划保留在 `docs/plans/` 且状态 `Blocked`**，
+  继续作两行的承载（若先行删壳会使两行失去承载，违反 ADR 0006 一任务一承载）。
 - 收尾顺序（ADR 0006 六步）：本文写结论 → todo 行压缩关闭 → `completed.md` 迁移 →
   `plans/index.md` 登记 → `project-status.md` 刷新 → 全量门禁。
 
 ## 承载 REQ-088（根侧 ARCH-020-E 的数据源需求：页级失败清单与 jobs 列表）
 
 **目的**：为根侧「任务中心抽屉」与「失败页重解析按钮」提供可信只读数据源。
-**关闭条件**：两端点成文实施带契约测试，根侧确认可用。
-**工作项**：W1~W5（+ W6 联调）。
-**状态**：In Progress（W1 契约已于 2026-09-22 成文进 `architecture/api.md`；剩 W2~W5 实施与契约测试、
-W6 联调）。
+**关闭条件**：两端点成文实施带契约测试（根侧确认改挂 S5 与 ARCH-005/006，理由见「局部收口登记」第 2 条）。
+**工作项**：W1~W5（全部 Done）。
+**状态**：**已关闭（2026-09-23，Achieved）**。判据逐条：契约成文＝`architecture/api.md` ③ 类两节 +
+两张字段表 + 错误语义两行；实施＝两条 GET 路由 + 四个仓储读取方法 + 三个响应模型；契约测试＝14 条绿，
+并对「悄悄改判状态」「`scope` 硬编」「作业行丢时间戳」做过变异转红复验。关闭证据迁
+[completed.md](../trackers/completed.md) REQ-088 行。
 **登记事实**：根侧未单独立号（其 ARCH-020-E 证据列「待 8902 页级失败清单与 running jobs 数据源
 确认后排期」），本仓库登记为请求接收行；本仓库现况确无该两端点（路由清单 16 条，见「范围」）。
+
+### REQ-088 回执正文（成文于 2026-09-23，由根仓库自读登记）
+
+> 本仓库不写根仓库文件（工作区边界）；以下正文即发给根仓库的内容，根侧可直接引用。
+
+**已交付（8902，两条只读端点，零写入面）**：
+
+1. `GET /api/v1/parse-jobs?book_id=&status=&limit=&offset=` —— 任务中心抽屉的数据源。
+   `status` **可重复**（多值 OR）：`?status=queued&status=running` = 仅活跃；不带参数 = 全书历史。
+   排序 `created_at` 倒序 + 第二键稳定；作业行原样继承 `ParseJob` 字段并追加
+   `created_at/started_at/finished_at/active`，六态（`queued/running/completed/partial/failed/interrupted`）
+   **原值透传，不做美化改写**；`active` 只由 `af_books.active_job_id` 比出。
+2. `GET /api/v1/books/{book_id}/pages?limit=&offset=` —— 失败页重解析按钮的数据源。
+   一次返回**生效版本**逐页状态 `{page_no, status, has_artifact, error, edit_count}` +
+   顶层 `{book_id, job_id, scope, total}`；`scope` 自证读的是哪一版（`active`/`legacy`/`root_view`），
+   前端不必再按 `1..page_count` 逐页试。`book_id` 不存在 → **404**；书存在但无产物 → **200 + 空表**。
+3. 失败页重解析的**执行**仍走既有 `POST /api/v1/parse-jobs` 的 `pages:[n]`（单页粒度，本计划未加批价格式）。
+
+**三条按保守默认实现、根侧仍可推翻的取舍**（推翻即改文档再改码，另立计划）：① 任务中心「全书历史 vs 仅活跃」
+= 同一端点靠 `status` 过滤；② 页清单对 `legacy` 哨兵行 = 跟随 `_read_scope` 并显式标 `scope="legacy"`；
+③ 重解析粒度 = 单页。
+
+**根侧下一步**：8903 排期消费这两条端点即触发本计划 W6（= ARCH-005 对照与质量度量、ARCH-006 块编辑写入与
+合并回显）。可联调产物：b01 `86ab56ae2b6c`、b05 `185a37d55985`、b11 `bbe0d401ce83`（各 20 页，几何、
+块类型、`latex`、`index` 可信，丢弃 0）；`af_block_edits` 现 0 行，无历史迁移负担。
+**环境侧提醒**：模型容器与 WSL 环境自 2026-09-22 起归 QED-Engine 图像模型维护线（[operations.md](../guides/operations.md)
+两条根因判据），本仓库不再代调环境。
 
 ## 承载 ARCH-005（解析对照与质量度量：页图 vs 重渲染叠框与质量信号进对照视图）
 
