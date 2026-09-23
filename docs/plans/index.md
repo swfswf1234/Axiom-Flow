@@ -1,7 +1,7 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-09-22
+最后更新：2026-09-23
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
@@ -24,7 +24,8 @@
 - PLAN-006 解析状态语义收口（Axiom-Flow）已完成（2026-09-21），计划按 `Delete` 删除；语义事实源
   固定为 [ADR 0007](../adr/0007-parse-status-semantics.md) + [api.md 状态机表](../architecture/api.md)
   + [database-design.md 列语义](../architecture/database-design.md)
-  + [parsing-pipeline.md 条文 S1~S7](../design/parsing-pipeline.md)，运维边界见
+  + [parsing-management.md 的 `PM-8`~`PM-14`](../design/parsing-management.md)
+  （2026-09-23 叙述框架重整前编号为 S1~S7，原载 `parsing-pipeline.md`），运维边界见
   [operations.md](../guides/operations.md)；壳的完整内容见提交 `9034a19`
   （`git show 9034a19:docs/plans/2026-09-21-parse-status-semantics.md`），关闭证据见
   [completed.md](../trackers/completed.md) PLAN-006 / DEFECT-006 / DEFECT-007 行。
@@ -32,7 +33,8 @@
   计划按 **`Retain`** 归档至
   [history/plans/2026-09](../history/plans/2026-09/2026-09-20-req080-parse-version-layout.md)（保留
   根仓库需求对表 R1~R10、本仓库现状约束 L1~L10 与条文 V1~V10 的**推导依据**）；运行时事实源不在壳内，
-  而以晋升后的 [parsing-pipeline.md「解析版本与生效指针」](../design/parsing-pipeline.md)、
+  而以晋升后的 [parsing-pipeline.md 版本条文 `PP-14`~`PP-18`](../design/parsing-pipeline.md)
+  与 [parsing-management.md `PM-6`/`PM-11`](../design/parsing-management.md)、
   [api.md](../architecture/api.md)、[database-design.md](../architecture/database-design.md) 为准；
   关闭证据见 [completed.md](../trackers/completed.md) PLAN-004 与 REQ-080 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-20-req080-parse-version-layout.md` 处须改指上述
@@ -49,6 +51,24 @@
   [completed.md](../trackers/completed.md) PLAN-003 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-20-parse-live-bringup.md` 处须改指上述归档位置
   （本批已同步 `docs/adr/0007`、`docs/trackers/*`、`scripts/tmp/probe_mineru_api.py`）。
+- PLAN-010 非公开管理端点一键清除（Axiom-Flow）已完成（2026-09-23，W1~W7 全绿后关闭），计划按 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-23-admin-purge-endpoint.md)（保留真机演练的
+  dry-run 清单、`af_*` 整表备份锚点与首轮 K6 缺陷的归因链，以及「不对外开放」如何被拆成可测三件事的
+  推导依据）；运行时事实源不在壳内，而以晋升后的 [api.md「非公开管理面」](../architecture/api.md)、
+  [database-design.md 条文 9 例外](../architecture/database-design.md)、
+  [parsing-management.md 端点行](../design/parsing-management.md) 与 [operations.md runbook](../guides/operations.md) 为准；
+  关闭证据见 [completed.md](../trackers/completed.md) PLAN-010 / ARCH-024 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-23-admin-purge-endpoint.md` 处须改指上述归档位置
+  （本批已同步 `docs/trackers/todo.md`、`docs/trackers/project-status.md`）。
+- PLAN-011 清除端点书目录枚举改深度无关（Axiom-Flow）已完成（2026-09-23，当日立项当日关闭），计划按
+  **`Retain`** 归档至 [history/plans/2026-09](../history/plans/2026-09/2026-09-23-purge-book-dir-depth-agnostic.md)
+  （保留业务侧首次 dry-run 暴露的缺陷读数、S1~S6 逐条判定与 **2026-09-23 业务侧全项目真删 + 书目回灌**
+  的 D 类留档：`deleted`={17,24,1015,2,4 目录}、`parsed/` 文件数 7379 ⇒ 0、回灌 `synced:17`）；
+  运行时事实源不在壳内，而以晋升后的 [api.md 磁盘作用域段](../architecture/api.md)（识别只看产物标记）与
+  [operations.md runbook 第 2 步](../guides/operations.md)（核对 `targets` 层数形状）为准；
+  关闭证据见 [completed.md](../trackers/completed.md) PLAN-011 / ARCH-026 行。
+  **归档判定本为 `Delete`，因壳与修复均未提交（用户「暂不推送」且本轮未要求 commit）⇒「Git 锚点有效」
+  不成立，改判 `Retain`；后续提交完成后可在下一轮按 `Delete` 重判并删壳。**
 - PLAN-007 全本解析按页窗口分块提交与空白页合法化（Axiom-Flow）已完成（2026-09-22，S1~S5 逐条判定后
   关闭；同日用户裁决「环境侧与根侧复测归根仓库图像模型维护线」⇒ 原条文里的根侧确认移出本计划），
   计划按 **`Retain`** 归档至
@@ -60,3 +80,15 @@
   [completed.md](../trackers/completed.md) PLAN-007 / REQ-086 / REQ-087 / ARCH-009 / ARCH-019 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-22-req086-whole-book-window.md` 处须改指上述归档位置
   （本批已同步 PLAN-008 壳、`docs/trackers/*` 与 PLAN-003 归档壳）。
+- PLAN-012 设计叙述框架重整（Axiom-Flow）已完成（2026-09-23，当日立项、W2~W7 当日执行完毕后关闭），
+  计划按 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-23-design-narrative-framework.md)（保留
+  S1~S6 逐条判定、「现有章节 → 新骨架」**逐节映射**与三条硬规则的立法理由——即六段归属**为什么这样分**
+  的唯一推导依据）；运行时事实源不在壳内，而以重整后的
+  [parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)、
+  [model-integration.md](../design/model-integration.md) 与 [design/index.md](../design/index.md) 为准；
+  关闭证据见 [completed.md](../trackers/completed.md) PLAN-012 行，长期行 ARCH-010 保持 `In Progress`。
+  **归档判定本为 `Delete`，因壳与 `docs/design/` 改动均未提交（用户「暂不推送」且本轮未要求 commit）
+  ⇒「Git 锚点有效」不成立，改判 `Retain`；后续提交完成后可在下一轮按 `Delete` 重判并删壳。**
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-23-design-narrative-framework.md` 处须改指上述归档位置
+  （本批已同步 `docs/design/` 三篇「叙述框架」行与 `docs/trackers/project-status.md`）。
