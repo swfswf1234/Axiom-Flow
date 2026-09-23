@@ -10,6 +10,10 @@
 密钥（`API_KEY`、`QED_DB_PASSWORD`）只经环境读取，绝不进入 `Settings` 的 repr；
 `AXIOM_API_KEY` 已退役，无回退。缺密钥时相关能力降级，不阻塞启动。
 
+**例外：管理面 token**（PLAN-010）——`QED_ADMIN_TOKEN` 与 `QED_DB_PASSWORD` 同级（不入 repr/日志），
+但它**不是「缺了就降级」的密钥**：`QED_ADMIN_ENABLED=1` 而它为空时 `require_admin_configured()` 抛
+`AdminConfigError`，服务拒绝启动。开关缺省为关（此时路由不挂载，`QED_ADMIN_TOKEN` 无需配置）。
+
 已删除且不保留别名：`QED_API_SELECT`、`QED_LLM_GATEWAY_URL`、`QED_LLM_TIMEOUT`、
 `QED_PROXY`、`QED_API_PROVIDER`、`QED_MODEL`、`QED_EMBEDDING_MODEL`、`AXIOM_FLOW_DATA_DIR`、
 `AXIOM_PADDLEOCR_URL`；MinerU 直连地址读 `QED_OCR_MODEL_URL`（5002，`QED_MINERU_URL` 已删除）。
@@ -45,6 +49,26 @@ def _default_data_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "data"
 
 
+class AdminConfigError(RuntimeError):
+    """管理面启用却无 token：拒绝启动（ADR 0004 无静默兜底）。异常文本不含 token 值。"""
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    """bool 转换：`1/true/yes/on` 为真；坏值一律按 `default`（关）。
+
+    开关的容错方向必须是「关」——把 `QED_ADMIN_ENABLED=ture` 这类拼错判成「启用」等于凭空多出
+    一个管理面。因此这里不抛错、只回落 False。
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     data_dir: Path = _default_data_dir()
@@ -59,10 +83,19 @@ class Settings:
     db_user: str = "root"
     db_password: str = field(default="", repr=False)
     port: int = 8902
+    admin_enabled: bool = False  # 非公开管理面总开关（缺省关：路由根本不挂载，PLAN-010）
+    admin_token: str = field(default="", repr=False)  # 管理面 token；启用时必填，绝不进 repr/日志
 
     @property
     def db_configured(self) -> bool:
         return bool(self.db_password)
+
+    def require_admin_configured(self) -> None:
+        """fail-closed：`admin_enabled` 为真但 token 为空 ⇒ 启动失败，而不是降级成无凭据管理面。"""
+        if self.admin_enabled and not self.admin_token:
+            raise AdminConfigError(
+                "QED_ADMIN_ENABLED=1 必须同时配置 QED_ADMIN_TOKEN；已拒绝启动（不静默放行）。"
+            )
 
 
 def _to_int(value: Any, default: int) -> int:
@@ -85,6 +118,8 @@ _ENV_MAP = {
     "QED_DB_USER": ("db_user", str),
     "QED_DB_PASSWORD": ("db_password", str),
     "AXIOM_PORT": ("port", partial(_to_int, default=8902)),
+    "QED_ADMIN_ENABLED": ("admin_enabled", _to_bool),
+    "QED_ADMIN_TOKEN": ("admin_token", str),
 }
 
 # 数据根键：根 .env 统一数据根（本仓库不再有私有覆盖键）。

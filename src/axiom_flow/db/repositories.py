@@ -222,6 +222,22 @@ class BookRepository:
         self.session.flush()
         return True
 
+    def delete_for_book(self, book_id: str) -> int:
+        """管理面清除原语：按书目删 af_books 行并回报行数（DDL 禁用，ADR 0005）。
+
+        与 `delete()` 的分工是语义而非实现：`delete()` 服务 ② 类端点，需要「行不存在 ⇒ 404」
+        的布尔判断；本方法服务一键清除，必须报出实删行数且不存在时不算失败。
+        """
+        deleted = self.session.execute(delete(AfBook).where(AfBook.book_id == book_id)).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+    def delete_all(self) -> int:
+        """管理面全项目清除原语：整表 DML 清空（书目可经 `POST /books/sync` 重建）。"""
+        deleted = self.session.execute(delete(AfBook)).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
 
 class ParseJobRepository:
     """af_parse_jobs：任务状态与进度。"""
@@ -357,6 +373,33 @@ class ParseJobRepository:
         self.session.flush()
         return rows
 
+    def count_active(self, book_ids: Sequence[str] | None = None) -> int:
+        """在飞任务计数：`queued`/`running` 是 ADR 0007 唯一的「活动」判据。
+
+        `book_ids=None` 表示全项目作用域；`[]` 表示作用域为空，必须返回 0 而不是退化成全表，
+        否则按书目清除会被不相干书的在飞任务挡住。
+        """
+        if book_ids is not None and not book_ids:
+            return 0
+        stmt = select(func.count()).select_from(AfParseJob).where(
+            AfParseJob.status.in_(["queued", "running"])
+        )
+        if book_ids is not None:
+            stmt = stmt.where(AfParseJob.book_id.in_(list(book_ids)))
+        return int(self.session.scalar(stmt) or 0)
+
+    def delete_for_book(self, book_id: str) -> int:
+        """删除该书全部任务行（含历史版本）：与 `DELETE /books/{id}` 的「保留任务行」相反，
+        只由管理面一键清除调用（PLAN-010 / ARCH-024 例外条文）。"""
+        deleted = self.session.execute(delete(AfParseJob).where(AfParseJob.book_id == book_id)).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+    def delete_all(self) -> int:
+        deleted = self.session.execute(delete(AfParseJob)).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
 
 class PageRepository:
     """af_pages：一页在**一个解析版本内**的状态与质量信号。"""
@@ -440,6 +483,12 @@ class PageRepository:
     def delete_for_book(self, book_id: str) -> int:
         """删除整本书的页行（legacy 根视图 + 所有真实版本）：书目级删除没有「保留哪个版本」的语义。"""
         deleted = self.session.execute(delete(AfPage).where(AfPage.book_id == book_id)).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+    def delete_all(self) -> int:
+        """管理面全项目清除原语：整表清空所有版本的页行（PLAN-010）。"""
+        deleted = self.session.execute(delete(AfPage)).rowcount
         self.session.flush()
         return int(deleted or 0)
 
@@ -533,5 +582,11 @@ class EditRepository:
     def delete_for_book(self, book_id: str) -> int:
         """删除整本书的编辑行（所有版本）：书目删除不留孤儿覆盖层，页行与文件同一作用域。"""
         deleted = self.session.execute(delete(AfBlockEdit).where(AfBlockEdit.book_id == book_id)).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+    def delete_all(self) -> int:
+        """管理面全项目清除原语：整表清空人工编辑（不可回滚，需事前 `af_*` 备份）。"""
+        deleted = self.session.execute(delete(AfBlockEdit)).rowcount
         self.session.flush()
         return int(deleted or 0)

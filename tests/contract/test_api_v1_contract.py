@@ -13,13 +13,13 @@ from pathlib import Path
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from axiom_flow.api.main import create_app
-from axiom_flow.config import load_settings
-from axiom_flow.db.models import AfPage, AfParseJob, Base
+from axiom_flow.config import AdminConfigError, load_settings
+from axiom_flow.db.models import AfBlockEdit, AfBook, AfPage, AfParseJob, Base
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
@@ -131,15 +131,25 @@ def _build(
     engine_factory=None,
     book_pages: int = 2,
     parse_window_size: int | None = None,
+    admin_enabled: bool = False,
+    admin_token: str | None = "",
 ):
-    """隔离数据根 + SQLite 内存库 + 假引擎；返回 (client, session_factory)。"""
+    """隔离数据根 + SQLite 内存库 + 假引擎；返回 (client, session_factory)。
+
+    管理面两参数**始终显式传入**（缺省 `admin_enabled=False`）：不传就会读到开发者 `.env` 里的
+    `QED_ADMIN_*`，同一份测试在两台机器上语义不同。
+    """
     monkeypatch.chdir(tmp_path)
     data_root = tmp_path / "data"
     raw_dir = data_root / "raw" / "math-advanced" / "math_analysis"
     raw_dir.mkdir(parents=True)
     _make_pdf(raw_dir / "book.pdf", pages=book_pages)
     settings = load_settings(
-        data_dir=data_root, ocr_engine=ocr_engine, parse_window_size=parse_window_size
+        data_dir=data_root,
+        ocr_engine=ocr_engine,
+        parse_window_size=parse_window_size,
+        admin_enabled=admin_enabled,
+        admin_token=admin_token,
     )
     db_engine = create_engine(
         "sqlite+pysqlite://",
@@ -1235,3 +1245,401 @@ class TestIngestIdempotency:
             with session_factory() as session:
                 assert session.scalars(select(AfPage)).all() == []
                 assert len(session.scalars(select(AfParseJob)).all()) == 1
+
+
+PURGE_URL = "/api/v1/admin/purge"
+PURGE_CONFIRM = "PURGE"
+ADMIN_TOKEN = "af-admin-contract-token"
+B05_DIR = "parsed/math-advanced/math_analysis/mathanalysis-b05"
+B01_DIR = "parsed/math-advanced/math_analysis/linearalgebra-b01"
+
+
+def _admin_headers(token: str = ADMIN_TOKEN) -> dict[str, str]:
+    return {"X-QED-Admin-Token": token}
+
+
+def _admin_build(tmp_path, monkeypatch, *, token: str = ADMIN_TOKEN):
+    return _build(tmp_path, monkeypatch, admin_enabled=True, admin_token=token)
+
+
+def _fail_rmtree(*_args, **_kwargs):
+    raise OSError("磁盘忙（测试注入）")
+
+
+class TestAdminPurgeEndpoint:
+    """非公开管理面 `POST /api/v1/admin/purge`（PLAN-010 / ARCH-024）：S1~S6 逐条守护。
+
+    隔离与其余契约测试同一（SQLite + 临时数据根 + 假引擎）；管理面开关在测试里**显式**传入，
+    默认态由 `test_admin_route_not_mounted_by_default` 反向守护。
+    """
+
+    @staticmethod
+    def _book_root(tmp_path, book_id: str, domain_id: str = "math-advanced") -> Path:
+        return tmp_path / "data" / "parsed" / domain_id / "math_analysis" / book_id
+
+    def _seed(self, client: TestClient, book_id: str, *, domain_id: str = "math-advanced") -> str:
+        """sync → ingest → 解析（假引擎同步执行完）→ 一条块编辑，返回 job_id。"""
+        synced = client.post(
+            "/api/v1/books/sync",
+            json=[
+                {
+                    "book_id": book_id,
+                    "domain_id": domain_id,
+                    "course_id": "math_analysis",
+                    "course_name": "数学分析",
+                    "knowledge_id": "kt-mathanalysis-3",
+                    "title": f"书目 {book_id}",
+                    "part": "教程",
+                    "display_title": f"展示 {book_id}",
+                    "authors": [{"name": "Walter Rudin", "role": "author"}],
+                    "file_path": "raw/math-advanced/math_analysis/book.pdf",
+                }
+            ],
+        )
+        assert synced.status_code == 200, synced.text
+        _ingest(client, book_id)
+        created = client.post("/api/v1/parse-jobs", json={"book_id": book_id})
+        assert created.status_code == 202, created.text
+        job_id = created.json()["id"]
+        edited = client.put(
+            f"/api/v1/books/{book_id}/pages/1/blocks/0/edit",
+            json={"verdict": "ok", "note": "已核对"},
+        )
+        assert edited.status_code == 200, edited.text
+        return job_id
+
+    def _counts(self, session_factory) -> dict[str, int]:
+        with session_factory() as session:
+            return {
+                table: int(session.scalar(select(func.count()).select_from(model)))
+                for table, model in (
+                    ("af_books", AfBook),
+                    ("af_parse_jobs", AfParseJob),
+                    ("af_pages", AfPage),
+                    ("af_block_edits", AfBlockEdit),
+                )
+            }
+
+    def _add_job(self, session_factory, book_id: str, job_id: str, status: str) -> None:
+        with session_factory() as session:
+            ParseJobRepository(session).create(
+                ParseJobRow(job_id=job_id, book_id=book_id, engine="mineru", status=status)
+            )
+            session.commit()
+
+    def test_admin_route_not_mounted_by_default(self, tmp_path, monkeypatch):
+        """S1：默认不挂载 ⇒ 404（不是 405/403），且 OpenAPI 不收录该路径。"""
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            response = client.post(PURGE_URL, json={"scope": {"all": True}})
+
+            assert response.status_code == 404
+            assert PURGE_URL not in client.get("/openapi.json").json()["paths"]
+
+    def test_enabled_without_token_fails_at_startup(self, tmp_path, monkeypatch):
+        """S2 反向：启用却无 token ⇒ 拒绝启动，不静默放行成「无凭据管理面」。"""
+        with pytest.raises(AdminConfigError):
+            _build(tmp_path, monkeypatch, admin_enabled=True, admin_token="")
+
+    def test_missing_and_wrong_token_are_401(self, tmp_path, monkeypatch):
+        test_client, _ = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            body = {"scope": {"all": True}}
+
+            assert client.post(PURGE_URL, json=body).status_code == 401
+            assert client.post(PURGE_URL, json=body, headers=_admin_headers("nope")).status_code == 401
+
+    def test_dry_run_is_default_and_touches_nothing(self, tmp_path, monkeypatch):
+        """S3：缺省即演练 ⇒ 给将删清单与计数，磁盘与库零改动。"""
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            self._seed(client, "linearalgebra-b01")
+            before = self._counts(session_factory)
+
+            response = client.post(PURGE_URL, json={"scope": {"all": True}}, headers=_admin_headers())
+
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            assert payload["dry_run"] is True
+            assert sorted(payload["targets"]) == sorted([B05_DIR, B01_DIR])
+            assert payload["deleted"]["af_books"] == before["af_books"]
+            assert payload["deleted"]["directories"] == 2
+            assert payload["failures"] == []
+            assert self._counts(session_factory) == before
+            assert self._book_root(tmp_path, "mathanalysis-b05").is_dir()
+
+    def test_real_delete_requires_verbatim_confirm(self, tmp_path, monkeypatch):
+        """S3 第二道闸：`dry_run:false` 还须逐字 `confirm`——缺省与小写都不算确认。"""
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            before = self._counts(session_factory)
+
+            missing = client.post(
+                PURGE_URL, json={"scope": {"all": True}, "dry_run": False}, headers=_admin_headers()
+            )
+            wrong = client.post(
+                PURGE_URL,
+                json={"scope": {"all": True}, "dry_run": False, "confirm": "purge"},
+                headers=_admin_headers(),
+            )
+
+            assert missing.status_code == 400
+            assert wrong.status_code == 400
+            assert self._counts(session_factory) == before
+            assert self._book_root(tmp_path, "mathanalysis-b05").is_dir()
+
+    def test_book_scope_purge_deletes_four_tables_and_dir(self, tmp_path, monkeypatch):
+        """按书目清除：四表行含 `af_parse_jobs` 一起走（条文 9 例外），他书完好。"""
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            self._seed(client, "linearalgebra-b01")
+            # 他书有在飞任务：按本清除只守自己作用域，不被别书阻塞
+            self._add_job(session_factory, "linearalgebra-b01", "job-other-queued", "queued")
+
+            response = client.post(
+                PURGE_URL,
+                json={
+                    "scope": {"book_ids": ["mathanalysis-b05"]},
+                    "dry_run": False,
+                    "confirm": PURGE_CONFIRM,
+                },
+                headers=_admin_headers(),
+            )
+
+            assert response.status_code == 200, response.text
+            assert response.json()["deleted"] == {
+                "af_books": 1,
+                "af_parse_jobs": 1,
+                "af_pages": 2,
+                "af_block_edits": 1,
+                "directories": 1,
+            }
+            assert not self._book_root(tmp_path, "mathanalysis-b05").exists()
+            assert self._book_root(tmp_path, "linearalgebra-b01").is_dir()
+            with session_factory() as session:
+                assert (
+                    session.scalars(select(AfBook).where(AfBook.book_id == "mathanalysis-b05")).all()
+                    == []
+                )
+                assert (
+                    session.scalars(
+                        select(AfParseJob).where(AfParseJob.book_id == "mathanalysis-b05")
+                    ).all()
+                    == []
+                )
+                assert len(session.scalars(select(AfParseJob)).all()) == 2
+
+    def test_in_flight_in_scope_returns_409(self, tmp_path, monkeypatch):
+        """S5：自己作用域内有 `queued`/`running` ⇒ 409 且零删除（不留半删状态）。"""
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            self._add_job(session_factory, "mathanalysis-b05", "job-running-here", "running")
+            before = self._counts(session_factory)
+
+            response = client.post(
+                PURGE_URL,
+                json={
+                    "scope": {"book_ids": ["mathanalysis-b05"]},
+                    "dry_run": False,
+                    "confirm": PURGE_CONFIRM,
+                },
+                headers=_admin_headers(),
+            )
+
+            assert response.status_code == 409
+            assert self._counts(session_factory) == before
+            assert self._book_root(tmp_path, "mathanalysis-b05").is_dir()
+
+    def test_all_scope_purge_then_idempotent_rerun(self, tmp_path, monkeypatch):
+        """全项目真删 + S6 幂等：第二次「没什么可删」是 200 全零，不是失败。"""
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            self._seed(client, "linearalgebra-b01")
+
+            first = client.post(
+                PURGE_URL,
+                json={"scope": {"all": True}, "dry_run": False, "confirm": PURGE_CONFIRM},
+                headers=_admin_headers(),
+            )
+            second = client.post(
+                PURGE_URL,
+                json={"scope": {"all": True}, "dry_run": False, "confirm": PURGE_CONFIRM},
+                headers=_admin_headers(),
+            )
+
+            assert first.status_code == 200, first.text
+            assert first.json()["deleted"]["af_books"] == 2
+            assert self._counts(session_factory) == {
+                "af_books": 0,
+                "af_parse_jobs": 0,
+                "af_pages": 0,
+                "af_block_edits": 0,
+            }
+            # 磁盘作用域 = 书目目录；空的 domain/course 父级不裁剪（operations.md 同一口径）
+            assert not self._book_root(tmp_path, "mathanalysis-b05").exists()
+            assert not self._book_root(tmp_path, "linearalgebra-b01").exists()
+            assert self._book_root(tmp_path, "mathanalysis-b05").parent.is_dir()
+            assert second.status_code == 200, second.text
+            assert second.json()["targets"] == []
+            assert second.json()["failures"] == []
+            assert second.json()["deleted"] == {
+                "af_books": 0,
+                "af_parse_jobs": 0,
+                "af_pages": 0,
+                "af_block_edits": 0,
+                "directories": 0,
+            }
+
+    def test_scope_shape_violations(self, tmp_path, monkeypatch):
+        """作用域没有默认值：皆缺/冲突 400，非法路径段与未知字段 422，且一律零删除。"""
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            before = self._counts(session_factory)
+            cases = [
+                ({"scope": {}}, 400),
+                ({"scope": {"all": True, "book_ids": ["mathanalysis-b05"]}}, 400),
+                ({"scope": {"book_ids": ["../escape"]}}, 422),
+                ({"scope": {"all": True}, "unknown": 1}, 422),
+            ]
+
+            responses = [
+                client.post(PURGE_URL, json=body, headers=_admin_headers()) for body, _ in cases
+            ]
+
+            for (_, expected), response in zip(cases, responses, strict=True):
+                assert response.status_code == expected, response.text
+            assert self._counts(session_factory) == before
+            assert self._book_root(tmp_path, "mathanalysis-b05").is_dir()
+
+    def test_unsafe_stored_segment_refused_before_any_deletion(self, tmp_path, monkeypatch):
+        """S4：磁盘目标越界 ⇒ 整请求 400、一个都不删（不信任库里的历史脏值）。"""
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            self._seed(client, "linearalgebra-b01")
+            with session_factory() as session:
+                book = session.get(AfBook, "mathanalysis-b05")
+                assert book is not None
+                book.domain_id = ".."  # 绕过 sync 校验的直写脏值（存量或人工修数）
+                session.commit()
+            before = self._counts(session_factory)
+
+            response = client.post(
+                PURGE_URL,
+                json={"scope": {"all": True}, "dry_run": False, "confirm": PURGE_CONFIRM},
+                headers=_admin_headers(),
+            )
+
+            assert response.status_code == 400
+            assert self._counts(session_factory) == before
+            assert self._book_root(tmp_path, "linearalgebra-b01").is_dir()
+
+    def test_unsafe_segment_beats_in_flight_conflict(self, tmp_path, monkeypatch):
+        """400 优先于 409：脏落点与在飞任务同时命中时先报作用域违规（真机演练 K6 判例）。
+
+        两条守卫各自成立过，但真机上同时命中才暴露出先后次序——按本形态的 409 判定不得抢在
+        落点守卫之前，否则把「配置已脏」误报成「解析在飞」，运维据此等任务跑完仍会撞同一堵墙。
+        """
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            self._seed(client, "linearalgebra-b01")
+            self._add_job(session_factory, "linearalgebra-b01", "job-queued-here", "queued")
+            with session_factory() as session:
+                book = session.get(AfBook, "mathanalysis-b05")
+                assert book is not None
+                book.domain_id = ".."
+                session.commit()
+            before = self._counts(session_factory)
+
+            response = client.post(
+                PURGE_URL,
+                json={"scope": {"all": True}, "dry_run": False, "confirm": PURGE_CONFIRM},
+                headers=_admin_headers(),
+            )
+
+            assert response.status_code == 400, response.text
+            assert self._counts(session_factory) == before
+            assert self._book_root(tmp_path, "linearalgebra-b01").is_dir()
+
+    def test_disk_failure_is_visible_and_keeps_db_rows(self, tmp_path, monkeypatch):
+        """S6：磁盘删除失败 ⇒ `failures` 明写、该书库行保留（可重跑），不假装成功。"""
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        monkeypatch.setattr("axiom_flow.api.admin.rmtree", _fail_rmtree)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+            before = self._counts(session_factory)
+
+            response = client.post(
+                PURGE_URL,
+                json={
+                    "scope": {"book_ids": ["mathanalysis-b05"]},
+                    "dry_run": False,
+                    "confirm": PURGE_CONFIRM,
+                },
+                headers=_admin_headers(),
+            )
+
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            assert payload["deleted"]["directories"] == 0
+            assert payload["deleted"]["af_books"] == 0
+            assert len(payload["failures"]) == 1
+            assert "mathanalysis-b05" in payload["failures"][0]
+            assert self._counts(session_factory) == before
+
+    def test_response_leaks_neither_paths_nor_token(self, tmp_path, monkeypatch):
+        """S4 + 凭据纪律：响应只给相对路径与计数，绝不含绝对路径与 token。"""
+        test_client, _ = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b05")
+
+            response = client.post(PURGE_URL, json={"scope": {"all": True}}, headers=_admin_headers())
+
+            assert response.status_code == 200, response.text
+            assert ADMIN_TOKEN not in response.text
+            assert str(tmp_path / "data") not in response.text
+
+    def test_empty_domain_book_dir_is_purged_whole(self, tmp_path, monkeypatch):
+        """S5 反向：`domain_id=''`（业务库 17 本的真实形态）时书目录只有**两层**。
+
+        固定深度 glob 会把 `pages/`、`versions/` 当成书目录：清除后 `book.json`/`manifest.json`
+        与空书目录残留，第二次清除的清单不再是空 ⇒ 「重跑幂等」在真实布局下不成立。
+        """
+        test_client, session_factory = _admin_build(tmp_path, monkeypatch)
+        with test_client as client:
+            self._seed(client, "mathanalysis-b09", domain_id="")
+            book_dir = self._book_root(tmp_path, "mathanalysis-b09", domain_id="")
+            assert book_dir.is_dir() and (book_dir / "book.json").is_file()
+
+            dry = client.post(
+                PURGE_URL, json={"scope": {"all": True}}, headers=_admin_headers()
+            )
+            assert dry.json()["targets"] == ["parsed/math_analysis/mathanalysis-b09"]
+
+            response = client.post(
+                PURGE_URL,
+                json={"scope": {"all": True}, "dry_run": False, "confirm": PURGE_CONFIRM},
+                headers=_admin_headers(),
+            )
+
+            assert response.status_code == 200, response.text
+            assert response.json()["failures"] == []
+            assert not book_dir.exists(), f"书目录残留：{[p.name for p in book_dir.iterdir()]}"
+            assert self._counts(session_factory) == dict.fromkeys(
+                ("af_books", "af_parse_jobs", "af_pages", "af_block_edits"), 0
+            )
+
+            again = client.post(
+                PURGE_URL,
+                json={"scope": {"all": True}, "dry_run": False, "confirm": PURGE_CONFIRM},
+                headers=_admin_headers(),
+            )
+            assert again.json()["targets"] == []
+            assert again.json()["deleted"].get("directories", 0) == 0

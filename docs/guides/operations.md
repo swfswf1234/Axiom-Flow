@@ -1,7 +1,7 @@
 # 运维指南
 
 状态：Current
-最后更新：2026-09-21
+最后更新：2026-09-23
 
 ## 8902 API 服务生命周期
 
@@ -51,7 +51,7 @@
 | `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/` | **根视图**：`book.json`、`pages/p<NNNN>.png`（150 DPI 页图正本，ingest 产物）、`manifest.json`；重新 ingest 只原子替换这三者 |
 | `…/<book_id>/versions/<job_id>/` | **一次解析任务 = 一个版本**（PLAN-004 / REQ-080）：`book.json`、`pages/p<NNNN>.{png,md,blocks.json}`、`chunks.json`、`manifest.json`；生效版本由 `af_books.active_job_id` 指认，页图为根视图页图的**硬链接**（同一页图在 N 个版本不重复占盘） |
 | `<QED_DATA_ROOT>/raw/<domain_id>/<course_id>/*.pdf` | 源书库（只读，QED-Tracker 写入；如 `math-advanced/math_analysis/`） |
-| `<QED_DATA_ROOT>/tmp/` | **本服务不写**：引擎中间产物只在内存（PLAN-003 条文 12 / PLAN-004 V10），`tmp/axiom-flow/<job_id>/` 一旦存在即缺陷 |
+| `<QED_DATA_ROOT>/tmp/` | **本服务不写**：引擎中间产物只在内存（[PP-6](../design/parsing-pipeline.md)），`tmp/axiom-flow/<job_id>/` 一旦存在即缺陷 |
 | `data/` | 仓库内探针与合成样本留档区（`data/probes/`，`.gitignore` 内不入版本库）；**不作数据根候选**，真实数据根唯一事实源是 `QED_DATA_ROOT` |
 
 产物只落 Windows 本地；WSL 不读写 Windows 文件系统（MinerU 容器不挂载 Windows 盘）。
@@ -187,6 +187,32 @@
   契约只承诺书目录，空目录不算残留缺陷；若要裁剪须先改 `design/parsing-management.md` 的删除契约。
 - **回滚**：无「撤销删除」路径，只能按备份还原 `af_*` + 重新 ingest/解析重建产物；执行前必须先
   导出 `af_books/af_pages/af_block_edits/af_parse_jobs` 四表并核对行数。
+
+## 管理面一键清除 runbook（`POST /api/v1/admin/purge`）
+
+契约与不变式见 [api.md「非公开管理面」节](../architecture/api.md)（PLAN-010 / ARCH-024）。这里只写
+操作口径。**它与 `DELETE /books/{id}` 的分工**：后者是面向消费方的常规删除，保留 `af_parse_jobs`
+审计行；前者是「先清后建」的运维重置，**连任务行一起清**、可按书目或全项目，且默认不挂载。
+
+1. **启用**：`.env` 加 `QED_ADMIN_ENABLED=1` 与 `QED_ADMIN_TOKEN=<自行生成的长随机串>`，重启服务。
+   只配 `ENABLED=1` 不配 token ⇒ 启动期 `AdminConfigError` 直接拒绝起服（fail-closed，不留无凭据的
+   删除接口）。用完把两行删掉再重启，让路由回到 404。token 绝不进 git、日志与任何回执文本。
+2. **演练**：`dry_run` 缺省即 true，响应给出 `targets`（相对 `parsed/` 的书目录）与将删计数。
+   把这份清单留存为本次操作的证据；数字与预期不符就停手，别按真删往下走。**核对 `targets` 的层数形状**：
+   每条都应是**书目录本身**，而不是它下面的 `pages/` 或 `versions/…`——出现后者说明目录识别被误判
+   （`domain_id`/`course_id` 为空时书目录只有两层，判例 ARCH-026 / PLAN-011），此时真删会留下
+   `book.json`/`manifest.json` 与空目录，必须停手。
+3. **备份**：导出 `af_books`/`af_parse_jobs`/`af_pages`/`af_block_edits` 四表并核对行数——本端点
+   **没有 undo**，产物目录只能靠重新 ingest + 解析重建。
+4. **真删**：`{"dry_run": false, "confirm": "PURGE", "scope": …}`。书目行落点越出 `parsed/` 返回
+   400（零删除）；作用域内有 `queued`/`running` 任务返回 409（零删除）——**落点判定在先**，收到 409
+   不代表库里干净，按 400 的条件再核一遍落点。响应 `failures` 非空就是
+   **没删干净**，按条目重跑同一请求即可（幂等），不要当作成功继续。
+5. **复核 + 回滚口径**：`GET /api/v1/books` 应为空或只剩未清除的书；重建走 `POST /api/v1/books/sync`
+   （书目从根库快照回来）→ ingest → 解析。
+
+**作用域纪律**：`scope.all=true` 打在真实数据根（`QED_DATA_ROOT=D:\coding\QED-Engine\dataset`）上就是
+**全项目清除**，属另一次 D 类批准，须用户逐次点头；演练与联调一律用 `qed_test` + 独立探针数据根。
 
 ## 故障排查
 

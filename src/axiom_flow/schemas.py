@@ -22,7 +22,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------- 数据根边界（PLAN-003 条文 7） ----------
 
@@ -510,3 +510,63 @@ class ParseJobListOut(BaseModel):
     total: int = 0
     limit: int = 50
     offset: int = 0
+
+
+# ---------- API：非公开管理面（PLAN-010 / ARCH-024） ----------
+
+
+class AdminPurgeScope(BaseModel):
+    """清除作用域：`all` 与 `book_ids` **互斥且必填**，且没有默认值。
+
+    「清哪些」猜不得：两者皆缺或同时给出由端点判 400（不进删除）。缺省即全删的接口一旦被人误调，
+    代价是不可回滚的产物与库行丢失，所以宁可让调用方每次显式说清范围。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    all: bool | None = Field(default=None, description="true = 全项目（af_* 四表全部行 + parsed/ 所有书目录）")
+    book_ids: list[str] | None = Field(
+        default=None, description="按书目清除（含其全部解析版本与任务行）；每项须为安全路径段"
+    )
+
+    @field_validator("book_ids")
+    @classmethod
+    def _validate_book_ids(cls, value: list[str] | None) -> list[str] | None:
+        for book_id in value or []:
+            if not re.match(SAFE_SEGMENT_PATTERN, book_id):
+                raise ValueError(f"book_id 含非法路径段：{book_id!r}")
+        return value
+
+
+class AdminPurgeCounts(BaseModel):
+    """清除计数：`dry_run` 下是**将删**计数，真删下是**已删**计数（两态形状相同）。"""
+
+    af_books: int = 0
+    af_parse_jobs: int = 0
+    af_pages: int = 0
+    af_block_edits: int = 0
+    directories: int = 0
+
+
+class AdminPurgeIn(BaseModel):
+    """`POST /api/v1/admin/purge` 请求体（双确认：`dry_run` 缺省 true + 逐字 `confirm`）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope: AdminPurgeScope
+    dry_run: bool = Field(default=True, description="缺省即演练：只回清单与计数，磁盘与库零改动")
+    confirm: str = Field(default="", description="仅 dry_run=false 时校验，须逐字为 PURGE")
+
+
+class AdminPurgeOut(BaseModel):
+    """清除结果自证：删了什么、删掉多少、哪些没成。
+
+    `targets` 是**相对数据根**的路径（绝对磁盘位置绝不进响应）；`failures` 是人可读中文摘要，
+    同样不含凭据与绝对路径。任一步失败不回滚已成功步，残行由下一次幂等清除收掉。
+    """
+
+    scope: AdminPurgeScope
+    dry_run: bool
+    targets: list[str] = Field(default_factory=list)
+    deleted: AdminPurgeCounts = Field(default_factory=AdminPurgeCounts)
+    failures: list[str] = Field(default_factory=list)

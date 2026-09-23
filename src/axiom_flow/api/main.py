@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from axiom_flow import __version__ as VERSION
+from axiom_flow.api.admin import mount_admin
 from axiom_flow.config import Settings, load_settings
 from axiom_flow.db.engine import create_engine_for
 from axiom_flow.db.models import AfBlockEdit, AfBook
@@ -160,6 +161,7 @@ def create_app(
             db_engine.dispose()
 
     app = FastAPI(title="Axiom-Flow", version=VERSION, lifespan=lifespan)
+    mount_admin(app, settings=settings, session_factory=session_factory)
 
     def db_session() -> Iterator[Session]:
         with session_factory() as session:

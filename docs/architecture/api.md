@@ -2,9 +2,9 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 持久化 + 异步 parse-jobs（提交期探活 503 + 引擎显式分派）+ 对照编辑 + 分块预览 + **解析版本布局读取面（`versions/<job_id>/` + 生效指针 + `GET /books/{id}/versions`）已实现 + 任务状态六态与进度/结局分列（ADR 0007）已实现；8900 透传适配待 REQ-001；`GET /parse-jobs` 作业列表与 `GET /books/{id}/pages` 页级状态清单均已实现（PLAN-008 W1 契约先行 → W3/W4 落地））
-最后更新：2026-09-22
-关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
+实现状态：Verified（8902 全部对外端点已实现并真机取证；8900 透传适配待根侧 REQ-001）
+最后更新：2026-09-23
+关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/api/admin.py`（管理面）、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_service_scripts.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)
 
@@ -33,12 +33,17 @@
 | ③ 解析结果与 PDF 对照 | `GET /books/{id}/manifest`、`/pages`、`/pages/{no}`、`/pages/{no}/image`、`PUT /blocks/{index}/edit`、`GET /pages/{no}/edits`、`GET /books/{id}/chunks`、`GET /books/{id}/versions`、`POST /parse-jobs`、`GET /parse-jobs`、`GET /parse-jobs/{id}` | 解析进度、逐页状态清单、对照供给、块编辑、分块预览、版本列举、作业列表 |
 | ④ 未来 RAG·知识图谱预留 | 见「④ 预留分类」节 | Milvus 接入占位、检索端点设计 |
 
+上表四类是**公共契约面**（8900/8903 消费）。另有一类**不进公共契约**的运维管理面：默认不挂载、
+凭管理 token、双确认，见「非公开管理面」节（PLAN-010 / ARCH-024）。
+
 **生效解析版本（2026-09-21，PLAN-004 / REQ-080）**：一本书的解析产物按版本落在
 `parsed/<domain>/<course>/<book_id>/versions/<job_id>/`，「哪一版生效」的唯一事实源是
 `af_books.active_job_id`（NULL = 根视图 legacy）。**所有读取端点（manifest/pages/image/chunks/
 edits）经该指针解析产物目录**，因此：① URL、响应结构与 `image_url` 字面量**零变化**，根仓库前端
 不需要适配；② 切版 = 单列 UPDATE，不改文件；③ 生效指针指向的版本目录缺失时**显式 404**，
 不静默回落根视图（ADR 0004 无自动兜底）。历史版本仅经 `GET /books/{id}/versions` 可见（只读列举）。
+**唯一例外**是管理面 `POST /api/v1/admin/purge`：它的目的就是把**所有**版本连库行一起清除，故不走
+生效指针作用域（见「非公开管理面」节）。
 
 ## 服务信息
 
@@ -111,7 +116,7 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 
 书目列表。返回 `BookOut` 列表（扩展字段 domain_id/course_id/course_name/knowledge_id/part/
 display_title/file_path/ingest_status/parse_status/pages_done/**active_job_id**/**last_parse_result**
-向前兼容）。`pages_done` 与 `active_job_id` 一致地描述**生效版本**（V3）；`active_job_id=null` 表示读
+向前兼容）。`pages_done` 与 `active_job_id` 一致地描述**生效版本**（PM-4）；`active_job_id=null` 表示读
 根视图。**进度与结局分列（ADR 0007）**：`parse_status` 只回答「做到哪」（`pending`/`parsing`），
 `last_parse_result` 只回答「上一次怎么结束」（`completed`/`partial`/`failed`/`interrupted`，`""` =
 从未有任务）——前端列表不必再看 `progress` 猜结局。
@@ -129,7 +134,8 @@ display_title/file_path/ingest_status/parse_status/pages_done/**active_job_id**/
 
 删除 af_books 行、该书**全部解析版本**的 `af_pages` 页行与 `af_block_edits` 编辑行（`?purge=true`
 时同时删除 `parsed/` 产物目录，含 `versions/` 子树）。`af_parse_jobs` 历史行保留为审计，不随删除
-清理。**错误：** 404。
+清理——**唯一例外**是管理面 `POST /api/v1/admin/purge`（见「非公开管理面」节，它按书目或全项目
+连任务行一起清除）。**错误：** 404。
 
 ### POST /api/v1/books/sync
 
@@ -146,7 +152,7 @@ display_title/file_path/ingest_status/parse_status/pages_done/**active_job_id**/
 
 渲染页图 + 生成 book.json（**不调模型**）：源 PDF（`QED_DATA_ROOT/<file_path>` 只读）→
 `parsed/<domain>/<course>/<book_id>/pages/p<NNNN>.png` + `book.json`（page_count/sha256）。
-响应：`{book_id, page_count, sha256, ingest_status}`。**重复 ingest 幂等且版本安全（V8）**：原子
+响应：`{book_id, page_count, sha256, ingest_status}`。**重复 ingest 幂等且版本安全（PM-16）**：原子
 替换的只是**根视图**（`book.json` + `pages/`），并作废根视图 `chunks.json`；`versions/` 子树
 **完整保留**（历史版本不因重新 ingest 失明）。DB 侧回置 `active_job_id=NULL`（生效指针回到根视图）、
 `parse_status=pending`、`pages_done=0`，并只清空 `job_id='legacy'` 的 `af_pages` 行（真实版本作用域
@@ -269,7 +275,7 @@ NULL → 书目录根 = 根视图 legacy）。
 `parsed/.../<book_id>/versions/<job_id>/`，并在运行时记录 `source_sha256`/`page_count` 自证
 （版本 ↔ 源 PDF 快照对应）。失败页跳过不中断：`failed_pages` 给出**结构化、不截断**的页码数组，
 `progress.error` 记录进行中失败页摘要（≤200 字符），终态摘要写 `error`（≤500 字符）——摘要会截断，
-页码不会丢（ADR 0007 决定 2）。**激活门槛（V3）= `completed` 判据本身**：目标页齐备且清单重算成功
+页码不会丢（ADR 0007 决定 2）。**激活门槛（PM-11）= `completed` 判据本身**：目标页齐备且清单重算成功
 才激活 `af_books.active_job_id`，同一次判定同时定 `status`，故「completed 但未激活」不可能；
 `partial`/`failed` 或中断**不激活**，产物保留不删（自然回滚 = 指针从未动过）。**受理前门槛**（顺序固定）：书目存在 → 已 ingest 校验 → **`pages` 越界 422**（逐页判
 `1 ≤ p ≤ af_books.page_count`，DEFECT-006；此前接受 `pages=[40,999]` 会在 `af_pages` 写出指向不存在
@@ -372,6 +378,87 @@ NULL → 书目录根 = 根视图 legacy）。
 - **知识图谱预留**：`formula.latex` 字段为数学解析器探索入口；块类型 + text 支持定义/定理
   语义识别。af_* 表扩展预留命名空间，不提前建表。
 
+## 非公开管理面（af_* 与产物一键清除）
+
+这一类**不属于上面四类公共契约**（PLAN-010 / ARCH-024，2026-09-23 用户裁决立项）：它是「先清后建」
+的运维通路，一次调用把 `af_*` 四表的解析侧数据与 `QED_DATA_ROOT/parsed/` 产物目录一起清掉，作用域
+可以是指定书目或全项目。**8900 网关与 8903 前端不得透传、不得消费**。
+
+「不对外开放」不靠网络实现——8902 本来就只绑 `127.0.0.1`。真实边界是三件事叠加：
+
+1. **默认不挂载**：`QED_ADMIN_ENABLED` 未置真 ⇒ 路由不进 app，请求得 **404**（不是 405/403，避免
+   泄漏管理面存在性）。
+2. **凭管理 token**：`QED_ADMIN_ENABLED=1` 而 `QED_ADMIN_TOKEN` 为空 ⇒ **启动即失败**
+   （`AdminConfigError`），不静默放行、不降级为「无凭据可用」（ADR 0004）。token 经
+   `X-QED-Admin-Token` 请求头逐字比对（`hmac.compare_digest`），缺失与错值同为 **401**。
+3. **双确认**：`dry_run` 缺省 `true`（只回「将删清单 + 计数」，零删除）；真删须显式
+   `dry_run:false` **且** `confirm` 逐字等于 `PURGE`，否则 **400**。
+
+### POST /api/v1/admin/purge
+
+请求（两形态）：
+
+```json
+{"scope": {"all": true}, "dry_run": true, "confirm": ""}
+{"scope": {"book_ids": ["mathanalysis-b05"]}, "dry_run": false, "confirm": "PURGE"}
+```
+
+| 字段 | 类型 | 默认 | 语义 |
+| --- | --- | --- | --- |
+| `scope.all` | bool | `false` | `true` = 全项目：`af_*` 四表**全部行** + `parsed/` 下所有书目录（含每个版本子树） |
+| `scope.book_ids` | str[] | — | 按书目：清这些书在四表的行（**含全部解析版本**，也含 `af_parse_jobs` 审计行）与其磁盘目录；每项须为安全路径段（违规 422） |
+| `dry_run` | bool | **`true`** | 缺省即演练：响应给清单与计数，磁盘与库**零改动** |
+| `confirm` | str | `""` | 仅 `dry_run:false` 时校验，须逐字为 `"PURGE"` |
+
+`scope.all` 与 `scope.book_ids` **互斥且必填**（两者皆缺或同时给出 → 400），且**没有默认值**——
+「清除范围」猜不得：缺省即报错比缺省即全删安全。
+
+响应 `AdminPurgeOut`：
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `scope` | object | 请求作用域原样回显 |
+| `dry_run` | bool | 本次是否为演练（`true` 时零删除） |
+| `targets` | str[] | 命中的书目录，**相对数据根**的路径（不含绝对路径与磁盘位置） |
+| `deleted` | object | `af_books`/`af_parse_jobs`/`af_pages`/`af_block_edits` 行数 + `directories` 目录数 |
+| `failures` | str[] | 人类可读中文失败项（逐项列出删除失败的对象与后果）；**不含**凭据与绝对路径 |
+
+`dry_run:true` 时 `deleted` 是**将删计数**（枚举得到、未执行），`dry_run:false` 时是**已删计数**；
+两态形状相同，客户端「先演练后真删」不必换解析逻辑。
+
+磁盘作用域＝**书目目录**（`parsed/<domain>/<course>/<book_id>`，含其下所有版本子树）；空的
+`domain`/`course` 父级不裁剪——与 `DELETE /books/{id}` 同一口径（[operations.md](../guides/operations.md)），
+`sync` 会复用这层骨架，多留一个空目录不构成脏数据。
+
+**书目录的识别只看产物标记、不看层数**：目录内存在 `book.json` 或 `pages/` 或 `versions/` 即为书目录，
+命中后不再下钻（版本目录不是书目录）。层数本身不可依赖——`domain_id`/`course_id` 为空串时 pathlib 拼接
+会**折叠空段**，书目录落在 `parsed/<course_id>/<book_id>/`（两层；业务库 17 本即此形态）。按固定三层
+匹配会把 `pages/`、`versions/` 误当书目录：真删后 `book.json`/`manifest.json` 与空书目录残留、重跑的
+`targets` 不为空 ⇒ 幂等不成立（判例 ARCH-026 / PLAN-011，回归用例
+`test_empty_domain_book_dir_is_purged_whole`）。遍历深度上限 3 层（`<domain>/<course>/<book>`）。
+
+**六条不变式**：
+
+- **库侧只碰 `af_*` 四表的行**：只用 DML，无 DDL、无 `DROP DATABASE`（与 ADR 0005 的同源纪律）；
+  共享库中其他项目的 `qt_*` 表不受影响。`af_books` 行同样清除——书目可经 `POST /books/sync` 从
+  根库重建，它不是本仓库的持久资产。
+- **作用域守卫**：磁盘目标经 `resolve()` 后必须落在 `QED_DATA_ROOT/parsed/` 之内，否则 **400 整请求
+  拒绝、零删除**。判据不止磁盘：作用域内**每条 `af_books` 行的落点路径**同样要过守卫——目录不存在
+  也要判，否则库里 `domain_id='..'` 的脏值会绕过磁盘枚举、被全表扫尾连行一起删掉（不信任存量脏值）。
+- **在飞拒删（409）**：作用域内存在 `queued`/`running` 任务行即拒绝且**零删除**——「边解析边删」会
+  留下半删状态。`interrupted`/`partial` 等终态不拦（它们正是待清理对象）。两条守卫同时命中时
+  **作用域守卫先判**（⇒ 400）：脏落点是配置问题，报成「等解析跑完」会把运维引向走不通的恢复路径。
+- **删除顺序＝先磁盘后库**：磁盘失败 ⇒ 库行原样保留（可重跑，读取面最多 404）；库失败 ⇒ 已删目录
+  **不回滚**，但残行必被下一次清除幂等收掉，且 `failures` 明写。**不做「假装成功」**（ADR 0004）。
+- **幂等**：重复清除（无匹配行/目录）返回 200 且 `deleted` 全 0、`failures` 空——「没什么可删」不是
+  失败。按书目形态**不判书目存在性**（与 `GET /parse-jobs?book_id=` 同一口径）。
+- **不可回滚**：本端点没有 undo。执行纪律＝先 `dry_run` 留清单，再备份 `af_*` 四表，最后真删
+  （见 [operations.md](../guides/operations.md)）；真实数据根上的全项目清除属**另一次 D 类批准**。
+
+**错误语义**：400 作用域违规 / `confirm` 缺失或错值；401 token 不匹配（含缺头）；404 管理面未启用；
+409 作用域内有活动任务；422 请求体形状违规（`book_ids` 非安全路径段、未知字段）。次序固定：
+`confirm` → 作用域（形状 + 落点）→ 在飞判定 → 删除，故脏落点必判 400 而非 409。
+
 ## 强制规则
 
 - 响应结构以 `src/axiom_flow/schemas.py` 为单一事实源；本文件与契约测试
@@ -384,6 +471,9 @@ NULL → 书目录根 = 根视图 legacy）。
   「哪一版生效」的事实源只有 `af_books.active_job_id` 一列，`active` 只能由它比出。
 - 错误响应不泄漏堆栈与凭据；模型服务不可达映射为可读中文错误信息。
 - 新增/变更端点：先更新本文件与契约测试，再实现（根仓库 REQ-002 文档治理）。
+- **管理面不得透传**（PLAN-010）：`/api/v1/admin/*` 不是公共契约——8900 网关与 8903 前端不得注册、
+  不得轮询、不得做成按钮；本仓库的运维通路经回环直连 8902。管理 token 绝不进任何响应、日志与
+  异常文本（与「敏感字段规则」同一条纪律）。
 
 ## 验证
 
@@ -393,7 +483,9 @@ NULL → 书目录根 = 根视图 legacy）。
   守护作业列表：六态原值、可重复 `status` 多值 OR、`created_at DESC, job_id DESC` 可复现翻页、
   `total` 为过滤后总数、不存在的书 200 空集、删书审计行仍列出且 `active=false`；`TestPageListEndpoint`
   守护页清单：`1..total` 连续覆盖、`pending` = 无页行、`parsed`+无产物如实暴露（读该页仍 404）、
-  `edit_count` 按版本作用域、`scope` 自证、生效目录缺失 404 不回落）。
+  `edit_count` 按版本作用域、`scope` 自证、生效目录缺失 404 不回落；`TestAdminPurgeEndpoint`
+  守护管理面：未启用即 404 且 `/openapi.json` 不收录、fail-closed 启动、token 缺失/错值 401、
+  `dry_run` 缺省零删除、缺 `confirm` 400、在飞任务 409、作用域越界不落库、脏落点与在飞同时命中判 400（守卫次序）、磁盘失败保留库行、响应只给相对路径与计数；真机两形态演练留档 `data/probes/purge-20260923/`（PLAN-010 W6：`qed_test` + 独立探针数据根，业务侧零写入自证）。
 - 全量门禁 `pytest tests -q` + `ruff check src tests`。
 - 手动冒烟：`python scripts/axiom_flow_service.py start --wait` → `GET /api/v1/health` 200 →
   `GET /api/v1/books` 返回书目 → `status` → `stop` → `status stopped`。

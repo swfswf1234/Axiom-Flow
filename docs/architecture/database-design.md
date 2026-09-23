@@ -2,8 +2,8 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（四表一次 Alembic 迁移 + 仓储层已实现；任务/页表语义按 PLAN-003 契约修正；**解析版本布局（`af_books.active_job_id` 生效指针 + 页/编辑表 `job_id` 作用域）由迁移 `20260920_0002` 落地，PLAN-004 / REQ-080**；**进度与结局分列（`af_books.last_parse_result` + `af_parse_jobs.failed_pages`）由迁移 `20260921_0001` 落地，PLAN-006 / ADR 0007**）
-最后更新：2026-09-21
+实现状态：Verified（af_* 四表与迁移 20260920_0002 / 20260921_0001 已落地并真机取证）
+最后更新：2026-09-23
 关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
 关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_migrations.py`、`tests/contract/test_architecture_documents.py`（本文档守护）
 关联 ADR：`docs/adr/0001-v2-exploration-direction.md`、`docs/adr/0004-model-boundary-and-pipeline-ownership.md`、根仓库 [ADR 0003](https://github.com/QED-Engine/qed-engine/blob/main/docs/history/adr/v0.1/0003-shared-qed-database-independence.md)（共享 qed 库独立性例外）
@@ -147,7 +147,7 @@ CREATE TABLE af_books (
 - **字段冗余**：课程归属（domain_id/course_id/course_name）冗余进表，前端只消费 8902
   `/books` 即可建树（8901 离线不影响树展示）。
 
-### 生效版本指针语义（V2/V3/V8）
+### 生效版本指针语义（PM-6 / PM-11 / PM-16）
 
 - **`active_job_id` 是「哪一版生效」的唯一事实源**：`af_parse_jobs` 上**不设布尔生效列**，同一事实
   两处存必漂移。切换/清空只经 `BookRepository.set_active_job()` 单列 UPDATE。
@@ -158,7 +158,7 @@ CREATE TABLE af_books (
 - **`pages_done` 描述生效版本**：与指针同事务语义下保持一致，避免进度条与所读产物不同版本。
 - **`NULL` 不是「无数据」而是「根视图」**：迁移前的存量产物与重新 ingest 后的作废态都落在这里，
   端点按 `NULL` 读书目录根，旧产物不因升级而失明。
-- **重新 ingest 只失效根视图（V8）**：`POST /books/{id}/ingest` 把 `active_job_id` 置 NULL、
+- **重新 ingest 只失效根视图（PM-16）**：`POST /books/{id}/ingest` 把 `active_job_id` 置 NULL、
   `parse_status` 置 `pending`、`pages_done` 归零，并只删除 `job_id='legacy'` 的 `af_pages` 行；
   历史版本（真实 `job_id`）的页行与产物**全部保留**，可经 `GET /books/{id}/versions` 定位。
 
@@ -190,7 +190,7 @@ CREATE TABLE af_parse_jobs (
   `AXIOM_OCR_ENGINE`，任务行记录最终执行所用引擎（未实现/未注册名称在提交期即报错，**不会**落行、
   也不回落）。`'mineru'` 的 DDL 兜底曾是静默回落入口，迁移 `20260920_0002` 已 DROP（PLAN-003
   「W7 发现 2」销账）。
-- **源快照自证（V7）**：`source_sha256` + `page_count` 在任务开始时写入，使「这一版产物对应哪一份
+- **源快照自证（PP-17）**：`source_sha256` + `page_count` 在任务开始时写入，使「这一版产物对应哪一份
   源 PDF、当时全书多少页」可独立证明——重新 ingest 后 SHA 变化即可判定旧版本已不匹配当前源文件。
 - **错误双载体分工**：`error`（≤500 字符）= 终态摘要；`progress.error`（≤200 字符）= 进行中的
   失败页摘要。两者可同时存在，任务进入终态后以 `error` 为准。**哪些页**失败不再只埋在文本里：
@@ -208,6 +208,12 @@ CREATE TABLE af_parse_jobs (
 - **删除保留审计**：`DELETE /books/{id}`（含 `?purge=true`）不清理历史任务行——任务行是版本的
   自证记录，也是 `versions/` 目录名的来源；页行与编辑行则按**全部版本**删除（`?purge=true` 连
   `versions/` 子树一并删）。
+- **例外：管理面一键清除会删任务行（PLAN-010 / ARCH-024，2026-09-23 用户裁决）**
+  `POST /api/v1/admin/purge` 的**全部四表行**都在清除范围内（含 `af_parse_jobs`），因为它的目的正是
+  回到干净状态（先清后建）。两条边界与上条不冲突：① 只允许 DML 删行，**无 DDL、无 `DROP DATABASE`**
+  （共享库里另有其他项目的 `qt_*` 表，ADR 0005 同源纪律）；② 该端点默认不挂载、须管理 token 与
+  逐字确认，且作用域内有 `queued`/`running` 任务行时拒绝执行（六态里的活动态即「在飞」的唯一判据）。
+  `af_books` 行同样清除：书目是从根库同步来的快照，可经 `POST /books/sync` 重建，不是本仓库的持久资产。
 
 ## af_pages（页状态表，一行 = 一页在某个解析版本内的状态）
 
@@ -227,7 +233,7 @@ CREATE TABLE af_pages (
 
 ### 页表语义
 
-- **主键纳入 `job_id`（V2/V7）**：同一页在不同解析版本可有各自的状态与质量信号；新版本不覆盖
+- **主键纳入 `job_id`（PM-6 / PP-18）**：同一页在不同解析版本可有各自的状态与质量信号；新版本不覆盖
   旧版本的行，因此历史版本可逐页解释「当时这页成没成」。
 - **`pending` 以「无行」表示**：不为未解析页预建占位行；`status` 实际只写 `parsed` / `failed`，
   断点续跑的集合在 **(book_id, job_id) 作用域内**判定 = 该版本无行页 ∪ `failed` 页（且要求产物在盘）。
@@ -235,7 +241,7 @@ CREATE TABLE af_pages (
   对应版本目录里的产物文件」；整本失败时已解析页的行与产物保留可重跑。
 - **版本与页行同构**：写新版本前把生效视图的页行按 `job_id` 继承一份（`_inherit_page_rows`），使
   `parsed` 计数与版本目录内容一一对应，`pages_done` 不会描述一个已经不读的产物集合。
-- **重复 ingest 只清根视图（V8）**：重新 ingest 原子替换**根视图**（`book.json` + `pages/`）并删除
+- **重复 ingest 只清根视图（PM-16）**：重新 ingest 原子替换**根视图**（`book.json` + `pages/`）并删除
   `job_id='legacy'` 的页行；真实版本作用域的行保留（历史版本仍可读、可列举）。
 
 ## af_block_edits（块编辑表，一行 = 一次块级人工编辑）
@@ -262,7 +268,7 @@ CREATE TABLE af_block_edits (
 - 同版本同块重复编辑 = 覆盖更新（幂等，UNIQUE 键 + upsert）。
 - 人工编辑为**覆盖层**：解析产物文件（blocks.json）为模型产物事实源，编辑不入文件，API
   返回时合并。
-- **编辑键必须含 `job_id`（V7，REQ-080 的动机）**：块下标 `index` 是「归一化后的数组下标」，映射表
+- **编辑键必须含 `job_id`（PM-3，REQ-080 的动机）**：块下标 `index` 是「归一化后的数组下标」，映射表
   或归一化规则一变，同页下标含义就变；跨版本共用 `(book_id, page_no, block_index)` 等于把人工核对
   结论套到另一版产物上（污染）。读取生效版本时只合并该 `job_id` 的编辑。
 - **定位走唯一键，不重算摘要**：`edit_id` 只是幂等标识；迁移前的存量行保留旧摘要（不含 `job_id`），
