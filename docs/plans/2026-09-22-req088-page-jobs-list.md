@@ -79,24 +79,42 @@ ARCH-005（对照与质量度量）与 ARCH-006（块编辑真机闭环）的联
 
 ## 阻塞与恢复
 
-本计划**本方侧已全部做完**（S1~S4 达成、契约测试 14 条绿 + 变异复验、文档与映射四处收口、REQ-088 关闭），
-剩余唯一工作项 W6 是根侧动作，故 2026-09-23 由 `In Progress` 改判 `Blocked`（不关闭：ARCH-005/006 的
-承载就是本壳，且本计划的 Delete 归档判定要求三行全关）。
+**2026-09-23 晚复验后本计划的判据走向**（PLAN-013 W1 只读取证，末次起服之后的访问日志 + `af_*` SELECT）：
 
-阻塞证据：W6 的两条判据（ARCH-005 对照与质量度量、ARCH-006 `af_block_edits` 真机写入与合并回显）都要
-8903 前端真机联调才成立，而我方侧不可自证——「本方端点与产物就绪不构成联调完成的证据」（前置条件 2）。
-可核验的现状：`af_block_edits` 现 0 行，三本生效版本各 20 页可联调（b01 `86ab56ae2b6c`、
-b05 `185a37d55985`、b11 `bbe0d401ce83`）。
+- **S5 的 ARCH-005 侧达成**：页清单已被 8903 真实消费——`GET /api/v1/books/{id}/pages` 3 次
+  （`mathalysis-b05` **200**、`linearalgebra-b01` **200**、`mathalysis-b01` **404**＝无产物时的契约语义），
+  同窗口对照面读取 `books/{id}` 27 次、`pages/{n}` 25 次 200、`pages/{n}/image` 36 次、
+  `pages/{n}/edits` 40 次；jobs 列表侧 `parse-jobs?limit=1&...&status=queued&status=running` 11 次、
+  按书过滤 11+5 次、单 job 轮询 346+99 次 ⇒ **ARCH-005 关闭**（证据入 completed.md）。
+- **S5 的 ARCH-006 侧按用户裁决改判关闭**：字面判据「代表书**重解析后** `af_block_edits` 真机写入」
+  在重建后的数据上**未发生**（末次起服之后 `PUT .../blocks/{i}/edit` 0 次、业务库 `qed` 的
+  `af_block_edits` **0 行**）；用户裁决「以清除前那次 PASS 为准关闭」⇒ 关闭判据改为
+  「edit 写入路径曾在真机通过（清除前 `mathalysis-b05/pages/50/blocks/8`、`linearalgebra-b01/pages/7/blocks/2`
+  等 2 行，随 2026-09-23 全项目清除消失，备份见 PLAN-011 留档）＋ 读取面 L7 全绿 ＝ 交付成立」，
+  **代价如实登记**：当前生效版本（b05 `012d637df1eb` 317 页、LA-b01 `ab91e2d19bf4`）上零写入样本，
+  重建后的真机写入证据由根仓库在下一联调窗口自证。
+- 因此**本计划 W6 判据已消耗**，只剩 W7 的收口动作（壳按 `Delete` 删迁 + 台账迁移）。
+  W7 未随本轮执行的原因＝`docs/design/parsing-management.md:177` 仍指向本壳路径，而该文件与
+  `docs/trackers/todo.md`、`project-status.md` 上有并行呈现轮的未提交改动 ⇒ 删壳与链接改指必须等
+  该轮入库后同批做，否则会把他人 WIP 一并提交（提交边界判例见「实施登记 W5」）。
 
-恢复条件：根仓库在其台账把 ARCH-020-D/UI 的 8903 对照联调排上日期并实际调用本计划两条端点
-（`GET /api/v1/parse-jobs`、`GET /api/v1/books/{book_id}/pages`）；联调记录回到本壳 W6 即恢复。
+**W7 阻塞四要素**（`Blocked` 状态的申报口径，判据本身已全部消耗）：
 
-责任位置：QED-Engine 根仓库（8903 前端与 ARCH-020-D/UI 排期）；本仓库负责端点契约与产物可信度，已交付。
-本仓库不代根仓库做前端联调，也不因根侧未排期而收缩判据（ADR 0004 边界，环境侧同日移交见 PLAN-007 W7 裁决）。
+- **阻塞证据：**`rg "2026-09-22-req088-page-jobs-list"` 在 `docs/design/parsing-management.md:177` 命中
+  一条在案引用，且该文件与 `docs/trackers/todo.md`、`docs/trackers/project-status.md` 工作树为脏
+  （并行呈现轮在改）。
+- **恢复条件：**呈现轮把上述四个文件入库后，本壳的删迁（`git mv` 至 `docs/history/plans/2026-09/` 或
+  按 `Delete` 判定删除）与 `parsing-management.md:177`、`plans/index.md`、`todo.md`、`completed.md`
+  的改指在同批提交中完成，全库对旧路径零残余引用。
+- **责任位置：**本仓库（PLAN-013 W3）；不依赖根仓库任何动作。
+- **复核触发点：**`git status --porcelain docs/design docs/trackers` 变干净，或呈现轮次提交落盘后
+  下一次进场即执行。
 
-复核触发点：① 根侧 todo/completed 出现 ARCH-020-D 或 UI 联调行的排期/回执；② 本仓库下一次获批 D 类真机
-窗口（届时顺带把 `af_block_edits` 真机写入面取证）；③ 根侧对两条端点形状提出改动（按「契约事实源先改文档」
-另立计划，见「回滚」）。
+**复验读数**（2026-09-23，只读取证）：`af_parse_jobs` 6 行（`completed` 4 / `partial` 2）、
+`af_pages` 957 行、`af_block_edits` 0 行、`QED_DATA_ROOT/parsed/` 5355 文件；两本生效版本
+b05 `012d637df1eb`（317/317 全 `parsed`）、LA-b01 `ab91e2d19bf4`（486 页中 3 页 `parsed`）。
+**本壳此前「三本生效版本各 20 页可联调」的口径按此作废**（b01 `86ab56ae2b6c`、b05 `185a37d55985`、
+b11 `bbe0d401ce83` 三本各 20 页已随全项目清除消失，见 PLAN-011 留档）。
 
 ## 实施登记
 
@@ -257,8 +275,8 @@ b05 `185a37d55985`、b11 `bbe0d401ce83`）。
 | W3 | `GET /parse-jobs` 端点（过滤/分页/排序稳定；响应字段与 `ParseJob` 一致） | `main.py` 路由 + 契约测试 | 契约 | Done（2026-09-22，`TestParseJobListEndpoint` 7 条绿 + 变异复验；`schemas.ParseJobListItem/ParseJobListOut`、`BookRepository.active_job_index`；`api.md` 三处措辞同步。详见「实施登记 W3」） |
 | W4 | `GET /books/{id}/pages` 端点（逐页状态清单 + `scope`/`job_id` 自证） | `main.py` 路由 + `_page_total()` + `schemas.PageStateOut/PageListOut` + 契约测试 | 契约 | Done（2026-09-22，`TestPageListEndpoint` 7 条先红（路由未注册 → 404）后绿；两条变异复验（悄悄改判 / `scope` 硬编）均转红。口径澄清两条见「实施登记 W4」） |
 | W5 | 文档与映射收口：`code-map.md`、`operations.md` 改号措辞、`parsing-management.md` 端点面 | 文档改动 | 架构/设计契约测试 | Done（2026-09-22，四处收口 + 守护补强（节标题锚定），见「实施登记 W5」） |
-| W6 | 8903 联调（ARCH-005 对照与质量度量、ARCH-006 块编辑写入与合并回显）+ 跨项目回执 | 联调记录 + 回执正文（根侧自读登记） | 真机 | Blocked（2026-09-23 改判：本方侧无剩余动作，等根仓库 8903 排期，四要素见「阻塞与恢复」） |
-| W7 | 收口（六步，ADR 0006） | 本计划关闭与归档 | 全量门禁 | Pending（等 S5；**本方侧已于 2026-09-23 做局部收口**——REQ-088 关闭 + 计划改判 Blocked，见「局部收口登记」） |
+| W6 | 8903 联调（ARCH-005 对照与质量度量、ARCH-006 块编辑写入与合并回显）+ 跨项目回执 | 联调记录 + 回执正文（根侧自读登记） | 真机 | Done（2026-09-23 复验读数：`/pages` 清单 2 本 200 ＋ 对照面 `pages/{n}`/`image`/`edits` 与 jobs 轮询真实消费 ⇒ **ARCH-005 关闭**；ARCH-006 按用户裁决改判关闭（写入证据属清除前代际，重建后 0 行的代价已登记）⇒ 判据与 S5 走向见「阻塞与恢复」） |
+| W7 | 收口（六步，ADR 0006） | 本计划关闭与归档 | 全量门禁 | Blocked（2026-09-23：**判据已全部消耗，只剩删迁动作**；本壳 `Delete` 需改指 `docs/design/parsing-management.md:177` 的引用，而该文件与两份 trackers 上有并行呈现轮的未提交改动 ⇒ 等其入库后同批执行，登记见 PLAN-013 W3） |
 
 ## 验证与验收
 
@@ -319,9 +337,10 @@ b05 `185a37d55985`、b11 `bbe0d401ce83`）。
 = 同一端点靠 `status` 过滤；② 页清单对 `legacy` 哨兵行 = 跟随 `_read_scope` 并显式标 `scope="legacy"`；
 ③ 重解析粒度 = 单页。
 
-**根侧下一步**：8903 排期消费这两条端点即触发本计划 W6（= ARCH-005 对照与质量度量、ARCH-006 块编辑写入与
-合并回显）。可联调产物：b01 `86ab56ae2b6c`、b05 `185a37d55985`、b11 `bbe0d401ce83`（各 20 页，几何、
-块类型、`latex`、`index` 可信，丢弃 0）；`af_block_edits` 现 0 行，无历史迁移负担。
+**根侧下一步**（**本段的可联调产物口径已作废**，按 2026-09-23 W6 复验读数改写，见「阻塞与恢复」）：
+原列 b01 `86ab56ae2b6c`、b05 `185a37d55985`、b11 `bbe0d401ce83`（各 20 页）已随 2026-09-23 全项目清除
+消失；当晚重建后的可联调产物＝b05 `012d637df1eb`（317/317 全 `parsed`）、LA-b01 `ab91e2d19bf4`
+（486 页中 3 页 `parsed`），`af_block_edits` 0 行。W6 已于同日按上述读数判定。
 **环境侧提醒**：模型容器与 WSL 环境自 2026-09-22 起归 QED-Engine 图像模型维护线（[operations.md](../guides/operations.md)
 两条根因判据），本仓库不再代调环境。
 
@@ -329,14 +348,23 @@ b05 `185a37d55985`、b11 `bbe0d401ce83`）。
 
 **目的**：让前端对照视图拿到可信的叠框与质量信号。
 **关闭条件**：8903 前端真机联调通过（根仓库 ARCH-020-D/UI）。
-**工作项**：W6。代码侧前置已全清（DEFECT-004/005/018 关闭），可联调产物为三本生效版本各 20 页；
-质量信号字段随页产物落盘并由页端点返回。
-**状态**：Open（等 8903 排期）。
+**工作项**：W6。代码侧前置已全清（DEFECT-004/005/018 关闭），质量信号字段随页产物落盘并由页端点返回。
+**状态**：**已关闭（2026-09-23，Achieved）**。判据＝真机联调读数（末次起服之后的只读取证）：
+`GET /api/v1/books/{id}/pages` 命中 3 次——b05 **200**（317 页清单）、LA-b01 **200**、b01 **404**
+（无产物 ⇒ 契约规定的 404 而非空表）；同窗口对照视图实际消费 `books/{id}` 27 次、`pages/{n}` 25 次 200
+（另 17 次 404 落在未解析页）、`pages/{n}/image` 36 次、`pages/{n}/edits` 40 次，jobs 抽屉
+`?status=queued&status=running` 轮询 11 次 + 按书过滤 11/5 次 + 单 job 轮询 346/99 次。
+关闭证据迁 [completed.md](../trackers/completed.md) ARCH-005 行。
 
 ## 承载 ARCH-006（渲染数据供给与块编辑真机闭环：edit 写入与 pages 合并回显）
 
 **目的**：块编辑写入 + 页读取合并回显在真机上闭环一次。
-**关闭条件**：代表书重解析后 `af_block_edits` 真机写入且联调通过。
-**工作项**：W4（页清单暴露编辑存在性）+ W6（真机写入与回显）。端点与仓储已交付、读取面 L7 全绿，
-块下标与 `latex` 在三个生效版本上可信，`af_block_edits` 现 0 行（无迁移负担）。
-**状态**：Open（等 8903 排期）。
+**关闭条件**：**2026-09-23 用户裁决改判**——原文「代表书重解析后 `af_block_edits` 真机写入且联调通过」
+改为「edit 写入路径曾在真机通过 ＋ 读取面 L7 全绿 ＝ 交付成立」，重建代际的真机写入由根仓库自证。
+**工作项**：W4（页清单暴露编辑存在性）+ W6（真机写入与回显）。
+**状态**：**已关闭（2026-09-23，Partial）**。达成的三面＝edit 端点与仓储交付且曾真机写入（清除前
+`mathalysis-b05/pages/50/blocks/8`、`linearalgebra-b01/pages/7/blocks/2` 等 2 行，备份见 PLAN-011 留档）、
+读取面合并回显 L7 全绿、页清单以 `edit_count` 暴露编辑存在性（本壳 W4）。
+**未达成的一面（结果记 Partial 的理由）**＝重建后的生效版本（b05 `012d637df1eb` 317 页、
+LA-b01 `ab91e2d19bf4`）上 `PUT .../blocks/{i}/edit` 0 次、`af_block_edits` **0 行** ⇒
+「同一代数据上写入并回显」这一字面组合**无样本**。证据与代价同迁 completed.md ARCH-006 行。
