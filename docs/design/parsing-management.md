@@ -2,44 +2,56 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（af_* 四表 + 同步/CRUD/ingest/异步解析/对照编辑/分块端点已实现；2026-09-21 起
-读取面按生效解析版本解析目录，块编辑绑定其所属版本）
-最后更新：2026-09-21
-关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`、`src/axiom_flow/orchestrator/`
+实现状态：Verified（af_* 四表 + 8902 管理与对照端点已实现并真机取证）
+最后更新：2026-09-23
+关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`（含 `api/admin.py` 管理面）、`src/axiom_flow/orchestrator/`
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`
-关联 ADR：`docs/adr/0004-model-boundary-and-pipeline-ownership.md`、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)
+关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)
 
-> 本文档定义「文档解析管理」在 Axiom-Flow 侧的闭环：已验证书目同步、ingest、解析进度、
-> 分块、对照数据供给与块级人工编辑。表结构见 `../architecture/database-design.md`；端点总表见
-> `../architecture/api.md`；解析管线见 [parsing-pipeline.md](parsing-pipeline.md)。
+> **本篇回答的唯一问题**：一本书从「已验证书目」到「人工校验完成」，**状态如何流转、职责落在哪一段**。
+> 产物怎么生成与什么算合格归 [parsing-pipeline.md](parsing-pipeline.md)；如何与模型服务对话归
+> [model-integration.md](model-integration.md)。表结构与列语义的唯一事实源是
+> [database-design.md](../architecture/database-design.md)，端点请求/响应形状的唯一事实源是
+> [api.md](../architecture/api.md)——本篇一处都不复制它们，只写「谁写、何时写、写完给谁读」。
 
-## 背景与动机
+## 目标与非目标
 
-QED-Engine「文档解析管理」界面需要按课程树展示**已验证（verified）书目**及其解析进度，
-支持**逐页对照 + 块级人工校验修改**（判定/备注/文字修正/范围修正），并保证 QED-Tracker
-（8901）与解析管线（本仓库）解耦。2026-09-14 根仓库 ARCH-020 重构裁决：af_* 由两表草案
-（af_books/af_block_reviews）扩展为四表，块判定扩展为块编辑。
+**目标**：
 
-2026-09-17 用户裁决（PLAN-002）：本期优先交付**基本解析 + 分块**，对照编辑端点后置；
-af_* 四表**一次迁移建全**（DDL 已冻结，编辑端点后置不影响表存在）。
+1. 让 8903「文档解析管理」界面只消费 8902 一个数据源就能建树、看进度、发起解析、逐页对照与人工校验。
+2. 把任务与书目的**状态语义**收在一处（[ADR 0007](../adr/0007-parse-status-semantics.md) 的执行面）：
+   进度与结局分列、失败页结构化、终态判据与版本激活同源。
+3. 让 af_* 闭环对上游故障免疫：8901/8900/模型服务任一离线，已落库的读取面照常给答案。
+4. 让「重新解析一本书」成为**新增一个版本**而不是覆盖上一次：历史版本可逐页解释「当时成没成」。
+5. 让人工校验结论可持久、可回显，且不会被套用到另一版产物上。
 
-## 设计原则
+**非目标（各归其主）**：
 
-1. **解耦**：af_* 表为 Axiom-Flow 私有（qed 库 af_* 命名空间），只从 qt_books 同步已验证
-   书行的只读元数据；QED-Tracker 任何故障/变更不影响本表读取。
-2. **幂等**：同步以 `book_id`（同源 qt_books.book_id）为幂等键；编辑以
-   `(book_id, job_id, page_no, block_index)` 为唯一键，重复提交覆盖更新。
-3. **进度自持**：`ingest_status`/`parse_status`/`pages_done` 由本仓库维护，且 `pages_done` 描述的是
-   **生效版本**的已解析页数（不是全书历史累计）。
-4. **覆盖层**：解析产物文件为模型产物事实源，人工编辑落 `af_block_edits`，API 返回时合并；
-   分块为派生文件（`chunks.json`），**不入库**、可重建。
-5. **模型无感知**：解析经引擎适配器（[model-integration.md](model-integration.md)），本闭环
-   不感知具体模型与调参。
-6. **版本隔离**：一次解析任务 = 一个解析版本（产物目录 `versions/<job_id>/` + 页状态/编辑的
-   `job_id` 作用域），「哪一版生效」只由 `af_books.active_job_id` 单列决定；本闭环不做旧版本
-   清理，也不做跨版本的人工编辑继承（块下标语义随版本变化，套用即污染）。
+- 表 DDL、列类型、迁移与回填策略 → [database-design.md](../architecture/database-design.md)。
+- 端点参数、响应字段、错误码表 → [api.md](../architecture/api.md)。
+- 页图渲染、归一化、产物目录布局与质量判据 → [parsing-pipeline.md](parsing-pipeline.md)。
+- 引擎选择、调用协议与探活语义 → [model-integration.md](model-integration.md)。
+- 旧版本磁盘清理与跨版本编辑继承：本篇**不做**（前者属 D 类数据操作需单独批准，后者会污染结论）。
 
-## 数据流
+## 边界与事实源
+
+| 事项 | 本篇管 | 不管（事实源） |
+| --- | --- | --- |
+| af_* 四表 | 谁写哪一列、写入时机、可见性后果 | 列与约束：[database-design.md](../architecture/database-design.md) |
+| 8902 端点 | 每条端点在闭环里的职责与不变式 | 参数与响应：[api.md](../architecture/api.md) |
+| 任务/书目状态 | 六态判据、进度与结局分列、启动期归一 | 状态机的产物侧条件：[parsing-pipeline.md](parsing-pipeline.md) |
+| 人工编辑 | 幂等键、覆盖层语义、版本绑定 | 版面块结构与 `index` 含义：[parsing-pipeline.md](parsing-pipeline.md) |
+| 模块清单 | 不维护 | 职责与 DesignRef：[code-map.md](../architecture/code-map.md) |
+| 部署与运维 | 单实例前提的归属 | 操作口径：[operations.md](../guides/operations.md) |
+
+**配置语境**（不是本篇契约，只登记边界）：af_* 落共享 MySQL `qed` 库（`qed_test` 为本仓库自有测试库）；
+本服务读自身 `.env`，由 QED-Engine 启动时经向上走查跟随根 `.env`，两边允许不一致（用户裁决 2026-09-17）；
+`af_books.file_path` 是数据根相对路径（同源 `qt_books.file_path`），产物落点见
+[parsing-pipeline.md](parsing-pipeline.md)。
+
+## 核心设计
+
+### 生命周期与状态流转
 
 ```mermaid
 sequenceDiagram
@@ -65,76 +77,206 @@ sequenceDiagram
     GW->>AX: chunks.json（可带参数重算）
 ```
 
-## 表结构
+### 已确定守则
 
-四表（`af_books` / `af_parse_jobs` / `af_pages` / `af_block_edits`）DDL 与字段语义见
-`../architecture/database-design.md`（结构事实源）；**一次 Alembic 迁移建全**，解析版本作用域由
-迁移 `20260920_0002` 增补，进度与结局分列由 `20260921_0001` 增补（ADR 0007）。要点：
+> **怎么读**：加粗一行是该条守则的**结论**（编号 `PM-n` 只在本篇内解析），其下分列「**判据**」＝可检验的
+> 事实，「**为什么**」＝立法理由与实证来源，「**例外**／**后果**／**边界**」＝该条守则的适用限制；缺某项
+> 即无该项；「**归属**／**反向约束**」等按字面理解。
+> 表结构与列语义、端点参数与响应形状**不在本篇复制**（事实源见文首指针），实现落点与守护测试统一登记在
+> 篇末「条文表」。
 
-- `af_books`：已验证书快照（含 `file_path` 数据根相对路径、ingest/解析进度、notes）+
-  `active_job_id`（生效解析版本，`NULL` = 根视图 legacy）+ **进度与结局分列**：`parse_status`
-  只表进度（`pending`/`parsing`），`last_parse_result` 只表最近一次任务结局
-  （`completed`/`partial`/`failed`/`interrupted`，`''` = 从未有任务）；
-- `af_parse_jobs`：**一次任务 = 一个解析版本**（pages NULL=全书、engine、status、progress，
-  另有 `source_sha256`/`page_count` 自证本版解析的源文件与当时全书页数，`failed_pages` 是
-  结构化、不截断的失败页码数组）；
-- `af_pages`：页级状态与质量信号，主键 `(book_id, job_id, page_no)`（同一页在不同版本可有独立状态）；
-- `af_block_edits`：块级人工编辑覆盖层（verdict/note/corrected_text/corrected_bbox），唯一键
-  `(book_id, job_id, page_no, block_index)`，编辑绑定其所属版本。
+#### 数据来源与独立性
 
-## API 契约（8902）
+**PM-1 af_* 是私有表族，只读快照自上游**
 
-端点总表见 `../architecture/api.md` ②③；本闭环要点：
+- **判据**：af_* 是 Axiom-Flow 私有表族，只从 `qt_books` 同步「已验证」书行的只读快照；8901 的任何故障或
+  结构变更都不进入本篇读取路径。
+- **为什么**：课程归属字段冗余进 `af_books` 正是为此——上游改表不该传导到解析管理面。
 
-| 端点 | 语义 |
-| --- | --- |
-| `POST /books/sync` | 幂等 upsert af_books（请求 `[{book_id, domain_id, course_id, course_name, knowledge_id, title, part, authors, file_path}]`）；`book_id`/`domain_id`/`course_id` 必须是安全路径段、`file_path` 为数据根相对路径（≤512 字符，**段规则为黑名单**：拒 `\`、半角 `:`、`/ : * ? " < > |`、控制字符、前导 `.` 与首尾空白/句点，全角标点放行——REQ-083），违规 422 |
-| `GET /books`、`GET /books/{id}` | 书目列表/详情（af_books，含 `active_job_id`；空表回退文件系统） |
-| `PATCH /books/{id}`、`DELETE /books/{id}` | 修改（notes）/删除：删 `af_books` 与该书**所有版本**的 `af_pages`/`af_block_edits` 行，`?purge=true` 连整本产物目录（含 `versions/`）一并删除；`af_parse_jobs` 历史行一律保留为审计 |
-| `POST /books/{id}/ingest` | 渲染页图 + book.json（不调模型），回写 ingest_status/page_count/sha256。**重复 ingest 只替换根视图**（`book.json` + `pages/` 原子交换，`versions/` 完整保留），并置 `active_job_id=NULL`、`parse_status=pending`、`pages_done=0`，页行只清 `job_id='legacy'` 一批；历史版本状态与任务行保留，但旧版本不再对生效端点可见（源文件已变，需重新解析） |
-| `POST /parse-jobs`、`GET /parse-jobs/{id}` | 提交/查询解析任务（202 受理；pages 缺省 = 全本，指定 = 逐页重解析，两者都产出一个**完整快照**版本；`pages` 越界在受理前 422，不探活不落任务行——DEFECT-006）。`status` 六态与判据见 [parsing-pipeline.md](parsing-pipeline.md) 条文 S1~S7；查询响应含 `failed_pages` |
-| `GET /parse-jobs` | 作业列表（只读，PLAN-008 / REQ-088）：`?book_id=&status=`（`status` **可重复**＝多值 OR）、`limit 1..200`/`offset`，信封 `{jobs, total, limit, offset}` 且 `total` 为**过滤后**总数；排序 `created_at DESC, job_id DESC`（秒级精度需第二键）。行 = `ParseJob` 原样 + `created_at/started_at/finished_at/active`。**不读磁盘、不经 `_read_scope`**；`?book_id=<不存在的书>` 是 200 空集；已删书的审计行照常列出且 `active=false` |
-| `GET /books/{id}/pages` | **逐页状态清单**（只读、不分页）：`{book_id, job_id, scope, total, pages[]}`，行 = `{page_no, status, has_artifact, error, edit_count}`；逐页连续覆盖 `1..total`，没有页行的页出行 `pending`。客户端判据一条：`not has_artifact or status == "failed"` ⇒ 需重解析（取代 1..page_count 逐页试错）。`parsed`+无产物**如实暴露不改判**（只可能来自外部删除）。PLAN-008 / REQ-088 |
-| `GET /books/{id}/versions` | 解析版本只读列举（`job_id/engine/status/page_count/parsed/source_sha256/created_at/active`）；不改生效指针 |
-| `GET /books/{id}/pages/{no}` | 单页 blocks+markdown+image_url+已合并 edits（**作用域 = 生效版本**；`active_job_id` 为空时读根视图 legacy） |
-| `PUT /books/{id}/pages/{no}/blocks/{index}/edit`、`GET .../edits` | 块编辑 upsert / 页内编辑列表（写入生效版本的 `job_id`） |
-| `GET /books/{id}/chunks` | 分块预览（读生效版本 `chunks.json`；`?max_chars=&overlap_blocks=` 可实时重算） |
-| `GET /books/{id}/manifest` | 生效版本的产物清单，路径相对该版本目录（不含 `versions/<job_id>/` 前缀） |
+**PM-2 同步幂等，且不回写上游变更**
 
-**错误语义**：400 参数非法（含块下标越界、引擎槽位未实现）；404 book/page/job 不存在**或生效版本
-目录缺失**（显式报错，不回落根视图）；422 入参 schema 违规（安全路径段、`file_path` 形态、引擎字面值、
-`pages` 页码越界、**列表端点查询参数**：`status` 非六态、`limit` 非 `1..200`、`offset` 为负）；
-503 模型服务不可用（仅提交期探活失败，且不创建任务行）。
+- **判据**：以 `book_id`（同源 `qt_books.book_id`）为幂等键，重复同步只 upsert 不产生重复行。
+- **例外**：qt_books 侧删除或改名**不回写**已同步行（快照语义，重新同步才会带回）。
 
-**引擎选择**：`POST /parse-jobs` 的 `engine` 可选，缺省回落 `AXIOM_OCR_ENGINE`；未实现/未知名称
-一律显式报错，**绝不回落到其他引擎**（见 [model-integration](model-integration.md)）。
+#### 幂等键、进度与覆盖层
 
-**跨项目**：8900 现用 `/review`（ok/bad）需改 `/edit`（四表覆盖层），并补 `/ingest`、`/chunks`
-透传；由本仓库 `REQ-001` 请求根仓库适配，根侧完成后回执。**根侧承载行**为 `PLAN-044`／
-`ARCH-020-D`（2026-09-21 改判：根仓库的 `REQ-001` 号已被 2026-08 端口迁移占用，与本方 `REQ-001`
-同号不同事，故回执登记位置按对方计划行而非编号对齐）。
+**PM-3 编辑幂等键含解析版本**
 
-## 降级与独立性
+- **判据**：`af_block_edits` 以 `(book_id, job_id, page_no, block_index)` 为唯一键 upsert，同版本同版面块
+  重复提交＝覆盖更新。
+- **边界**：`edit_id` 只是幂等标识，仓储一律按唯一键读写，故迁移前的存量行（旧摘要不含 `job_id`）升级后
+  仍可达。
 
-- 8902 离线 → 8900 返回 503，前端降级显示；8901 离线 → `POST /books/sync` 503（取数失败）；
-- 模型服务离线 → **提交期探活**返回 503 且不创建任务行；**已受理**任务的执行期故障记为 `failed`（error 记原因），只读端点正常；
-- 8902 自身重启 → 冷启动受理首个请求**之前**做一次状态归一：上次进程遗留的 `queued`/`running` 任务行改判 `interrupted`，书目进度回 `pending`（ADR 0007 条文 S5/S6，前提是**单实例部署**，运维口径见 [operations.md](../guides/operations.md)）；只读端点在归一完成后即刻给出确定答案，不需要人工清理僵尸态；
-- 8900 离线 → 本仓库可经根仓库脚本手动启停模型并独立解析（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
+**PM-4 进度由本篇自持，且只描述生效版本**
 
-## 验证
+- **判据**：`ingest_status`/`parse_status`/`pages_done` 由本篇维护，不依赖 qt_books 之外的上游字段；且
+  `pages_done` 与 `active_job_id` 一致地描述**生效版本**，不是全书历史累计。
 
-1. 单元：sync 归一化/幂等（重复同步不产生重复行）、edit upsert 覆盖、ingest 幂等、chunk 规则；
-2. 契约：`tests/contract/test_api_v1_contract.py`（端点结构与 schemas 一致）；
-3. 联调冒烟：8903 → 8900 → 8901/8902 全链路（同步 → ingest → 解析 → 对照 → 编辑 → 回显）；
-   8901/8902 离线降级验证。
+**PM-5 人工编辑是覆盖层，不改产物文件**
 
-## 备注
+- **判据**：解析产物文件是模型产物事实源，人工编辑只入 `af_block_edits`、**不改文件**；读取端在响应里按
+  生效版本合并编辑。
+- **后果**：「产物没变、校验结论变了」两件事可分别追溯。
 
-本文档为解析管理闭环（db/orchestrator/api 数据查询与对照部分）的 DesignRef 事实源；实施中
-允许调整，调整时同步本文档与 `../architecture/api.md`、`../architecture/database-design.md`。
+#### 生效指针与引擎边界
 
-**配置语境（2026-09-17 用户裁决）**：af_* 落共享 MySQL `qed` 库（`qed_test` 为测试库）；
-本服务本地启动读自身 `.env`（含 `QED_DB_NAME=qed`），由 QED-Engine 启动时经向上走查跟随根
-`.env`，两边配置允许不一致。产物落 `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`，
-`af_books.file_path` 为数据根相对路径（同源 `qt_books.file_path`），源 PDF 只读不复制。
-MinerU 生命周期归 8900，本仓库只连接 `QED_OCR_MODEL_URL`（5002）；模型调参归 QED-Engine。
+**PM-6 「哪一版生效」只有一列**
+
+- **判据**：唯一事实源是 `af_books.active_job_id`（`NULL` = 根视图 `legacy`），`af_parse_jobs` **不设布尔
+  生效列**；改写只经 `BookRepository.set_active_job()` 的单列 UPDATE。
+- **为什么**：同一事实两处存必漂移。
+- **归属**：产物目录布局与齐备判据见 [parsing-pipeline.md](parsing-pipeline.md)。
+
+**PM-7 闭环对模型无感知**
+
+- **判据**：闭环只传引擎名称，不感知模型、参数与服务地址（见
+  [model-integration.md](model-integration.md)）；换模型不影响任何状态列的语义。
+
+#### 任务与书目状态语义
+
+**PM-8 任务状态六态，原值透传**
+
+- **判据**：`queued`/`running` 为活动态；终态 `completed`（目标页齐备）、`partial`（≥1 页 `parsed` 但未
+  齐备）、`failed`（0 页产出或引擎整体异常）、`interrupted`（上次进程遗留）。
+- **边界**：六态**原值透传给前端**，不做「看起来更好」的归并。
+- **为什么**：读取面一旦加工，就把语义分歧冻结给了前端。
+
+**PM-9 失败页结构化且不截断**
+
+- **判据**：`af_parse_jobs.failed_pages` 存页码数组——「哪些页失败」必须是可机读的事实。
+- **边界**：`error`（≤500）与 `progress.error`（≤200）只是给人看的摘要，摘要截断不丢页码。
+
+**PM-10 书目进度与结局分列**
+
+- **判据**：`parse_status` ∈ `pending`/`parsing` 只表进度；`last_parse_result` ∈
+  `completed`/`partial`/`failed`/`interrupted`（`""` = 从未有任务）**只在终态写入**。
+- **为什么**：运行中的进度刷新不得覆盖结局——DEFECT-007 的根因就是旧 `parse_status` 一列两用。
+
+**PM-11 `completed` 与版本激活同一判据**
+
+- **判据**：齐备判定一次产出「任务终态」与「指针动作」，因此「`completed` 但未激活」在**结构上不可能**，
+  不是靠文档约定。
+- **例外**：`partial`/`failed`/中断一律不激活，产物保留在 `versions/` 供排查（自然回滚 = 指针从未动过）。
+
+#### 中断、续跑与进度写入
+
+**PM-12 `interrupted` 的唯一写入者是启动期归一**
+
+- **判据**：`JobRunner.reconcile_on_startup()` 在 FastAPI `lifespan` 内、**受理首个请求之前**把遗留
+  `queued`/`running` 行改写为 `interrupted`，书目进度归 `pending`；结局仅在该任务是这本书的**最新**任务时
+  置 `interrupted`（更早的中断行不得覆盖后来的真实结局）。
+- **反向约束**：管线自身不产出 `interrupted`，迁移与运维脚本也不改写历史任务的 `status`（回填旧行为新
+  三态＝伪造历史）。
+
+**PM-13 单实例部署前提**
+
+- **判据**：PM-12 成立的前提是「写活动态的只有这个进程」。
+- **后果**：多实例会让存活实例的任务被同伴误判为中断——本契约显式承担该部署约束，代价与运维口径见
+  [operations.md](../guides/operations.md)。
+
+**PM-14 `interrupted` 的续跑 = 同 `job_id` 重放**
+
+- **判据**：不新建版本，已 `parsed` 且产物在位的页跳过引擎调用（产物侧判据见
+  [parsing-pipeline.md](parsing-pipeline.md)）；重放方式因此是「再提交一次同 id」而不是「从头再来」。
+
+**PM-15 进度写入节流，但失败即时可见**
+
+- **判据**：`progress` 在「距上次写入 ≥1 秒」或「每处理满 10 页」时覆写一次，终态必写一次，单页失败节点
+  强制写入（使 `progress.error` 实时可见）。
+- **边界**：全本任务按**解析窗口**推进，因此运行中读到非零中间值是常态；`persist_per_page=False` 仅供性能
+  排查退回调用方统一提交，不是静默兜底路径。
+
+#### 书目生命周期动作
+
+**PM-16 重复 ingest 只作废根视图**
+
+- **判据**：`POST /books/{id}/ingest` 成功后把 `active_job_id` 置 `NULL`、`parse_status` 归 `pending`、
+  `pages_done` 归零，并只清 `job_id='legacy'` 的页行；历史版本作用域的页行、任务行与编辑行全部保留。
+- **为什么**：源文件已变，旧版本不再对生效端点可见，但不会被伪造或删除。
+- **例外**：`last_parse_result` **不回置**——ingest 不是任务。
+
+**PM-17 删除保审计，一键清除是唯一例外**
+
+- **判据**：`DELETE /books/{id}` 删书目行与该书**所有版本**的页行/编辑行（`?purge=true` 连产物目录一并
+  删），但 `af_parse_jobs` 历史行保留为审计线索。
+- **例外**：唯一能删任务行的路径是 `POST /api/v1/admin/purge`（见下「管理面」），它存在的目的正是回到干净
+  状态。
+
+### 端点语义（形状一律见 api.md）
+
+- **书目面**（`/books/sync`、`GET/PATCH/DELETE /books/{id}`）：同步入口 + 只读快照消费 + 带审计的删除；
+  `GET /books` 在 af_books 空表时回退文件系统 `book.json`，这是**独立性降级**而非缓存。
+- **ingest**（`POST /books/{id}/ingest`）：状态机里唯一能作废根视图的动作（PM-16），本身不调模型。
+- **解析任务**（`POST /parse-jobs`、`GET /parse-jobs/{id}`）：202 受理即返回，执行在后台单 worker 队列；
+  `pages` 缺省＝全本、指定＝逐页重解析，两者都产出一个完整快照版本。
+- **作业列表**（`GET /parse-jobs`）：任务中心抽屉的数据源。跨书列表**没有单一产物作用域**，因此它不读
+  磁盘、不经版本解析入口，`active` 经 `af_books` 联结取得——审计行照常列出且恒 `false`。
+- **逐页状态清单**（`GET /books/{id}/pages`）：失败页重解析按钮的数据源，一次给全集故**不分页**
+  （「齐备与否」是全集判据）。客户端只需实现一条判据：无产物或 `failed` ⇒ 需重解析。
+- **对照与编辑**（`GET /books/{id}/pages/{no}`、`PUT .../blocks/{index}/edit`、`GET .../edits`）：
+  作用域恒等于生效版本；写入落到该 `job_id` 的编辑行（PM-5）。
+- **版本列举**（`GET /books/{id}/versions`）：**只读**；切换/回滚不提供写入端点（属既定契约缺口，
+  不是遗漏），天然回滚方式是把 `active_job_id` 置回 `NULL`。
+- **分块预览**（`GET /books/{id}/chunks`、`GET /books/{id}/manifest`）：读生效版本的派生产物；
+  带参数时实时重算、不落盘。
+- **管理面**（`POST /admin/purge`）：**非公开**——默认不挂载、需管理 token 与逐字确认、`dry_run` 缺省，
+  且只执行 DML（无 DDL、无 `DROP DATABASE`）。六条不变式与错误语义的事实源在
+  [api.md「非公开管理面」](../architecture/api.md)；8900 与 8903 不得透传。
+
+### 条文表
+
+| 条文 | 实现落点 | 守护测试 |
+| --- | --- | --- |
+| PM-1 | `db/repositories.py:BookRepository.upsert_many` | `tests/unit/test_db.py` |
+| PM-2 | `db/repositories.py:BookRepository.upsert_many` | `tests/unit/test_db.py`（重复同步不产生重复行） |
+| PM-3 | `db/repositories.py:BlockEditRepository.upsert`、`edit_id_for()` | `tests/unit/test_db.py`（edit upsert 覆盖） |
+| PM-4 | `db/repositories.py:BookRepository.update_parse` | `tests/unit/test_db.py` |
+| PM-5 | `api/main.py` 单页端点合并 edits | `tests/contract/test_api_v1_contract.py` |
+| PM-6 | `db/repositories.py:BookRepository.set_active_job` | `tests/unit/test_orchestrator.py` |
+| PM-7 | `orchestrator/pipeline.py:run_parse_job` | `tests/unit/test_orchestrator.py` |
+| PM-8 | `schemas.py:JobStatus`、`api/main.py` 响应 | `tests/contract/test_api_v1_contract.py` |
+| PM-9 | `db/repositories.py:ParseJobRepository.mark_finished` | `tests/unit/test_db.py` |
+| PM-10 | `db/repositories.py:BookRepository.update_parse`、`mark_parse_idle` | `tests/unit/test_db.py` |
+| PM-11 | `orchestrator/pipeline.py:_version_is_complete` | `tests/unit/test_orchestrator.py` |
+| PM-12 | `orchestrator/jobs.py:JobRunner.reconcile_on_startup` | `tests/unit/test_orchestrator.py` |
+| PM-13 | 部署边界（无独立代码落点） | `docs/guides/operations.md` 口径 |
+| PM-14 | `orchestrator/pipeline.py:_resumed_pages` | `tests/unit/test_orchestrator.py` |
+| PM-15 | `orchestrator/pipeline.py:_flush_progress` | `tests/unit/test_orchestrator.py` |
+| PM-16 | `db/repositories.py:PageRepository.reset_legacy`、`api/main.py` ingest 路由 | `tests/contract/test_api_v1_contract.py` |
+| PM-17 | `api/admin.py`、`db/repositories.py:ParseJobRepository.delete_for_book` | `tests/contract/test_api_v1_contract.py` |
+
+## 失败与质量语义
+
+- **8902 离线** → 8900 返回 503，前端降级显示；**8901 离线** → `POST /books/sync` 503（取数失败），
+  已同步行照常可读。
+- **模型服务离线** → 提交期探活返回 503 且**不创建任务行**（因此列表里不会出现「一条从未跑过的
+  failed」）；已受理任务的执行期故障记 `failed` 并把原因写进 `error`，只读端点不受影响。
+- **8902 自身重启** → 冷启动在受理首个请求之前完成 PM-12 归一，只读端点随即给出确定答案，不需要
+  人工清理僵尸态。
+- **8900 离线** → 本仓库可经根仓库脚本手动启停模型并独立解析（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
+- **磁盘产物被外部删除** → 读取端**如实报错不回落**：生效版本目录缺失即 404，页行 `parsed` 而无产物
+  在逐页清单里原样暴露。静默改判会让磁盘事故从台账上消失。
+- **错误码归属**：400 参数非法（版面块下标越界、引擎槽位未实现）；404 资源不存在**或生效版本产物缺失**；
+  422 入参 schema 违规（含列表端点查询参数）；503 只属于提交期探活失败。逐行定义见
+  [api.md 错误语义](../architecture/api.md)。
+
+## 验收判据
+
+1. 同步幂等：重复 `POST /books/sync` 行数不变 → `tests/unit/test_db.py`（`BookRepository` 幂等用例）。
+2. 状态语义四件套（六态、失败页结构化、进度/结局分列、启动期归一）→ `tests/unit/test_db.py`、
+   `tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`。
+3. 版本作用域读写与删除面（含审计保留）→ `tests/unit/test_db.py`、契约测试的 `delete`/`purge` 用例。
+4. 只读端点结构与 schemas 一致、不泄漏磁盘绝对路径与凭据 → `tests/contract/test_api_v1_contract.py`。
+5. 端到端联调（8903 → 8900 → 8901/8902：同步 → ingest → 解析 → 对照 → 编辑 → 回显）与 8901/8902
+   离线降级 → 需 8903 排期窗口，当前为 `Blocked`（承载见 [PLAN-008](../plans/2026-09-22-req088-page-jobs-list.md)）。
+
+## 追溯
+
+- **跨项目**：8900 现用 `/review`（ok/bad）需改 `/edit`，并补 `/ingest`、`/chunks` 透传；由本仓库
+  `REQ-001` 请求根仓库适配（根侧承载行为其 `PLAN-044`／`ARCH-020-D`）。
+- **条文来源**：本篇的 `interrupted` 启动期归一与进度/结局分列来自
+  [ADR 0007](../adr/0007-parse-status-semantics.md) 的裁决，由 PLAN-006 实施；版本作用域来自 PLAN-004；
+  只读清单与作业列表端点来自 PLAN-008；一键清除来自 PLAN-010 与 PLAN-011（四者均已归档，
+  去处见 [plans/index.md](../plans/index.md)）。
+- **叙述框架**：本篇的六段结构与 `PM-n` 编号由 [PLAN-012](../history/plans/2026-09/2026-09-23-design-narrative-framework.md)
+  建立；日期化的执行过程与真机读数一律在 [trackers/completed.md](../trackers/completed.md)。

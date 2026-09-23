@@ -18,6 +18,45 @@ CURRENT_DOCUMENTS = {
     "parsing-management.md",
     "model-integration.md",
 }
+# 取值事实源：docs/standards/doc-governance.md「元数据」节
+IMPLEMENTATION_STATUSES = {
+    "Not Started",
+    "In Progress",
+    "Implemented",
+    "Verified",
+    "Blocked",
+    "Completed",
+}
+STATUS_LINE_LIMIT = 60
+METADATA_KEYS = (
+    "设计状态",
+    "确认状态",
+    "实现状态",
+    "最后更新",
+    "关联代码",
+    "关联测试",
+    "关联 ADR",
+    "关联 Tracker",
+)
+
+
+def _status_line(document: str) -> str:
+    """取 `实现状态` 一行，并断言它**没有换行续写**（轮次历史不得写进元数据）。"""
+    lines = (DESIGN / document).read_text(encoding="utf-8").splitlines()
+    index = next(i for i, line in enumerate(lines) if line.startswith("实现状态："))
+    following = lines[index + 1] if index + 1 < len(lines) else ""
+    assert not following.strip() or following.split("：")[0].strip() in METADATA_KEYS, (
+        f"{document}: 实现状态换行续写（日期化过程应写 trackers/completed.md）"
+    )
+    return lines[index].removeprefix("实现状态：").strip()
+
+
+def test_design_metadata_declares_legal_bounded_status():
+    """R1：`实现状态` 取值属合法枚举，且单行 ≤60 字。"""
+    for document in CURRENT_DOCUMENTS:
+        value = _status_line(document)
+        assert len(value) <= STATUS_LINE_LIMIT, f"{document}: 实现状态 {len(value)} 字"
+        assert value.split("（")[0].strip() in IMPLEMENTATION_STATUSES, f"{document}: {value!r}"
 
 
 def _mermaid(document: str) -> list[str]:
@@ -30,6 +69,63 @@ def test_design_directory_has_one_index_and_one_current_contract():
     index = (DESIGN / "index.md").read_text(encoding="utf-8")
     for document in CURRENT_DOCUMENTS:
         assert f"]({document})" in index
+
+
+# 叙述框架（PLAN-012）：三篇同构的六段骨架，H2 顺序固定、白名单穷举。
+SECTION_SKELETON = ("目标与非目标", "边界与事实源", "核心设计", "失败与质量语义", "验收判据", "追溯")
+# R2：条文编号必须在本篇内解析（`PP-n`/`PM-n`/`MI-n`），跨壳引用一律降级为「来源：PLAN-0xx（已归档）」。
+CROSS_SHELL_CLAUSE = re.compile(r"PLAN-\d+[^\n。]{0,16}条文")
+# R3：不做第二份契约表——列名清单与响应字段清单的事实源在 `architecture/`。
+# 必须带 MULTILINE：表头行出现在文档中部，缺该标志时 `^` 只锚定文首，守护会**恒不命中**。
+CONTRACT_TABLE = re.compile(r"^\| *(字段|列|响应字段|参数) *\|", re.MULTILINE)
+
+
+def _h2_headings(document: str) -> list[str]:
+    content = (DESIGN / document).read_text(encoding="utf-8")
+    return re.findall(r"^## (.+?)\s*$", content, re.MULTILINE)
+
+
+def test_design_documents_follow_six_section_skeleton():
+    """S1：三篇 H2 逐字等于六段骨架（顺序与集合都固定，小节层级不越界成 H2）。"""
+    for document in CURRENT_DOCUMENTS:
+        assert _h2_headings(document) == list(SECTION_SKELETON), document
+
+
+def test_design_clauses_resolve_inside_their_own_document():
+    """R2：design 正文不出现 `PLAN-0xx … 条文` 形式的跨壳编号。"""
+    for document in CURRENT_DOCUMENTS:
+        content = (DESIGN / document).read_text(encoding="utf-8")
+        matched = CROSS_SHELL_CLAUSE.search(content)
+        assert matched is None, f"{document}: 跨壳条文编号 {matched.group(0)!r}"
+
+
+def test_design_documents_declare_numbered_clauses_with_carriers():
+    """S3：条文表逐条给出实现落点；编号在本篇内唯一、从 1 起连续。"""
+    carriers = {
+        "PM": "parsing-management.md",
+        "PP": "parsing-pipeline.md",
+        "MI": "model-integration.md",
+    }
+    for prefix, document in carriers.items():
+        content = (DESIGN / document).read_text(encoding="utf-8")
+        declared = set(re.findall(rf"^\*\*{prefix}-(\d+)", content, re.MULTILINE))
+        rows = re.findall(rf"^\| {prefix}-(\d+) \|(.+)$", content, re.MULTILINE)
+        listed = {number for number, _ in rows}
+        assert declared == listed, f"{document}: 条文 {sorted(declared ^ listed)} 正文与条文表不符"
+        assert listed == {str(n) for n in range(1, len(listed) + 1)}, f"{document}: 编号不连续"
+        for number, tail in rows:
+            cells = [cell.strip() for cell in tail.strip().rstrip("|").split("|")]
+            assert len(cells) == 2, f"{document}: {prefix}-{number} 条文表列数不是「实现落点 + 守护」"
+            assert cells[0] and cells[0] != "—", f"{document}: {prefix}-{number} 缺实现落点"
+
+
+
+def test_design_documents_hold_no_second_contract_table():
+    """R4（框架 R3）：design 不承载表结构/端点响应字段清单，只写语义 + 指向 `architecture/` 的链接。"""
+    for document in CURRENT_DOCUMENTS:
+        content = (DESIGN / document).read_text(encoding="utf-8")
+        matched = CONTRACT_TABLE.search(content)
+        assert matched is None, f"{document}: 出现第二份契约表 {matched.group(0)!r}"
 
 
 def test_every_current_design_has_one_embedded_mermaid_view():

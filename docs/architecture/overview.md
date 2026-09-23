@@ -2,9 +2,9 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：In Progress
-最后更新：2026-09-17
-关联代码：无（新包结构实现中，见 [code-map](code-map.md)）
+实现状态：Verified（v2 拓扑与 8902 服务面已落地并真机取证）
+最后更新：2026-09-23
+关联代码：全部模块与层级见 [code-map](code-map.md)
 关联测试：`tests/contract/test_architecture_documents.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
 [ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)

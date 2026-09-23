@@ -19,6 +19,47 @@ CURRENT_DOCUMENTS = {
     "database-design.md",
     "code-map.md",
 }
+# `code-map.md` 与 `index.md` 声明 `状态`（表格/索引类），其设计/实现状态补登记归 ARCH-010；
+# 本守护只覆盖声明 `实现状态` 的架构正文。取值事实源：docs/standards/doc-governance.md「元数据」节
+STATUS_DOCUMENTS = {"overview.md", "api.md", "database-design.md"}
+IMPLEMENTATION_STATUSES = {
+    "Not Started",
+    "In Progress",
+    "Implemented",
+    "Verified",
+    "Blocked",
+    "Completed",
+}
+STATUS_LINE_LIMIT = 60
+METADATA_KEYS = (
+    "设计状态",
+    "确认状态",
+    "实现状态",
+    "最后更新",
+    "关联代码",
+    "关联测试",
+    "关联 ADR",
+    "关联 Tracker",
+)
+
+
+def _status_line(document: str) -> str:
+    """取 `实现状态` 一行，并断言它**没有换行续写**（轮次历史不得写进元数据）。"""
+    lines = (ARCHITECTURE / document).read_text(encoding="utf-8").splitlines()
+    index = next(i for i, line in enumerate(lines) if line.startswith("实现状态："))
+    following = lines[index + 1] if index + 1 < len(lines) else ""
+    assert not following.strip() or following.split("：")[0].strip() in METADATA_KEYS, (
+        f"{document}: 实现状态换行续写（日期化过程应写 trackers/completed.md）"
+    )
+    return lines[index].removeprefix("实现状态：").strip()
+
+
+def test_architecture_metadata_declares_legal_bounded_status():
+    """R1：`实现状态` 取值属合法枚举，且单行 ≤60 字。"""
+    for document in STATUS_DOCUMENTS:
+        value = _status_line(document)
+        assert len(value) <= STATUS_LINE_LIMIT, f"{document}: 实现状态 {len(value)} 字"
+        assert value.split("（")[0].strip() in IMPLEMENTATION_STATUSES, f"{document}: {value!r}"
 
 
 def _mermaid(document: str) -> list[str]:

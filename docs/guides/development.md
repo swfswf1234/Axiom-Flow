@@ -60,7 +60,7 @@ $env:QED_TEST_MYSQL = "1"
 
 > 真机冒烟（`tests/smoke/`）只连本机回环上的模型服务，数据根与数据库用 `tmp_path` 内的合成 PDF 与
 > SQLite，不读写真实 `QED_DATA_ROOT`、不写共享 `qed` 库；开启后模型不可达即**失败**，不静默跳过。
-> 该「显式开启」口径与 PLAN-003 条文 10 同批，已随 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)
+> 该「显式开启」口径与 PLAN-003 的集成隔离要求同批，已随 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)
 > 晋升 `standards/testing.md`。
 >
 > `QED_TEST_MYSQL=1` 的隔离边界同见 ADR 0005：只连回环 MySQL、只用 `qed_test` 库内本方自有的

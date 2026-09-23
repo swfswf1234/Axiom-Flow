@@ -2,62 +2,71 @@
 
 设计状态：Accepted
 确认状态：暂定
-实现状态：Current（config/engines 已实现，MinerU 适配器按 3.4.4 异步协议落地 + `factory.py` 显式
-分派 + `bbox_space` 坐标空间声明 + 归一化可见丢弃计数 + **全本按页窗口提交（`start_page_id`/
-`end_page_id`，按块 deadline 与绝对页号还原，2026-09-22 W0 真机冻结）**；paddleocr-vl/qwen-vl 预留；
-llm_client/fallback 已退役）
-最后更新：2026-09-22
+实现状态：Verified（MinerU 适配器已实现并真机取证；paddleocr-vl/qwen-vl 预留槽位）
+最后更新：2026-09-23
 关联代码：`src/axiom_flow/config.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`
 关联测试：`tests/unit/test_config.py`、`tests/unit/test_engines.py`、`tests/unit/test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py`
-关联 ADR：`docs/adr/0004-model-boundary-and-pipeline-ownership.md`
+关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)
 
-> 本文档定义 Axiom-Flow 如何对接解析模型：配置键、适配器接口、各引擎接入方式，以及与根仓库
-> 8900（模型生命周期与调参）的边界。解析管线见 [parsing-pipeline.md](parsing-pipeline.md)；
-> 解析管理闭环见 [parsing-management.md](parsing-management.md)；取代原 `model-mode-config.md`
-> （已归档 `history/design/`）。
+> **本篇回答的唯一问题**：本仓库**怎样与模型服务对话**——配置读什么、发什么、返回什么、
+> 什么时候算不可用。产物怎么消费这些返回、什么算合格归
+> [parsing-pipeline.md](parsing-pipeline.md)；任务与书目状态怎么流转归
+> [parsing-management.md](parsing-management.md)。
 
-## 背景与定位
+## 目标与非目标
 
-v0.1 的 `llm_client.py` 双模式（local 直连 qwen-vl / qed-engine 经 8900 网关）在
-[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md) 中被取代：
+**目标**：
 
-- **模型生命周期归 8900**：模型文件槽位、`/models/{slot}` 启停、探针、资源互斥（根仓库
-  [local-model-management](https://github.com/QED-Engine/qed-engine/blob/main/docs/design/local-model-management.md)）；
-- **解析调用归本仓库**：引擎适配器直连模型服务，不经 8900 网关；
-- **模型无感知**：引擎由配置选择，统一 blocks 归一化在适配层完成。
+1. 用**可插拔适配器**隔离引擎差异：换模型不影响管线其余部分与任何状态语义。
+2. 把与模型服务的协议事实**冻结到可复验**：端点、字段、坐标空间、类型字面值、窗口语义都来自
+   真机探测留档，而不是猜测或文档抄写。
+3. 让本仓库对模型**无知**：只发产物形态开关，不碰调参；只连接，不启停。
+4. 在单机单 GPU 的现实约束下**不叠加提交**：把「被占用」与「不可用」判成两种可区分的状态。
+5. 让配置在独立部署与被根仓库托管两种形态下都成立，且旧键不留别名（漂移即报错，不静默兼容）。
 
-**配置简化（2026-09-17 用户裁决，PLAN-002）**：Axiom-Flow 只做「模型 API 调用 + 预处理/
-后处理」，**模型调参（MinerU 等引擎参数）归 QED-Engine 侧**，本仓库不暴露调参入口。配置中心
-简化为三段式：服务（`AXIOM_PORT`）/ 数据与数据库（`QED_DATA_ROOT`、`QED_DB_*`）/ 解析引擎
-（`AXIOM_OCR_ENGINE`、`QED_OCR_MODEL_URL`、`AXIOM_OCR_TIMEOUT`、`AXIOM_PARSE_WINDOW_SIZE`）。服务启动不依赖 8900 与
-模型在线，仅解析时连接模型 API。
+**非目标（各归其主）**：
 
-**MinerU 直连契约（根仓库 PLAN-046 / REQ-075）**：`QED_MINERU_URL` 删除改为
-`QED_OCR_MODEL_URL`，MinerU 端口 8002 → 5002；**不保留旧键别名**。本仓库只连接模型服务，
-**不负责启停**。
+- 归一化映射表、坐标换算、可见丢弃与对账不变式 → [PP-8、PP-9](parsing-pipeline.md)。
+- 解析窗口切分与失败域 → [PP-11](parsing-pipeline.md)；本篇只定义窗口在协议侧的字段形状。
+- 产物布局、版本目录、任务终态与生效指针 → [parsing-pipeline.md](parsing-pipeline.md)、
+  [parsing-management.md](parsing-management.md)。
+- 模型文件、镜像、启停、探针、资源互斥与**模型调参** → 根仓库 8900
+  （[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
+- 模块清单与实现状态 → [code-map.md](../architecture/code-map.md)；v1 模块退役登记亦在此。
 
-## 引擎配置
+## 边界与事实源
+
+| 事项 | 本篇管 | 不管（事实源） |
+| --- | --- | --- |
+| 配置键 | 键名、语义、默认值、读取优先级、退役 | 数据根与库边界：[database-design.md](../architecture/database-design.md) |
+| 适配器接口 | 方法契约与「不暴露调参」的边界 | 归一化后的版面块结构：[PP-7~PP-10](parsing-pipeline.md) |
+| 预处理与后处理 | 两段的**归属**（恒在本仓库，MI-15）与「不向引擎侧下沉」的边界 | 两段的规则条文：[parsing-pipeline.md](parsing-pipeline.md)（`PP-2`、`PP-8~PP-10`、`PP-19`） |
+| MinerU 协议 | 三段式端点与字段、窗口字段、坐标空间与类型**字面值来源** | 换算与映射：[parsing-pipeline.md](parsing-pipeline.md) |
+| 超时与重试 | 单次调用 `deadline`、三层重试分列 | 任务进度与终态：[parsing-management.md](parsing-management.md) |
+| 占用与可用性 | `health()` / `model_load()` 判据与文案归属 | 探活失败的 HTTP 后果：[PM 失败与质量语义](parsing-management.md) |
+| 与 8900 的边界 | 归属划分 + 对根侧的出站要求 | 8900 侧实现：根仓库 |
+
+**已移除的键**（v1 / 网关残留，不再读取，无别名）：`QED_API_SELECT`、`QED_LLM_GATEWAY_URL`、
+`QED_LLM_TIMEOUT`、`QED_PROXY`、`QED_API_PROVIDER`、`QED_MODEL`、`QED_EMBEDDING_MODEL`、
+`AXIOM_FLOW_DATA_DIR`、`AXIOM_PADDLEOCR_URL`、`AXIOM_VISION_CONTRACT_VERSION` /
+`AXIOM_VISION_MAX_TOKENS` / `AXIOM_VISION_PAGE_ATTEMPTS` / `AXIOM_MODEL_CALL_BUDGET` /
+`AXIOM_MODEL_TIMEOUT_SECONDS`、`QED_MINERU_URL`。新增键需按 ADR 流程登记，删除键不留兼容通道。
+
+## 核心设计
+
+### 配置键
 
 | 变量 | 说明 | 默认 |
 | --- | --- | --- |
 | `AXIOM_OCR_ENGINE` | 解析引擎：`mineru` / `paddleocr-vl` / `qwen-vl`（后两者预留） | `mineru` |
 | `QED_OCR_MODEL_URL` | 图像槽位本地端点（MinerU 容器，健康端点 `/health`） | `http://127.0.0.1:5002` |
-| `AXIOM_OCR_TIMEOUT` | **单块**一次调用的超时秒数（三段式提交/轮询/取结果共享；全本按窗口分块，每块独立计） | `600` |
-| `AXIOM_PARSE_WINDOW_SIZE` | 全本解析每块的页数（串行提交；默认值由真机 W0 冻结） | `56` |
+| `AXIOM_OCR_TIMEOUT` | **单窗口/单页一次调用**的超时秒数（三段式提交/轮询/取结果共享） | `600` |
+| `AXIOM_PARSE_WINDOW_SIZE` | 全本解析每个解析窗口的页数（串行提交；默认值由真机 W0 冻结） | `56` |
 | `API_KEY` | 云端档位凭据（仅 qwen-vl 预留，注释态，不随解析默认路径读取） | — |
 | `AXIOM_VISION_MODEL` | qwen-vl 档位模型名（仅 qwen-vl 预留，注释态） | `qwen-vl-plus` |
 | `QED_DATA_ROOT` | 三项目统一数据根（`raw/` 只读输入、`parsed/` 本仓库产物） | 向上走查根 `.env` |
 
-已移除（v1/网关残留，不再读取）：`QED_API_SELECT`、`QED_LLM_GATEWAY_URL`、`QED_LLM_TIMEOUT`、
-`QED_PROXY`、`QED_API_PROVIDER`、`QED_MODEL`、`QED_EMBEDDING_MODEL`、`AXIOM_FLOW_DATA_DIR`、
-`AXIOM_PADDLEOCR_URL`、`AXIOM_VISION_CONTRACT_VERSION` / `AXIOM_VISION_MAX_TOKENS` /
-`AXIOM_VISION_PAGE_ATTEMPTS` / `AXIOM_MODEL_CALL_BUDGET` / `AXIOM_MODEL_TIMEOUT_SECONDS`。
-
-配置读取优先级：真实环境变量 > 自身 `.env` > 父目录 `.env`（向上走查）> 内置默认值。
-本仓库 `.env` 支持独立部署（含 `QED_DB_NAME=qed` 与引擎配置）；由 QED-Engine 启动时经向上
-走查跟随根 `.env`，两边配置允许不一致（用户裁决 2026-09-17）。
-
-## 引擎适配接口
+### 适配器分派
 
 ```mermaid
 flowchart LR
@@ -66,134 +75,226 @@ flowchart LR
     ADP --> M["MinerUEngine<br/>mineru-api 5002"]
     ADP -.-> P["PaddleOCRVLEngine<br/>（预留）"]
     ADP -.-> Q["QwenVLEngine<br/>（云端 api 档位，预留）"]
-    M --> NRM["normalize/ 统一 blocks + Markdown"]
+    M --> NRM["normalize/ 统一版面块 + Markdown"]
     P -.-> NRM
     Q -.-> NRM
     NRM --> SCH["schemas.py"]
 ```
 
-适配器统一契约：
+### 已确定守则
 
-- 输入：`parse_document(pdf_bytes, filename)`（**默认全本**）或 `parse_page(image_bytes, page_no)`
-  （指定 pages 的逐页重解析）；
-- 输出：页级结果（`blocks` + `markdown` + `bbox` + `image_size`），由 `normalize/` 归一为统一 schema；
-- 差异（MinerU `content_list`/`middle.json`、PaddleOCR-VL JSON、qwen-vl markdown）在适配层消化；
-- **负载探测**：`model_load()` 返回 `ModelLoad(queued, processing)`（模型服务当前排队与在飞任务数），
-  该引擎不上报负载时返回 `None`。编排层据此在**任务启动前**执行单一占用闸门——GPU 资源不足以并行
-  解析，绝不在他人占用时叠加提交（见下「MinerU」节与
-  [parsing-pipeline 错误处理](parsing-pipeline.md#错误处理与质量验收)）；
-- 适配器**不暴露模型调参**：引擎参数（如 MinerU 后端/语言/公式开关）由模型服务侧（QED-Engine
-  控制台与容器配置）管理，本仓库调用固定契约。
+> **怎么读**：加粗一行是该条守则的**结论**（编号 `MI-n` 只在本篇内解析），其下分列「**判据**」＝可检验
+> 的事实，「**为什么**」＝立法理由与实证来源，「**例外**」＝不成立的情形；缺某项即无该项；「**反例**／**归属**／**前提**／**启用路径**／**预留**」等按字面理解。
+> 全部守则的实现落点与守护测试统一登记在篇末「条文表」，此处不重复。
 
-## 各引擎接入
+#### 配置与分派
 
-### MinerU（已落地，3.4.4 异步任务协议）
+**MI-1 配置只有三段，两边 `.env` 允许不一致**
 
-- 服务：`mineru-api` 容器（WSL，**5002**），健康端点 `GET /health`（**不是** `/api/v1/health`）；
-  生命周期（启停/探针/资源互斥）由 8900 托管，本仓库只连接 `QED_OCR_MODEL_URL`。
-- 调用固定三段（`engines/mineru.py`；端点终版由 PLAN-003 W0 冻结探测确立，留档
-  `data/probes/mineru-3.4.4-20260920/`）：
+- **判据**：配置中心只有三段——服务（`AXIOM_PORT`）/ 数据与库（`QED_DATA_ROOT`、`QED_DB_*`）/
+  解析引擎（见本节上方「配置键」表）。读取优先级：真实环境变量 > 自身 `.env` > 父目录 `.env`（向上走查）>
+  内置默认值。
+- **为什么**：本仓库既要能独立部署，也要能被 QED-Engine 托管时跟随根 `.env`；「两边允许不一致」是用户
+  裁决 2026-09-17。服务启动不依赖 8900 与模型在线，只在解析时连接模型 API。
 
-| 阶段 | 端点 | 请求与响应要点 |
+**MI-2 引擎名先解析后落库，未注册即 400**
+
+- **判据**：实际引擎 = 请求体 `engine`（可选）优先、缺省回落 `AXIOM_OCR_ENGINE`，由 `engines/factory.py`
+  显式分派；`af_parse_jobs.engine` 存**解析后的实际引擎名**，DDL 侧该列**无默认值**。
+- **为什么**：缺引擎名必须报错、不做静默回落——否则这一行作业记录的引擎归属不可信。
+- **例外**：未在 `factory.ENGINE_NAMES` 注册的名称返回 400；非法字面值由 schema 返回 422。
+
+#### 适配器契约与请求形态
+
+**MI-3 适配器只暴露四个方法，引擎差异在适配层消化**
+
+- **判据**：统一方法只有 `parse_document(pdf_bytes, filename, start_page?, end_page?)`（默认全本）、
+  `parse_page(image_bytes, page_no)`（逐页重解析）、`health()`（可用性）、`model_load()`（负载）。
+  输出为页级原始结果（版面块 + Markdown + bbox + image_size + 坐标空间声明）。
+- **为什么**：引擎差异（MinerU `content_list`/`middle_json`、PaddleOCR-VL JSON、qwen-vl markdown）在
+  适配层**消化成同一形状**，归一化侧因此不再分支判断引擎。
+
+**MI-4 只发产物形态开关，不发解析调参**
+
+- **判据**：必须显式发送 `return_content_list=true`、`return_middle_json=true`（openapi 默认 false，
+  不送则版面块与页尺寸**恒缺失**），按需 `return_md=true`。
+- **不发清单**：`backend`、`effort`、`parse_method`、`lang_list`、`formula_enable`、`table_enable`、
+  `image_analysis`、`server_url`——让容器环境配置生效（模型调参归 8900）。也不请求 `return_images`，
+  页图由本仓库 ingest 自产。
+- **相关**：预处理与后处理两段的归属见 MI-15，窗口字段的形状见 MI-6。
+
+#### MinerU 3.4.4 协议事实
+
+**MI-5 三段式协议，`deadline` 只覆盖单次调用**
+
+- **判据**：提交 `POST /tasks`（multipart 字段 `files`，200/202 受理，任务号在响应**顶层** `task_id`）
+  → 轮询 `GET /tasks/{task_id}`（状态取顶层 `status`，`pending → processing → completed`，失败态附顶层
+  `error` 文本）→ 取结果 `GET /tasks/{task_id}/result`（**202＝未就绪**继续等待；200＝载荷在
+  `results[<file_stem>]`，正文 `md_content`、版面块结构 `content_list`、页尺寸
+  `middle_json.pdf_info[*].page_size`）。
+- **`deadline` 语义**：三段共享**本次调用**从 `AXIOM_OCR_TIMEOUT` 起算的 `deadline`，每次调用（一个解析
+  窗口或一页）独立计 ⇒ 全本挂钟上限是「窗口数 × 单窗口超时」，而非整本一道墙。
+- **反例**：旧式同步 `POST /file_parse` 与 `GET /get_task_results/{task_id}` 在 3.4.4 **均不存在**
+  （后者返回 404，即 DEFECT-002 根因）。
+
+**MI-6 窗口字段 0 基含两端，返回页号是窗口内相对**
+
+- **判据**：`POST /tasks` 表单的 `start_page_id`/`end_page_id` 为 **0 基、含两端**（窗口大小 =
+  `end − start + 1`）；本仓库对外的 `parse_document(start_page, end_page)` 用 **1 基含两端**并在适配器内
+  换算。返回的 `content_list[].page_idx` 与 `middle_json.pdf_info[].page_idx` 都是**窗口内相对索引**
+  （自 0 起），适配器必须按窗口起点还原为**全书绝对页号**。
+- **例外**：不送窗口字段即整本（默认 `0`/`99999`）。页枚举以 `pdf_info` 为准，这使空白页成为合法空页
+  （[PP-12](parsing-pipeline.md)）。
+
+**MI-7 坐标空间由适配器声明，不由消费方猜**
+
+- **判据**：MinerU 3.4.4 的 `content_list[].bbox` 是**相对页框、逐轴归一化到 0–1000**（整本与逐页两条
+  提交路径同一空间），适配器必须在 `PageResult.bbox_space` 声明 `"normalized_1000"`。
+- **反例**：`middle_json.pdf_info[*].page_size` 对 PNG 输入返回按 200 DPI 折算的标称点尺寸（与页图像素比
+  约 1:2.78），**不能**当缩放基准。
+- **归属**：换算规则与「哪个空间以 `page_size` 为基准」归 [PP-8](parsing-pipeline.md)。
+
+**MI-8 类型字面值只登记引擎侧事实**
+
+- **判据**：`content_list[].type` 真机实测字面值含 `text`、`header`、`footer`（**不是**
+  `page_header`/`page_footer`），另有 `equation`（其 `latex` 自带 `$$…$$`，行间式不走
+  `interline_equation`）。
+- **归属**：映射表内容、未覆盖字面值的可见丢弃与对账不变式归 [PP-9](parsing-pipeline.md)，定界符剥离归
+  [PP-10](parsing-pipeline.md)。
+
+#### 稳健性
+
+**MI-9 三层重试分列，互不吞并**
+
+- **判据**：**单页重试 1 次**（逐页路径，编排层）；**轮询瞬时失败容忍连续 3 次**（适配层，HTTP 异常或
+  非 2xx，成功一次即清零计数，全程受同一 `deadline` 约束）；**解析窗口级不重试**（恢复靠同 job 续跑，
+  见 [PP-11](parsing-pipeline.md)）。
+- **为什么**：三者层级不同、文案不同，不得互相冒充为同一层重试——否则故障归因与挂钟预算都会失真。
+
+**MI-10 出站恒为直连，`trust_env=False`**
+
+- **判据**：HTTP 客户端一律以 `trust_env=False` 构造。
+- **为什么**：真机实证 Windows 注册表代理对 `127.0.0.1` **不做豁免**（`ProxyEnable=1` + 空
+  `ProxyOverrides` 时回环流量仍交给代理，代理规则变化即返回 502/0 字节，表现为「端点不存在」的假象）。
+- **例外**：无。此约束与 `QED_PROXY` 退役一致——本地模型流量恒为直连，不提供代理开关。
+
+**MI-11 响应解析防御式双兼容 + 异常归一**
+
+- **判据**：正文接受 `md_content` 或 `markdown`；`content_list` 与 `middle_json` 兼容「JSON 字符串」与
+  「已解析对象」两种载体；状态兼容顶层 `status` 与旧式 `data.state`；单文件提交时 `results` 按唯一键回落。
+  非 JSON 或非 2xx 一律归一为 `EngineError`，`JSONDecodeError` 等内部异常**不得穿透编排层**。
+- **为什么**：异常穿透会牵连回滚已解析页行。
+- **边界**：双兼容只针对**同一引擎版本的响应载体**，不是版本回落通道——协议事实变更须重新冻结探测并改契约。
+
+**MI-12 单一占用闸门：把「被占用」与「不可用」判成两件事**
+
+- **前提**：本机 GPU 只容得下一个解析在飞，而 MinerU `max_concurrent_requests=3` 说明服务侧**允许**并行
+  ⇒ 资源约束必须由调用方自我执行。
+- **判据**：`model_load()` 读 `GET /health` 的 `queued_tasks` 与 `processing_tasks`（3.4.4 实测字段），
+  返回 `ModelLoad(queued, processing)`；任务启动前若 `queued + processing > 0` 则**不提交任何内容**，
+  按 5 秒间隔复探、最长等待 900 秒；超时才判失败，文案「模型服务被其他解析任务占用」，与「模型服务不可用」
+  **分列不互相冒充**。
+- **例外**：非 200、JSON 异常或两字段缺失一律返回 `None`，表示「无法判定」，编排层**按可用放行**——
+  不因为探测不灵就凭空造出一个阻塞；真正的不可达仍由 `health()` 判定。
+- **为什么**：真机窗口里排队任务轮到恰逢容器重启，被误记成不可用，故障归因即失真。
+- **边界**：闸门只保证**我方不叠加提交**，本仓库执行器另有 `max_workers=1` 的串行队列。
+
+#### 扩展、边界与跨项目
+
+**MI-13 预留槽位未实现即报错，不回落**
+
+- **判据**：`paddleocr-vl`、`qwen-vl` 是已登记未实现的槽位，请求它们返回 400，**不回落 MinerU**
+  （ADR 0004 不做静默兜底）。
+- **启用路径**：在 8900 注册单元 → 本仓库新增 `engines/<name>.py` 并登记进
+  `factory.IMPLEMENTED_ENGINES` → 需要新配置键时按 ADR 流程新增（`AXIOM_PADDLEOCR_URL` 已退役，启用时
+  重新登记）。qwen-vl 属云端档位，启用时取消 `.env` 里 `API_KEY` / `AXIOM_VISION_MODEL` 的注释，输出
+  markdown 归一为统一版面块（bbox 可能缺失，标记来源）。
+
+**MI-14 对根侧的出站要求 REQ-085**
+
+- **判据**：8900 在 8902 有未完成（`queued`/`running`）解析任务时**不得重启/换起 vision 槽位**，或至少
+  提供可被 8902 探测的「占用中」信号；真机窗口执行前须与 8900 侧约定静默期（见
+  [operations runbook](../guides/operations.md)）。
+- **为什么**：模型容器的重启/换起权在 8900，而重启会直接毁掉在飞与排队中的解析（实证：一次并发重启使两个
+  任务同时报断连/不可用）。
+
+**MI-15 预处理与后处理恒在本仓库做**
+
+- **判据**：本仓库送给引擎的只有**源件（PDF 或 ingest 自产页图）+ 产物形态开关 + 窗口字段**（MI-4、MI-6）。
+  解析前后的两段——**预处理**（页图渲染与 150 DPI 基准、`book.json` 元信息）与**后处理**（坐标换算、
+  类型映射与可见丢弃、公式定界符、知识块切分、清单与质量信号）——实现位置**恒在本仓库**，
+  即 `ingest/` 与 `normalize/`（规则条文：[PP-2](parsing-pipeline.md)、
+  [PP-8~PP-10](parsing-pipeline.md)、[PP-19](parsing-pipeline.md)）。
+- **预留**：后续要加的输入整形（如去噪、二值化、按页方向校正）与结果修补（如公式修补、跨页条目合并）
+  **只落在本仓库这两处**，并以新的质量信号或产物字段变得可见；**不通过新增引擎侧调参开关实现**（那属
+  8900 的调参域，MI-4 的不发清单即为此而设）。
+- **为什么**：这两段决定产物是否可复现与可回归测试。放在引擎侧就要靠容器配置解释「同一本书为什么两次
+  结果不同」，本仓库的契约稳定性与真机取证同时失效。
+- **例外**：引擎内建的版面/公式/表格识别本身**不属这两段**——它是模型的本职，由 8900 侧配置，本仓库只
+  消费其返回（MI-4）。
+
+### 条文表
+
+| 条文 | 实现落点 | 守护测试 |
 | --- | --- | --- |
-| 提交 `_submit` | `POST /tasks`（multipart 字段 `files`） | 200/202 受理，任务号在响应**顶层** `task_id`；全本上传 PDF、逐页上传页图 |
-| 轮询 `_wait_done` | `GET /tasks/{task_id}` | 状态取**顶层** `status`（`pending → processing → completed`）；失败态附顶层 `error` 文本 |
-| 取结果 `_fetch_result` | `GET /tasks/{task_id}/result` | **202＝未就绪**（继续等待，受同一 `deadline` 约束）、200＝载荷为 `results[<file_stem>]`，正文 `md_content`、块结构 `content_list`、页尺寸 `middle_json.pdf_info[*].page_size` |
+| MI-1 | `config.py:load_settings`（三段式 + `.env` 向上走查） | `tests/unit/test_config.py` |
+| MI-2 | `engines/factory.py:resolve_engine_name/build_engine` | `tests/unit/test_engine_factory.py` |
+| MI-3 | `engines/base.py` 适配器协议 | `tests/unit/test_engines.py` |
+| MI-4 | `engines/mineru.py:_OUTPUT_FLAGS` 表单字段构造 | `tests/unit/test_engines.py` |
+| MI-5 | `engines/mineru.py:_submit/_wait_done/_fetch_result` | `tests/unit/test_engines.py`、`tests/smoke/test_live_mineru_chain.py` |
+| MI-6 | `engines/mineru.py:parse_document`（页号还原 + `pdf_info` 枚举） | `tests/unit/test_engines.py` |
+| MI-7 | `engines/mineru.py` 的 `PageResult.bbox_space` 声明 | `tests/unit/test_engines.py` |
+| MI-8 | 引擎侧事实（无独立落点，消费面在映射表） | `tests/unit/test_engines.py`（原始 `type` 断言） |
+| MI-9 | `engines/mineru.py` 轮询容忍 + `pipeline.py:_parse_page_with_retry` | `tests/unit/test_engines.py`、`tests/unit/test_orchestrator.py` |
+| MI-10 | `engines/mineru.py` 的 `httpx.Client(trust_env=False)` | `tests/unit/test_engines.py` |
+| MI-11 | `engines/mineru.py` 响应解析与 `EngineError` 归一 | `tests/unit/test_engines.py` |
+| MI-12 | `engines/mineru.py:model_load()`、`pipeline.py:_await_model_idle` | `tests/unit/test_orchestrator.py` |
+| MI-13 | `engines/factory.py:IMPLEMENTED_ENGINES` | `tests/unit/test_engine_factory.py` |
+| MI-14 | 跨项目请求（无本仓库代码落点） | `docs/standards/cross-project-collaboration.md` 登记 |
+| MI-15 | `engines/mineru.py` 表单内容（只送源件 + 形态开关）、`ingest/` 与 `normalize/` 两段实现 | `tests/unit/test_engines.py`（不发送调参键）、`tests/unit/test_normalize.py` |
 
-  旧式同步 `POST /file_parse` 与 `GET /get_task_results/{task_id}` 在 3.4.4 **均不存在**（后者
-  返回 404，即 DEFECT-002 根因）。
+## 失败与质量语义
 
-- **只设产物形态开关，不设解析调参**：必须显式发送 `return_content_list=true`、
-  `return_middle_json=true`（openapi 默认 false，不送则 blocks 与页尺寸恒缺失），并按需
-  `return_md=true`；**不发送** `backend`、`effort`、`parse_method`、`lang_list`、`formula_enable`、
-  `table_enable`、`image_analysis`、`server_url`，让容器环境配置生效（模型调参归 8900，ADR 0004）；
-  不请求 `return_images`（页图由本仓库 ingest 自产）。
-- **原始块坐标空间与类型字面值（2026-09-20 真机锚点实验测定，2026-09-21 适配层落地）**：
-  `content_list[].bbox` 为**相对页框逐轴归一化 0–1000**（整本与逐页两条路径一致），适配器必须在
-  `PageResult.bbox_space` 声明 `"normalized_1000"`，由归一化侧按 `bbox / 1000 * image_size` 换算；
-  `middle_json.pdf_info[*].page_size` 对 PNG 输入返回按 200 DPI 折算的标称点尺寸（与页图像素比
-  约 1:2.78），**不能**当缩放基准，`page_size` 只留档、不参与坐标换算。`content_list[].type`
-  实测字面值含 `text`、`header`、`footer`（**不是** `page_header`/`page_footer`），归一化侧两类
-  字面值并存收录；映射表未覆盖的字面值按**可见丢弃**计入 `QualityMetrics.dropped_block_count` /
-  `dropped_types`，不静默丢块（DEFECT-004 坐标空间与 DEFECT-005 类型映射均已修复，见
-  [completed.md](../trackers/completed.md)）。
-  实验与复验留档 `data/probes/live-bringup-20260920/{L3d_coord_space.json,L3c_page0003.json}`、
-  `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`。
+- **提交期探活失败**（`health()` 假）→ 503 且**不创建任务行**（状态机后果见
+  [parsing-management.md](parsing-management.md)）；**受理后故障** → 任务 `failed`，已解析页保留。
+- **占用超时** → `failed` 且文案「模型服务被其他解析任务占用」，不写页行、不激活版本；与「模型服务
+  不可用」不互相冒充（MI-12）。
+- **负载无法判定**（`model_load()` 返回 `None`）→ 按可用放行，不臆造阻塞（MI-12）。
+- **响应载体异常**（非 JSON / 非 2xx / 内部解析异常）→ 归一为 `EngineError`，不外泄堆栈（MI-11）。
+- **代理造成的假 502** → 由 `trust_env=False` 消除（MI-10）；出现「端点不存在」表象时先核对是否走了
+  系统代理，再怀疑协议。
+- **未归一成功的版面块** → 计入可见丢弃，在产物侧可见（[PP-9](parsing-pipeline.md)）；引擎侧不补占位条目、
+  不猜类型。
+- **不自动切换引擎**：质量不达标或某引擎故障时不静默换引擎（用户裁决，ADR 0004）。
 
-- **窗口提交字段与页号还原（2026-09-22 W0 真机冻结，留档 `data/probes/window-req086-20260922/`）**：
-  `POST /tasks` 表单的 `start_page_id`/`end_page_id` 为 **0 基、含两端**（窗口大小 = `end − start + 1`），
-  本仓库对外的 `parse_document(start_page, end_page)` 用 **1 基含两端**并在适配器内换算；返回的
-  `content_list[].page_idx` 与 `middle_json.pdf_info[].page_idx` 都是**窗口内相对索引**（自 0 起），
-  适配器必须按窗口起点还原为**全书绝对页号**。不送窗口字段即整本（默认 `0`/`99999`）。
-- **超时按调用计**：每次调用（一次窗口或一页）各自从 `AXIOM_OCR_TIMEOUT` 起算 `deadline`，三段式
-  提交/轮询/取结果共享**本次调用**的 `deadline`；全本的挂钟上限因此是「块数 × 单块超时」，
-  而非整本一道墙。重试分列：**单页重试** 1 次（逐页路径，编排层）、**轮询瞬时失败容忍** 连续 3 次
-  （适配层，成功一次即清零计数）、**块级不重试**（全本窗口路径，恢复靠同 job 续跑）三者互不吞并，
-  见 [parsing-pipeline.md](parsing-pipeline.md)「全本窗口分块提交与空白页语义」。
-- 响应解析防御式双兼容：正文接受 `md_content` 或 `markdown`；`content_list` 与 `middle_json`
-  兼容「JSON 字符串」与「已解析对象」两种载体；状态兼容顶层 `status` 与旧式 `data.state`；
-  单文件提交时 `results` 按唯一键回落。非 JSON 或非 2xx 一律归一为 `EngineError`，`JSONDecodeError`
-  等内部异常不得穿透编排层（否则会牵连回滚已解析页）。
-- **直连，不经系统代理**：HTTP 客户端以 `trust_env=False` 构造。W0 实证 Windows 注册表代理对
-  `127.0.0.1` 不做豁免（`ProxyEnable=1` + 空 `ProxyOverrides` 时回环流量仍交给代理，代理规则变化
-  即返回 502/0 字节，表现为「端点不存在」的假象）；此约束与 `QED_PROXY` 键退役一致——本地模型
-  流量恒为直连，不提供代理开关。
-- 失败语义：模型服务不可达 → **提交期**探活返回 503 且不创建任务行；任务受理后进到执行期的故障
-  → 页/任务 `failed`；**不自动切换引擎**（不设自动兜底）。
-- **`model_load()` 的字段来源与不臆造原则（2026-09-21 R1 窗口后新增）**：读 `GET /health` 的
-  `queued_tasks` 与 `processing_tasks`（3.4.4 实测字段；同一响应里 `max_concurrent_requests: 3`
-  说明服务侧**允许**并行，资源约束必须由调用方自我执行）。非 200、JSON 异常或两字段缺失一律返回
-  `None` —— 表示「无法判定」，编排层**按可用放行**，不因为探测不灵就凭空造出一个阻塞；真正的
-  不可达仍由 `health()` 判定。窗口实证：一次并发把 MinerU 打到「连续 3 次轮询断连」，排队中的任务
-  轮到时探活失败，被误记为「模型服务不可用」，因此占用与不可用必须分列两种文案。
-- 引擎分派：实际引擎 = 请求体 `engine`（可选）优先、缺省回落 `AXIOM_OCR_ENGINE`，由
-  `engines/factory.py` 显式分派；未在 `factory.ENGINE_NAMES` 注册的名称返回 400、非法字面值由
-  schema 返回 422，已登记但未实现的槽位（`paddleocr-vl`、`qwen-vl`）同样返回 400。
-  `af_parse_jobs.engine` 存**解析后的实际引擎名**。
+## 验收判据
 
-### PaddleOCR-VL（预留）
+1. **协议事实来自冻结探测**，非推测：三段式端点与信封形状留档 `data/probes/mineru-3.4.4-20260920/`
+   （W0 冻结）；窗口字段与页号相对性留档 `data/probes/window-req086-20260922/`；坐标空间与类型字面值
+   留档 `data/probes/live-bringup-20260920/{L3d_coord_space.json,L3c_page0003.json}` 与
+   `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`。
+2. **单元**：`config.py` 引擎/地址/超时读取（含向上走查兜底、旧键忽略）→ `tests/unit/test_config.py`；
+   适配器 mock 单测（三段协议 + 信封双兼容 + 窗口页号还原 + 直连开关 + `model_load` 判定）→
+   `tests/unit/test_engines.py`。
+3. **分派不回落**：未实现/未知引擎名即 400、非法字面值 422，绝不落其他引擎 →
+   `tests/unit/test_engine_factory.py`、`tests/contract/test_api_v1_contract.py`。
+4. **闸门可区分**：占用等待期不提交任何内容、超时文案与「不可用」不同；`None` 放行 →
+   `tests/unit/test_orchestrator.py`（`_await_model_idle` 用例）。
+5. **冒烟**：真实调用 MinerU 单页与整本成功，产物 `source=mineru` →
+   `tests/smoke/test_live_mineru_chain.py`（`@smoke`，本地手动）。
+6. **文档守护**：本篇六段骨架、`MI-n` 条文表与 Mermaid 由 `tests/contract/test_design_documents.py`
+   守护。
 
-- 服务：PaddleOCR-VL-1.6（0.9B，vLLM/Paddle 服务，端口待定），由根仓库 8900 启停托管；
-- 接入方式与 MinerU 同契约（同一适配器接口 + 归一化）；启用时在 8900 注册 `paddleocr` 单元，
-  本仓库新增 `engines/paddleocr_vl.py` 并在 `factory.IMPLEMENTED_ENGINES` 登记；**当前无
-  `AXIOM_PADDLEOCR_URL` 配置键**（该键已随配置简化退役，见「引擎配置」），启用时按 ADR 流程
-  重新新增并届时登记。在此之前 `AXIOM_OCR_ENGINE=paddleocr-vl` 一律返回 400，不回落 MinerU。
+## 追溯
 
-### qwen-vl（云端 api 档位，预留）
-
-- 用途：无本地 GPU / 快速验证；经 `API_KEY` 直连供应商（不依赖 8900 在线）；
-- 输出为 markdown，归一化为统一 blocks（bbox 可能缺失，标记来源）；
-- 启用时取消 `.env` 中 `API_KEY` / `AXIOM_VISION_MODEL` 注释。
-
-## 与 8900 的边界
-
-| 事项 | 归属 |
-| --- | --- |
-| 模型文件、镜像、启停、探针、资源互斥、**模型调参** | 根仓库 8900（`/models/{slot}`、`scripts/image-model/`、控制台） |
-| 引擎选择、调用、归一化、分块、编排、产物落盘 | 本仓库（`engines/`、`normalize/`、`orchestrator/`） |
-| 调用记录 `qed_llm_calls` | 本仓库直连成功路径自写（`service=axiom_flow`、`provider=<engine>`、`endpoint=vision`）；随解析闭环落地 |
-
-模型服务地址可配置：默认直连本地服务（`QED_OCR_MODEL_URL`）；部署形态需要时可指向 8900
-提供的代理地址，适配器契约不变。
-
-**单一占用与重启互斥（2026-09-21 R1 窗口实证）**：本仓库的执行器是 `max_workers=1` 的串行队列，
-闸门只保证**我方不叠加提交**；模型容器的重启/换起权在 8900，而「8902 尚有 `queued`/`running`
-任务时重启容器」会直接毁掉在飞与排队中的解析（该窗口内一次并发重启使两个任务同时报断连/不可用）。
-因此对根侧的出站要求登记为 **REQ-085**：8900 在 8902 有未完成解析任务时不得重启/换起 vision 槽位，
-或至少提供可被 8902 探测的「占用中」信号。窗口执行前须与 8900 侧约定静默（见
-[operations runbook](../guides/operations.md)）。
-
-## 退役清单（已执行，2026-09-17）
-
-- `src/axiom_flow/llm_client.py`（VisionClient 双模式视觉调用）：已删除，由 `engines/` 适配器承接。
-- `src/axiom_flow/fallback/`（qwen-vl-plus 直连通道）：已删除；qwen-vl 以预留引擎身份保留（未实现）。
-- `src/axiom_flow/database.py`：并入 `db/engine.py`。
-- 环境变量 `AXIOM_API_KEY` / `AXIOM_MYSQL_*` / `AXIOM_DATA_DIR` / `AXIOM_WEB_DIR` /
-  `AXIOM_EVALUATION_DATA_DIR`：v1 残留，配置简化后清除。
-
-## 验证
-
-- 单元：`config.py` 引擎/地址/超时读取（含向上走查兜底、旧键忽略）；适配器 mock 单测
-  （三段协议 + 信封双兼容 + 直连开关）；`factory.py` 分派单测（未实现/未知即报错，不回落）；
-- 契约：`tests/contract/test_design_documents.py` 守护本文档；
-- 冒烟：真实调用 MinerU 单页/整本成功，产物 `source=mineru`；调用记录落 `qed_llm_calls`。
+- **归属边界来源**：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归
+  8900、解析管线归本仓库、直连不经网关、无静默兜底）。
+- **直连契约来源**：根仓库 PLAN-046 / REQ-075——`QED_MINERU_URL` 删除改为 `QED_OCR_MODEL_URL`，
+  MinerU 端口 8002 → 5002，不保留旧键别名；配置三段式与「调参归 8900」由 PLAN-002 确立。
+- **协议与字段来源**：三段式协议与 404 根因来自 DEFECT-002；坐标空间与类型字面值来自 DEFECT-004 /
+  DEFECT-005 的真机锚点实验；占用闸门来自 ARCH-017 与 R1 窗口实证；窗口字段与页号还原、空白页枚举来自
+  REQ-086 / REQ-087（PLAN-007）；出站要求 REQ-085 与退役清单见 [code-map.md](../architecture/code-map.md)
+  （v1 `llm_client.py` / `fallback/` / `database.py` 已随 `engines/` 落地退役）。日期化过程与真机读数
+  一律在 [trackers/completed.md](../trackers/completed.md)。
+- **叙述框架**：本篇的六段结构与 `MI-n` 编号由 [PLAN-012](../history/plans/2026-09/2026-09-23-design-narrative-framework.md)
+  建立；取代 v0.1 的 `model-mode-config.md`（已归档 `history/design/`）。
