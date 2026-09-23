@@ -20,6 +20,10 @@ D 类操作规程（本脚本自证）：
 4. **单次解析**：补证据一律 `--evidence-only`；判据不成立时同 job 重跑即续跑（已解析页跳过）。
 5. **窗口排他（C-0）**：占用以模型侧 `queued_tasks + processing_tasks == 0` 为准，另查业务库有无
    `queued`/`running` 行——业务实例若在我们窗口内被起任务，会抢同一个 MinerU，故登记为警告并留档。
+6. **WSL 常驻前置（默认开，`--wsl-holder 300`）**：本机 WSL 会在最后一个 Linux 进程退出十几秒后
+   **回收整个发行版**（`vmIdleTimeout` 不生效），块间空隙正好踩中——表现为中途 `WinError 10054` +
+   剩余页 `MODEL_UNAVAILABLE`。脚本因此滚动维持一个 `wsl bash -c "sleep N"` 进程，退出时收掉；
+   `--wsl-holder 0` 显式关闭并只留 WARN。该前置**不改任何业务参数**（窗口/deadline 原样）。
 
 判据（PLAN-007 成功标准，逐条打印）：
 - S2：`progress.parsed` 随块单调递增且真机可观测到非零（`progress_samples.jsonl` 采样）。
@@ -37,12 +41,15 @@ D 类操作规程（本脚本自证）：
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -210,6 +217,96 @@ def _service_stop(port: int) -> None:
         _PID_FILE.unlink(missing_ok=True)
     elif _service_running(port):
         _log(f"WARN：:{port} 有服务但无 pid 文件，未自动停止（请人工确认端口归属）")
+
+
+def _holder_command(interval: int, distro: str | None = None) -> list[str]:
+    """常驻进程的命令：只让 WSL 里睡一个 `interval` 秒的进程，绝不带会关掉发行版的开关。"""
+    head = ["wsl", "-d", distro] if distro else ["wsl"]
+    return [*head, "bash", "-c", f"sleep {int(interval)}"]
+
+
+def _holder_loop(
+    *,
+    stop_event: threading.Event,
+    command: list[str],
+    spawn: Callable[[list[str]], subprocess.Popen],
+    sleep: Callable[[float], None] = time.sleep,
+    on_spawn: Callable[[int], None] = lambda _ticks: None,
+) -> int:
+    """滚动续期：子进程一退出立刻再拉一个，不留 ≥15s 空闲窗；停止时收掉仍在跑的那个。
+
+    `on_spawn` 在每次拉起后立即回调（运行中的取证要看到累计次数，不能只在退出后才有值）。
+    """
+    ticks = 0
+    while not stop_event.is_set():
+        proc = spawn(command)
+        ticks += 1
+        on_spawn(ticks)
+        while proc.poll() is None:
+            if stop_event.is_set():
+                proc.terminate()
+                return ticks
+            sleep(1.0)
+    return ticks
+
+
+class _WslHolder:
+    """把「WSL 空闲时回收整个发行版」这条机器侧前置变成脚本自带（PLAN-007 W6 归因更正）。
+
+    尝试 1~3 的中途 `WinError 10054` + 剩余页 `MODEL_UNAVAILABLE` 里至少有一条腿是这个机制：
+    最后一个 Linux 进程退出后发行版十几秒内关机，`mineru-api` 随之优雅停止（`RestartCount=0`、
+    `ExitCode=0`），本机 `vmIdleTimeout` 又不生效。这里只做常驻保活，**不改任何业务参数**。
+    `interval<=0` 表示显式关闭，只留可见 WARN，不静默兜底。
+    """
+
+    def __init__(self, *, interval: int, distro: str | None = None) -> None:
+        self.interval = interval
+        self.command = _holder_command(interval, distro)
+        self.spawns = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self.interval > 0
+
+    def start(self) -> None:
+        if not self.enabled:
+            _log("WARN：WSL 常驻前置已关闭（`--wsl-holder 0`）——块间空闲期发行版可能被整机回收")
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        _log(f"WSL 常驻前置：{' '.join(self.command)}（滚动续期）")
+
+    def _run(self) -> None:
+        def spawn(command: list[str]) -> subprocess.Popen:
+            return subprocess.Popen(
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+        self.spawns = _holder_loop(
+            stop_event=self._stop,
+            command=self.command,
+            spawn=spawn,
+            sleep=time.sleep,
+            on_spawn=lambda ticks: setattr(self, "spawns", ticks),
+        )
+
+    def stop(self) -> dict:
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            self._stop.set()
+            thread.join(timeout=30.0)
+            _log(f"WSL 常驻前置已停（累计滚动 {self.spawns} 次）")
+        return self.info()
+
+    def info(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            "command": self.command,
+            "spawns": self.spawns,
+            "alive": bool(self._thread and self._thread.is_alive()),
+        }
 
 
 def _migrate_head() -> str:
@@ -537,11 +634,20 @@ def main() -> int:
     parser.add_argument("--model-deadline", type=float, default=600.0)
     parser.add_argument("--parse-deadline", type=float, default=3600.0)
     parser.add_argument("--window-size", type=int, default=None, help="覆盖 AXIOM_PARSE_WINDOW_SIZE")
+    parser.add_argument(
+        "--wsl-holder", type=int, default=300, metavar="SECONDS",
+        help="WSL 常驻前置的滚动周期（本机 vmIdleTimeout 不生效；0 = 关闭并只留 WARN）",
+    )
+    parser.add_argument("--wsl-distro", default=None, help="指定发行版名（缺省用 wsl 默认发行版）")
     args = parser.parse_args()
 
     if args.stop_service:
         _service_stop(args.port)
         return 0
+
+    holder = _WslHolder(interval=args.wsl_holder, distro=args.wsl_distro)
+    holder.start()
+    atexit.register(holder.stop)  # 早于任何 ABORT 分支起效：所有退出路径都收掉常驻进程
 
     business = load_settings()  # 覆盖前：业务口径，用于元数据与零写入快照
     before = _business_snapshot(business)
@@ -557,6 +663,7 @@ def main() -> int:
         "window_size": settings.parse_window_size,
         "per_block_timeout": settings.ocr_timeout,
         "guard_failures": gate_failures,
+        "wsl_holder": holder.info(),
         "model_health": {k: model.get("health", {}).get(k) for k in (
             "status", "queued_tasks", "processing_tasks", "completed_tasks",
             "processing_window_size", "max_concurrent_requests")} if model.get("ready") else {},
@@ -655,6 +762,7 @@ def main() -> int:
         f"- 生成：{time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"- 库：`{settings.db_name}` ／ 数据根：`{settings.data_dir}` ／ 端口：`{args.port}`",
         f"- 窗口：`{settings.parse_window_size}` 页/块，单块 deadline `{settings.ocr_timeout}`s",
+        f"- WSL 常驻前置：`{' '.join(holder.command)}`，enabled={holder.enabled}，滚动 {holder.spawns} 次",
         f"- job：`{job_id}`，状态 `{(job_row.get('job') or {}).get('status')}`，"
         f"挂钟 `{poll.get('wall_seconds')}`s，进度采样 `{len(poll.get('samples') or [])}` 次",
         "",
