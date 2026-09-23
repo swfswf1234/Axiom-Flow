@@ -1,4 +1,4 @@
-"""引擎显式分派：引擎名 → 适配器实例（契约条文 6，PLAN-003 W4）。
+"""引擎显式分派：引擎名 → 适配器实例（守则 MI-2，`docs/design/model-integration.md`；来源 PLAN-003 W4）。
 
 槽位清单与 `docs/design/model-integration.md` 同源；**任何情况下都不回落到其他引擎**
 （AGENTS.md「不设自动兜底」与 ADR 0004）：槽位存在但没有适配器、或名字非法，一律抛

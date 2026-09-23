@@ -16,7 +16,7 @@
 `(book_id, job_id, page_no)` 作用域，故同一 job 重跑是**续跑**：已 `parsed` 且产物在位的页跳过引擎。
 生效指针只在目标页齐备且清单重算成功后置位（`af_books.active_job_id`），失败版本文件保留不删。
 
-持久化不变式（PLAN-003 条文 3）：**产物写先于页行提交**，故「有页行必有产物」；每页成功/失败即
+持久化不变式（PP-13）：**产物写先于页行提交**，故「有页行必有产物」；每页成功/失败即
 提交，使非 `EngineError` 异常穿透后台线程时前序页不被回滚吞掉；`progress` 按「距上次写入 ≥1s
 或每 10 页」节流，终态必写一次。`persist_per_page=False` 仅供性能排查，退回调用方统一提交。
 """
@@ -166,7 +166,7 @@ def _resumed_pages(
 ) -> set[int]:
     """本版本内可续跑的页：状态 `parsed` **且**产物在位。
 
-    只认页行不够——`parsed` 行必然有产物是条文 3 的不变式，但历史库（迁移前的 legacy 行）
+    只认页行不够——`parsed` 行必然有产物是 `PP-13` 的不变式，但历史库（迁移前的 legacy 行）
     与人工清理过的目录都可能破坏它，产物缺失时宁可重解析也不给出空版本。
     """
     parsed = {row.page_no for row in page_repo.list_for_book(book_id, job_id) if row.status == "parsed"}
@@ -208,7 +208,7 @@ def _fail(
 ) -> ParseOutcome:
     """终态 failed：先提交已累计页行，再写 progress 与终态。
 
-    先提交的意义：终态写入若失败或被外层回滚，也不能带走已解析页的行（条文 3）。
+    先提交的意义：终态写入若失败或被外层回滚，也不能带走已解析页的行（`PP-13`）。
     """
     if persist:
         session.commit()

@@ -1,6 +1,6 @@
 """MinerU 引擎适配器：直连 `QED_OCR_MODEL_URL`（容器 5002，生命周期归 8900）。
 
-调用链三段化（MinerU 3.4.4 实测契约，PLAN-003 W0 冻结表与条文 1/1b/2/11）：
+调用链三段化（MinerU 3.4.4 实测契约，守则 MI-4/MI-5，来源 PLAN-003 W0 冻结表）：
 
 1. `POST /tasks`（multipart 字段名 `files` + 产物形态开关）→ **202** + 顶层 `task_id`；
 2. `GET /tasks/{task_id}` 轮询 → 顶层 `status`：`pending|processing` 继续，`completed` 进入取结果，
@@ -17,7 +17,7 @@
 `content_list`/`middle_json` 在真机为 JSON 字符串，解析面兼容两种载体。解析参数（后端/语言/公式
 开关等）由模型服务侧（QED-Engine）管理，本适配器只设产物形态开关、不设解析调参。
 HTTP 客户端恒以 `trust_env=False` 构造：Windows 系统代理对回环地址不做豁免，交给代理会出现
-502/0 字节假象（条文 11）。
+502/0 字节假象（守则 MI-10）。
 """
 
 from __future__ import annotations
@@ -224,7 +224,7 @@ class MinerUEngine:
 
     def _http(self) -> httpx.Client:
         if self._client is None:
-            # trust_env=False：不让系统/环境变量代理接管回环流量（条文 11）。
+            # trust_env=False：不让系统/环境变量代理接管回环流量（`MI-10`）。
             self._client = httpx.Client(timeout=self.timeout, trust_env=False)
         return self._client
 

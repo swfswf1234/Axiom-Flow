@@ -1,4 +1,4 @@
-"""引擎显式分派单测（PLAN-003 W4，契约条文 6）：配置生效且不自动兜底。
+"""引擎显式分派单测（PLAN-003 W4，守则 MI-2）：配置生效且不自动兜底。
 
 隔离：只构造适配器对象，不发网络请求（`build_engine` 仅建实例）。
 """
@@ -26,7 +26,7 @@ class TestResolveEngineName:
         assert resolve_engine_name(None, "mineru") == "mineru"
 
     def test_unimplemented_slot_raises_not_fallback(self):
-        """条文 6：槽位已登记但未实现时报错，绝不回落 mineru。"""
+        """MI-2：槽位已登记但未实现时报错，绝不回落 mineru。"""
         with pytest.raises(EngineSelectionError, match="尚未实现"):
             resolve_engine_name(None, "paddleocr-vl")
         with pytest.raises(EngineSelectionError, match="尚未实现"):

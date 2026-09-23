@@ -1,6 +1,6 @@
 """MySQL 级提交边界集成测试（PLAN-003 W3-b / [ADR 0005](../../docs/adr/0005-mysql-integration-test-isolation.md)）。
 
-守护面：`orchestrator/pipeline.py` 的页级提交不变式（条文 3）在**真实事务隔离**下成立——
+守护面：`orchestrator/pipeline.py` 的页级提交不变式（PP-13）在**真实事务隔离**下成立——
 「未提交不可见 / 每页提交后立即可见 / progress 单调 / 异常不吞已解析页」。单测里的 reader Session
 与 writer 共享同一条 SQLite 连接，未提交数据照样可见，这类缺陷在 SQLite 层结构性不可见。
 
@@ -184,7 +184,7 @@ class TestIsolationBoundary:
 
 
 class TestCommitBoundary:
-    """条文 3 的 MySQL 语义：提交边界就是可见性边界。"""
+    """`PP-13` 的 MySQL 语义：提交边界就是可见性边界。"""
 
     def test_uncommitted_page_row_is_invisible_until_commit(
         self, sessions: tuple[sessionmaker[Session], sessionmaker[Session]]
@@ -195,7 +195,7 @@ class TestCommitBoundary:
             session.flush()
             with reader() as watching:
                 assert PageRepository(watching).get(BOOK_ID, JOB_ID, 1) is None, (
-                    "未提交即对他连接可见 = 隔离失效，条文 3 的回归网会失真"
+                    "未提交即对他连接可见 = 隔离失效，`PP-13` 的回归网会失真"
                 )
             session.commit()
         with reader() as watching:
@@ -295,7 +295,7 @@ class TestFailurePersistence:
         _create_job(writer, pages=[1, 2])
 
         class Exploding(_ProbeEngine):
-            """非 `EngineError` 穿透：条文 3 要求前序页行不能被外层回滚吞掉。"""
+            """非 `EngineError` 穿透：`PP-13` 要求前序页行不能被外层回滚吞掉。"""
 
             def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult:
                 self._probe()

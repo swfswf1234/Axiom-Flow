@@ -149,7 +149,7 @@ class TestIngestBook:
         assert book_dir_for(tmp_path, "d", "c", "b") == tmp_path / "parsed" / "d" / "c" / "b"
 
     def test_book_dir_for_rejects_traversal_segment(self, tmp_path):
-        """条文 7：book_id 必须是单一路径段（schemas 之外的纵深防御，含数据根内的 `..`）。"""
+        """`PP-5`：book_id 必须是单一路径段（schemas 之外的纵深防御，含数据根内的 `..`）。"""
         with pytest.raises(ValueError, match="非法 book_id"):
             book_dir_for(tmp_path / "data", "d", "c", "../../escape")
         with pytest.raises(ValueError, match="非法 domain_id"):

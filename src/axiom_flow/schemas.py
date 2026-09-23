@@ -24,7 +24,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# ---------- 数据根边界（PLAN-003 条文 7） ----------
+# ---------- 数据根边界（PP-5） ----------
 
 # 路径段：首字符限 `\w`（因而拒绝 `/`、`\`、`.` 与 `..`），其余允许 `\w`、`.`、`-`、`_`；
 # 中文段合法（`\w` 在 Unicode 下含汉字），但 Windows 盘符 `D:` 因 `:` 不在字符类内被拒。
@@ -336,7 +336,7 @@ class BookSyncItem(BaseModel):
     """POST /books/sync 请求行（同源 qt_books 只读快照）。
 
     `book_id`/`domain_id`/`course_id` 是数据根路径段，`file_path` 是数据根相对路径，均受
-    条文 7 的边界校验约束（违规 422）；绝对路径与 `..` 一律拒绝。
+    `PP-5` 的边界校验约束（违规 422）；绝对路径与 `..` 一律拒绝。
     """
 
     book_id: str = Field(pattern=SAFE_SEGMENT_PATTERN)
@@ -353,7 +353,7 @@ class BookSyncItem(BaseModel):
     @field_validator("file_path")
     @classmethod
     def _validate_file_path(cls, value: str) -> str:
-        """数据根相对路径校验（条文 7 + REQ-083）：违规 422。"""
+        """数据根相对路径校验（`PP-5` + REQ-083）：违规 422。"""
         if not _RELATIVE_PATH.match(value):
             raise ValueError(f"file_path 含遍历段或非法字符：{value!r}")
         return value

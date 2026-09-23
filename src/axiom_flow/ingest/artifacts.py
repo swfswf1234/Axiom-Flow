@@ -37,7 +37,7 @@ def ensure_safe_segment(value: str, kind: str, *, allow_empty: bool = False) -> 
 
 
 def ensure_within(data_root: Path | str, target: Path | str) -> Path:
-    """校验 `target` 落在数据根之内，返回解析后的绝对路径（条文 7 的纵深防御）。
+    """校验 `target` 落在数据根之内，返回解析后的绝对路径（`PP-5` 的纵深防御）。
 
     schemas 层已用段规则拒绝大部分越界入参；此处是写盘前的最后一道闸：符号链接、
     `..` 归一化后的结果同样受限。

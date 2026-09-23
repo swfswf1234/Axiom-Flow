@@ -1078,7 +1078,7 @@ def test_manifest_json_is_readable_on_disk(client, tmp_path):
 
 
 class TestEngineDispatch:
-    """W4：引擎槽位显式分派——配置真正生效，且绝不静默回落到 MinerU（条文 6）。"""
+    """W4：引擎槽位显式分派——配置真正生效，且绝不静默回落到 MinerU（`MI-2`）。"""
 
     def test_omitted_engine_uses_configured_default(self, tmp_path, monkeypatch):
         test_client, session_factory = _build(tmp_path, monkeypatch)
@@ -1137,7 +1137,7 @@ class TestEngineDispatch:
 
 
 class TestSubmitTimeHealthProbe:
-    """W5：提交期探活 503（受理前）与执行期 failed（受理后）两段并存（条文 5）。"""
+    """W5：提交期探活 503（受理前）与执行期 failed（受理后）两段并存（`api.md` 错误码表 503 行）。"""
 
     def test_model_down_returns_503_and_creates_no_job_row(self, tmp_path, monkeypatch):
         test_client, session_factory = _build(
@@ -1169,7 +1169,7 @@ class TestSubmitTimeHealthProbe:
 
 
 class TestDataBoundary:
-    """W6：安全路径段与数据根边界（条文 7）。"""
+    """W6：安全路径段与数据根边界（`PP-5`）。"""
 
     def test_sync_rejects_unsafe_path_segments(self, client):
         for payload in (
@@ -1203,7 +1203,7 @@ class TestDataBoundary:
 
 
 class TestIngestIdempotency:
-    """W6：重复 ingest 回置解析状态并只清根视图页行；purge 删页行留任务行（条文 8 + V8）。"""
+    """W6：重复 ingest 回置解析状态并只清根视图页行；purge 删页行留任务行（`PM-16`）。"""
 
     def test_reingest_resets_parse_state_and_keeps_job_history(self, tmp_path, monkeypatch):
         test_client, session_factory = _build(tmp_path, monkeypatch)
@@ -1391,7 +1391,7 @@ class TestAdminPurgeEndpoint:
             assert self._book_root(tmp_path, "mathanalysis-b05").is_dir()
 
     def test_book_scope_purge_deletes_four_tables_and_dir(self, tmp_path, monkeypatch):
-        """按书目清除：四表行含 `af_parse_jobs` 一起走（条文 9 例外），他书完好。"""
+        """按书目清除：四表行含 `af_parse_jobs` 一起走（`PM-17`），他书完好。"""
         test_client, session_factory = _admin_build(tmp_path, monkeypatch)
         with test_client as client:
             self._seed(client, "mathanalysis-b05")

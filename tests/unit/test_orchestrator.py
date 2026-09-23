@@ -2,7 +2,7 @@
 
 守护面（docs/design/parsing-pipeline.md）：默认全本、指定页逐页、单页失败不中断、
 模型不可用任务失败、产物三件套 + chunks.json + manifest.json、进度回写；
-以及页级持久化不变式（PLAN-003 条文 3）：产物写先于页行提交、整本/异常失败保留已解析页、
+以及页级持久化不变式（PP-13）：产物写先于页行提交、整本/异常失败保留已解析页、
 progress 节流写入。
 """
 
@@ -873,7 +873,7 @@ class _ProbingEngine(FakeEngine):
 
 
 class TestPerPagePersistence:
-    """条文 3：页级提交与进度落库——运行中可查、异常不吞已解析页。"""
+    """`PP-13`：页级提交与进度落库——运行中可查、异常不吞已解析页。"""
 
     def test_pages_visible_to_other_connection_during_run(self, tmp_path):
         """页级提交：第 n 页调用引擎时，前 n-1 页已对独立连接可见。"""

@@ -288,7 +288,8 @@ def create_app(
         """删除 af_books 行与该书**所有解析版本**的 af_pages / af_block_edits 行；
         `?purge=true` 同时删除整本产物目录（含 `versions/` 历史版本）。
 
-        af_parse_jobs 历史行保留为审计线索（不随书目删除，条文 9）。
+        af_parse_jobs 历史行保留为审计线索（不随书目删除；`architecture/database-design.md`「删除保留
+        审计」，其管理面 purge 例外见 `PM-17`）。
         """
         repo = BookRepository(session)
         book = repo.get(book_id)
@@ -334,8 +335,8 @@ def create_app(
         """渲染页图 + book.json / manifest.json（不调模型），回写 ingest 进度。
 
         重复 ingest 替换的只是**根视图**（`book.json` + `pages/`）：解析版本目录完整保留，
-        生效指针回到 `NULL`（根视图），`af_pages` 只清 legacy 行、版本作用域行不动（条文 8 +
-        V8）。源文件变了之后旧版本仍可从 `versions/` 直读，但不再对生效端点可见，需重新解析。
+        生效指针回到 `NULL`（根视图），`af_pages` 只清 legacy 行、版本作用域行不动（`PM-16` +
+        `PP-14`）。源文件变了之后旧版本仍可从 `versions/` 直读，但不再对生效端点可见，需重新解析。
         """
         repo = BookRepository(session)
         book = repo.get(book_id)
@@ -537,7 +538,7 @@ def create_app(
     def create_parse_job(payload: ParseJobCreate, session: SessionDep) -> ParseJob:
         """提交解析任务：pages 缺省 = 全本解析；指定页 = 逐页重解析。202 受理后后台执行。
 
-        受理前三道门槛（条文 5/6 + DEFECT-006）：页码越界 422（不探活、不落任务行，否则会在
+        受理前三道门槛（`api.md` 错误码表 + `MI-2` + DEFECT-006）：页码越界 422（不探活、不落任务行，否则会在
         `af_pages` 写出指向不存在页图的状态行）、引擎名解析（未实现 400、未知 422，不回落
         MinerU）、模型服务探活（不可用 503）；三者都不创建任务行。受理后的服务故障才记为 job `failed`。
         """

@@ -43,7 +43,7 @@ class IngestResult:
 def resolve_source_pdf(data_root: Path | str, source_file: str) -> Path:
     """源 PDF 路径（数据根相对，同源 `qt_books.file_path`）。
 
-    绝对路径同样限在数据根之内（条文 7）：越界一律 `ValueError`，避免把数据根外的
+    绝对路径同样限在数据根之内（`PP-5`）：越界一律 `ValueError`，避免把数据根外的
     文件当作教材读入或写入。
     """
     path = Path(source_file)

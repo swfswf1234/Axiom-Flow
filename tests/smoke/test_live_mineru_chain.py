@@ -253,7 +253,7 @@ def test_smoke_full_document_five_pages(tmp_path, smoke_session, live_engine) ->
     assert all(row.job_id == job_id for row in rows), "页行必须落在本 job 的版本作用域内（PLAN-004 V7）"
     assert PageRepository(smoke_session).count_parsed(book_id, job_id) == 5
     book = smoke_session.get(AfBook, book_id)
-    assert book.parse_status == ParseStatus.PENDING.value, "进度字段不得兼任结局（ADR 0007 决定 3 / 条文 S3）"
+    assert book.parse_status == ParseStatus.PENDING.value, "进度字段不得兼任结局（ADR 0007 决定 3 / `PM-10`）"
     assert book.last_parse_result == LastParseResult.COMPLETED.value
     assert book.active_job_id == job_id, (
         "completed 且目标页齐备必须激活生效指针（PLAN-004 V3）"

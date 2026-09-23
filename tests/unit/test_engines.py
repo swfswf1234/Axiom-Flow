@@ -595,7 +595,7 @@ class TestBBoxSpaceDeclaration:
 
 
 class TestDirectConnection:
-    """条文 11：适配器客户端恒直连，不经系统代理。"""
+    """`MI-10`：适配器客户端恒直连，不经系统代理。"""
 
     def test_client_trust_env_disabled(self):
         engine = MinerUEngine(BASE)

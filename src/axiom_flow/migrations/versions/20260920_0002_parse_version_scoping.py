@@ -4,7 +4,9 @@ Revision ID: 20260920_0002
 Revises: 20260917_0001
 Create Date: 2026-09-21
 
-契约事实源：docs/history/plans/2026-09/2026-09-20-req080-parse-version-layout.md 条文 V2/V7（承接根仓库 REQ-080）。
+契约事实源：docs/design/parsing-management.md 的 PM-6（生效指针唯一列，NULL = 根视图 legacy）与
+docs/design/parsing-pipeline.md 的 PP-14（版本目录唯一落点）；推导依据与根仓库 REQ-080 对表见
+已归档壳 docs/history/plans/2026-09/2026-09-20-req080-parse-version-layout.md。
 - `af_books.active_job_id` 是「哪一版生效」的唯一事实源（NULL = 根视图 legacy）；`af_parse_jobs`
   不存布尔生效列，避免同一事实两处漂移。
 - `af_pages` 主键与 `af_block_edits` 唯一键纳入 `job_id`：同一页在不同解析版本可有独立状态，
