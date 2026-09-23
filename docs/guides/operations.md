@@ -119,6 +119,9 @@
   与业务 8902 并存）。脚本自带「业务侧零写入」前后比对（业务库行 + 真实 `dataset/parsed/` 目录指纹），
   不一致即判 FAIL。**失败重跑不算「为补证据再解析一次」**——那条约束的是成功之后。
 
+- **模型容器与 WSL 环境本身归 QED-Engine，不归本仓库（ADR 0004 + 2026-09-22 PLAN-007 W7 用户裁决）**：
+  下面两条判据只用于让本仓库真机窗口能区分「这不是本仓库代码的失败」并把现象**交接**给根侧图像模型
+  维护线；容器编排、`.wslconfig` 容量与发行版生命周期由根仓库环境线负责，本仓库不投入、不改这些配置。
 - **模型容器「中途自己重启」的判据是 WSL 全局 OOM，不是本仓库超时**：长解析中途出现
   `[WinError 10054] 远程主机强迫关闭了一个现有的连接`（连续 3 次）+ 剩余页 `MODEL_UNAVAILABLE` 时，
   先查 `wsl docker inspect mineru-api --format '{{.RestartCount}} {{.State.StartedAt}}'` 与
@@ -127,6 +130,19 @@
   （vLLM + Layout + OCR-det）单进程在连续窗口负载下触顶，`ExitCode=0` 后由 `--restart=unless-stopped` 拉起。
   处置属环境容量（`.wslconfig` 的 `[wsl2] memory=` 在本仓库工作区之外，只能由用户改后 `wsl --shutdown` 生效），
   **不以缩小 `AXIOM_PARSE_WINDOW_SIZE` 绕开**——那会把容量问题伪装成参数问题。
+- **同一现象的第二种根因是 WSL 空闲回收发行版，不是 OOM**：若 `RestartCount` 始终为 **0**、`ExitCode=0`、
+  uvicorn 存活约 14 秒后消失且 `netstat -ano` 里查不到 `:5002` 监听，则容器不是被 `--restart` 策略拉起的，
+  而是整个发行版被关掉后随下一次 `wsl.exe` 调用重新开机。判据在 journald 而非 dmesg：
+  `wsl journalctl -b 1 | grep -E "Stopping docker|final.target|Kernel command line"` 同时出现
+  「Stopping docker.service」与新的内核开机行即确诊；触发条件是**最后一个 Linux 进程退出**
+  （`[boot] systemd=true` + mirrored networking 下发行版约 15 秒后停机）。`.wslconfig` 的
+  `vmIdleTimeout=2147483647` 在该环境下**不生效**，别指望配置项。处置＝解析窗口全程让一个常驻 Linux
+  进程存活：`scripts/tmp/live_wholebook_req086.py` 自带该前置（`--wsl-holder 300` 默认开，滚动重拉
+  `wsl bash -c "sleep 300"`，退出时收掉；`--wsl-holder 0` 显式关闭并只留 WARN），手工驱动容器时可用
+  `nohup bash -c 'for i in $(seq 1 40); do wsl bash -c "sleep 600"; done' &` 顶同样的位置。
+  该处置属机器侧配合，**不改任何业务参数**（窗口/deadline 原样）；脚本里的 `--wsl-holder` 只是本仓库
+  探针窗口的自便实现，**不代表本仓库接管 WSL 环境**——根侧长驻服务链路若见同一形态，按上一条自查。
+  两条根因用 `dmesg` 有无 `Killed process` 区分：有＝上一条（容量），无而 `RestartCount=0`＝本条（空闲）。
 - 迁移期间 8902 离线：8900 返回 503 并降级显示（独立性铁律），不影响配置域与其他界面。
 
 ## 单实例前提与启动期归一（PLAN-006 / ADR 0007）
@@ -145,8 +161,12 @@
 - **`interrupted` 的续跑语义 = 同一 `job_id` 重放**，不新建版本：版本作用域是 `(book_id, job_id)`，
   已 `parsed` 且产物在位的页跳过引擎调用，只补剩余页；重放前**不需要**手工清行、也不需要删版本目录。
   **但重放入口目前只有代码路径**（`orchestrator.run_parse_job(job_id=…)`，`scripts/tmp/` 窗口脚本按此
-  用法）：`POST /parse-jobs` 每次生成新 `job_id`，按既有 `job_id` 续跑的端点属 REQ-087 范围，
-  PLAN-006 未开放。因此真机上被打断的版本要么经脚本重放、要么重新提交为一版（旧版保留不删）。
+  用法）：`POST /parse-jobs` 每次生成新 `job_id`，按既有 `job_id` 续跑的端点**至今没有承载行**——原挂
+  本方 `REQ-087`，2026-09-22 该号让给根侧「空白页合法化 + 跨版本续跑语义」后（本方端点行改号
+  `REQ-088`），续跑端点本身不再归属任何在办计划，PLAN-006/007 都未开放它。因此真机上被打断的版本
+  要么经脚本重放、要么重新提交为一版（旧版保留不删）。
+  **定位待重放任务不必再猜 id**：`GET /api/v1/parse-jobs?status=interrupted&status=partial` 直接给出
+  清单（含 `failed_pages`），`GET /api/v1/books/{id}/pages` 给出该作用域逐页形态（PLAN-008 / REQ-088）。
 - **`20260921_0001` 迁移窗口**（D 类，执行前须用户批准）：停服 → 备份 `af_*` 四表 →
   `python -m alembic upgrade 20260921_0001` → 校验 `alembic_version` 与
   `SELECT book_id, parse_status, last_parse_result FROM af_books`（预期进度全 `pending`、
@@ -176,7 +196,7 @@
 | `stop` 回显 `stop failed: pid …` | 按提示手动 `taskkill /PID <pid> /T /F`，确认进程退出后重试 `stop` 清理 PID 文件 |
 | API 返回 503（模型服务不可用） | 确认 MinerU 服务在线：经 8900 `/models/vision/start`（旧名 `/models/mineru/start`）或根仓库 `scripts/image-model/` 脚本；再确认 `QED_OCR_MODEL_URL`（5002）可达 |
 | 任务显示 `interrupted` | 上次进程遗留的活动行被启动期归一改判（不再假装 running），**不是**引擎故障。核对 `failed_pages` 与 `versions/<job_id>/` 在位页后按上节续跑；版本未激活属预期（激活判据未满足） |
-| 任务显示 `partial` | 有页失败但任务正常结束：`GET /parse-jobs/{id}` 的 `failed_pages` 给出完整页码，`af_pages` 逐页 `error` 给出原因；生效指针**不会**指向该版本（判据未齐备），产物保留在 `versions/` 供排查 |
+| 任务显示 `partial` | 有页失败但任务正常结束：`GET /parse-jobs/{id}` 的 `failed_pages` 给出完整页码，`af_pages` 逐页 `error` 给出原因；生效指针**不会**指向该版本（判据未齐备），产物保留在 `versions/` 供排查。**批量定位**：`GET /parse-jobs?status=partial&status=failed&status=interrupted` 列全部待处理任务；「哪几页要重跑」直接读 `GET /books/{id}/pages`，判据一条 `not has_artifact or status == "failed"`（PLAN-008） |
 | 只读端点 404 `生效版本产物缺失：<book_id> @ <job_id>` | `af_books.active_job_id` 指向的版本目录被外部删除/未落盘（不回落根视图，ADR 0004）。核对 `versions/` 是否在盘、`GET /books/{id}/versions` 各行 `parsed`；确认产物不可恢复后重新解析或把指针置 NULL（`UPDATE af_books SET active_job_id=NULL WHERE book_id=…`，置 NULL 属数据修正，按 D 类先备份） |
 | 容器已起但解析慢/超时 | 由根仓库 `scripts/image-model/` 排查 GPU 穿透与 vLLM warmup（首次约 1 分钟）；超时读 `AXIOM_OCR_TIMEOUT`（默认 600s）且**按块计**——整本挂钟上限 = 块数 × 600s，单块超时只损失该块页（`partial`），调大 `AXIOM_PARSE_WINDOW_SIZE`（默认 56 页/块，须 ≤ 容器 `processing_window_size`）可减少块数与提交开销 |
 | 模型异常 | 由根仓库 `scripts/image-model/` 重建容器/镜像 |

@@ -49,3 +49,14 @@
   [completed.md](../trackers/completed.md) PLAN-003 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-20-parse-live-bringup.md` 处须改指上述归档位置
   （本批已同步 `docs/adr/0007`、`docs/trackers/*`、`scripts/tmp/probe_mineru_api.py`）。
+- PLAN-007 全本解析按页窗口分块提交与空白页合法化（Axiom-Flow）已完成（2026-09-22，S1~S5 逐条判定后
+  关闭；同日用户裁决「环境侧与根侧复测归根仓库图像模型维护线」⇒ 原条文里的根侧确认移出本计划），
+  计划按 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-22-req086-whole-book-window.md)（保留 W0 窗口
+  协议真机冻结结论、实施设计裁决 1~5、W6 四次尝试的归因更正链与 b05 全本真机读数、REQ-086/087 回执
+  正文、台账历史归档）；运行时事实源以晋升后的
+  [parsing-pipeline.md](../design/parsing-pipeline.md)、[model-integration.md](../design/model-integration.md)、
+  [api.md](../architecture/api.md)、[operations.md](../guides/operations.md) 为准；关闭证据见
+  [completed.md](../trackers/completed.md) PLAN-007 / REQ-086 / REQ-087 / ARCH-009 / ARCH-019 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-22-req086-whole-book-window.md` 处须改指上述归档位置
+  （本批已同步 PLAN-008 壳、`docs/trackers/*` 与 PLAN-003 归档壳）。
