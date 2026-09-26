@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（af_* 四表 + 8902 管理与对照端点已实现并真机取证）
-最后更新：2026-09-23
+最后更新：2026-09-26
 关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`（含 `api/admin.py` 管理面）、`src/axiom_flow/orchestrator/`
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`
 关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)
@@ -63,11 +63,12 @@ sequenceDiagram
     GW->>TR: 聚合 verified 书目
     GW->>AX: POST /api/v1/books/sync（upsert af_books）
     FE->>GW: 点开书目（POST /books/{id}/ingest）
-    GW->>AX: 渲染页图 + book.json（parsed 区）
+    GW->>AX: 渲染页图（根视图只 pages/*.png）+ 回写 af_books
     FE->>GW: 解析（POST /parse-jobs）
     GW->>AX: 202 任务受理（af_parse_jobs）
     AX->>AX: 播种版本基线 + 引擎解析 + 归一化 + 分块 → versions/<job_id>/
     AX->>AX: 页行按 (book_id, job_id, page_no) 落 af_pages；校验通过后置 af_books.active_job_id
+    AX->>AX: 激活成功即删除被替换的旧版本目录（磁盘只留生效正本）
     FE->>GW: 作业列表/页清单（GET /parse-jobs、GET /books/{id}/pages）
     GW->>AX: af_parse_jobs + af_pages 聚合（只读，不触模型）
     FE->>GW: 对照（GET /books/{id}/pages/{no}）
@@ -133,7 +134,8 @@ sequenceDiagram
 ### 端点语义（形状一律见 api.md）
 
 - **书目面**（`/books/sync`、`GET/PATCH/DELETE /books/{id}`）：同步入口 + 只读快照消费 + 带审计的删除；
-  `GET /books` 在 af_books 空表时回退文件系统 `book.json`，这是**独立性降级**而非缓存。
+  读取面**纯 DB 驱动**：af_books 空表即空列表 / 404，不回落文件系统 `book.json`（根视图已无元数据
+  文件可回落，唯一事实源是本表）。
 - **ingest**（`POST /books/{id}/ingest`）：状态机里唯一能作废根视图的动作（PM-16），本身不调模型。
 - **解析任务**（`POST /parse-jobs`、`GET /parse-jobs/{id}`）：202 受理即返回，执行在后台单 worker 队列；
   `pages` 缺省＝全本、指定＝逐页重解析，两者都产出一个完整快照版本。
@@ -146,7 +148,8 @@ sequenceDiagram
 - **版本列举**（`GET /books/{id}/versions`）：**只读**；切换/回滚不提供写入端点（属既定契约缺口，
   不是遗漏），天然回滚方式是把 `active_job_id` 置回 `NULL`。
 - **分块预览**（`GET /books/{id}/chunks`、`GET /books/{id}/manifest`）：读生效版本的派生产物；
-  带参数时实时重算、不落盘。
+  带参数时实时重算、不落盘。`manifest` 在 legacy 作用域（`active_job_id` 为 `NULL`）固定 404
+  「尚无生效版本」——根视图不再有清单正本，重算会把已退役的文件再写回磁盘。
 - **管理面**（`POST /admin/purge`）：**非公开**——默认不挂载、需管理 token 与逐字确认、`dry_run` 缺省，
   且只执行 DML（无 DDL、无 `DROP DATABASE`）。六条不变式与错误语义的事实源在
   [api.md「非公开管理面」](../architecture/api.md)；8900 与 8903 不得透传。

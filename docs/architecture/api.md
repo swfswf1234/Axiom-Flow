@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（8902 全部对外端点已实现并真机取证）
-最后更新：2026-09-23
+最后更新：2026-09-26
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/api/admin.py`（管理面）、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/contract/test_fixed_document_form.py`、`tests/unit/test_service_scripts.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)
@@ -101,7 +101,7 @@ sequenceDiagram
 | `PATCH` | `/api/v1/books/{book_id}` | ② | 修改本仓库自有字段 |
 | `DELETE` | `/api/v1/books/{book_id}` | ② | 删书（页行/编辑行全版本，可选连产物） |
 | `POST` | `/api/v1/books/sync` | ② | 批量同步已验证书目（upsert 幂等） |
-| `POST` | `/api/v1/books/{book_id}/ingest` | ② | 渲染页图 + 生成 `book.json`（不调模型） |
+| `POST` | `/api/v1/books/{book_id}/ingest` | ② | 渲染页图（根视图唯一产物 `pages/`，不调模型；元数据回写 `af_books`） |
 | `GET` | `/api/v1/books/{book_id}/manifest` | ③ | 生效版本产物清单（路径 + 大小 + SHA-256） |
 | `GET` | `/api/v1/books/{book_id}/pages` | ③ | 生效版本逐页状态清单（一页一行） |
 | `GET` | `/api/v1/books/{book_id}/pages/{page_no}` | ③ | 单页完整数据（对照主数据源） |
@@ -152,9 +152,9 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
 
 af_* 表（`af_books` / `af_parse_jobs` / `af_pages` / `af_block_edits`）为 Axiom-Flow 私有（qed 库
 af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](database-design.md)。
-`GET /api/v1/books`、`GET /api/v1/books/{book_id}` 读 `af_books`，**空表回退文件系统 `book.json`**
-（独立性降级；回退枚举**识别只看产物标记、深度无关**——`domain_id` 空段折叠出的两层与三层布局
-同样命中书目录本身，与管理面清除枚举同一判据，命中即剪枝不进版本目录）。路径参数 `book_id` 受安全路径段约束（违规 422）。
+`GET /api/v1/books`、`GET /api/v1/books/{book_id}` 读 `af_books`，读取面**纯 DB 驱动**：空表即
+空列表 / 404，**不回落文件系统 `book.json`**（根视图只保留 `pages/p*.png`，`af_books` 是书目元数据
+唯一事实源；书目录仅在其行存在且目录在位时可达）。路径参数 `book_id` 受安全路径段约束（违规 422）。
 
 #### GET /api/v1/books
 
@@ -196,12 +196,14 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 
 #### POST /api/v1/books/{book_id}/ingest
 
-渲染页图 + 生成 `book.json`（**不调模型**）：源 PDF（`QED_DATA_ROOT/<file_path>` 只读）→
-`parsed/<domain>/<course>/<book_id>/pages/p<NNNN>.png` + `book.json`（`page_count`/`sha256`）。
-响应：`{book_id, page_count, sha256, ingest_status}`。
+渲染页图（**不调模型**）：源 PDF（`QED_DATA_ROOT/<file_path>` 只读）→
+`parsed/<domain>/<course>/<book_id>/pages/p<NNNN>.png`——这是根视图**唯一**产物，`book.json` /
+`manifest.json` 已退役，元数据（`page_count`/`sha256`/`ingested_at`/`ingest_status`）直接回写
+`af_books`。响应：`{book_id, page_count, sha256, ingest_status}`。
 
-**重复 ingest 幂等且版本安全（PM-16）**：原子替换的只是**根视图**（`book.json` + `pages/`），并作废
-根视图 `chunks.json`；`versions/` 子树**完整保留**（历史版本不因重新 ingest 失明）。DB 侧回置
+**重复 ingest 幂等且版本安全（PM-16）**：原子替换的只是**根视图**（`pages/`），旧布局残留文件
+（`book.json`/`manifest.json`/`chunks.json`）随替换一并清退；`versions/` 子树**完整保留**（历史
+版本不因重新 ingest 失明）。DB 侧回置
 `active_job_id=NULL`（生效指针回到根视图）、`parse_status=pending`、`pages_done=0`，并只清空
 `job_id='legacy'` 的 `af_pages` 行（真实版本作用域的页行保留）；`last_parse_result` **不回置**——
 它记录「最近一次任务的结局」，ingest 不是任务。`af_parse_jobs` 历史与 `af_block_edits` 全部保留。
@@ -218,7 +220,8 @@ NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/
 #### GET /api/v1/books/{book_id}/manifest
 
 **生效版本**的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对该版本目录自身，响应为
-`ManifestEntry` 列表。根视图清单**排除 `versions/` 子树**（历史版本不混入当前版对账）。
+`ManifestEntry` 列表。legacy 作用域（`active_job_id=NULL`）**固定 404**「尚无生效版本：{book_id}」
+——根视图已无清单正本，重算会把已退役文件写回磁盘。**错误：** 404。
 
 #### GET /api/v1/books/{book_id}/pages
 
@@ -257,8 +260,8 @@ NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/
   （继承来的页行也逐个校验产物在位才复制），故该组合只可能来自产物被外部删除。本端点**如实暴露**
   该组合而不静默改判为 `pending`——静默改判会让磁盘事故在台账上消失。读该页仍然 404（`页产物缺失`）。
 
-**枚举域**：`total` 取 `af_books.page_count`；该列为 NULL 时回落书目录 `book.json` 的 `page_count`；
-两者都取不到 → 404（与产物目录缺失同一措辞）。
+**枚举域**：`total` **只取** `af_books.page_count`（页清单枚举域唯一来源）；该列为 NULL →
+404「书目不存在或产物缺失：{book_id}」——不再有文件系统回落。
 
 **作用域**：`job_id` / `scope` / `has_artifact` 三项全部取自 `_read_scope` 返回的 `(产物目录, job_id)`
 （见「兼容与不可变规则」的唯一入口条），不得自行拼 `book_dir`——否则会把 legacy 根视图与版本视图混读。
@@ -517,7 +520,7 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
 ### 离线与降级
 
 - 8902 离线或 5xx 时，8900 返回 503 + `Axiom-Flow 服务不可达：…`（独立性铁律，不影响配置域端点）。
-- 只读端点不依赖模型服务与凭据；`af_books` 空表时书目读取回退文件系统 `book.json`。
+- 只读端点不依赖模型服务与凭据；书目读取面纯 DB 驱动，`af_books` 空表即空列表 / 404，无文件系统回落。
 - 提交解析任务是**唯一**按需初始化引擎适配器的入口，且只做提交期探活（不可用 503、不落任务行）。
 
 ### 单占用与排队
@@ -561,8 +564,8 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
 `tests/contract/test_api_v1_contract.py` 全绿，覆盖：
 
 - health / books / pages / image / manifest / parse-jobs 返回结构与 schemas 一致；
-- `TestParseVersions`：两版本并存读生效版、`image_url` 字面量不变、重 ingest 后历史版本可直读、
-  生效目录缺失 404；
+- `TestParseVersions`：激活轮换读生效版且被替换版本目录即删（磁盘只留生效正本）、`image_url`
+  字面量不变、重 ingest 后历史版本可直读、生效目录缺失 404、manifest 在 legacy 作用域 404；
 - `TestPageListEndpoint`：`1..total` 连续覆盖、`pending` = 无页行、`parsed`+无产物如实暴露（读该页
   仍 404）、`edit_count` 按版本作用域、`scope` 自证、生效目录缺失 404 不回落；
 - `TestParseJobListEndpoint`：六态原值、可重复 `status` 多值 OR、`created_at DESC, job_id DESC`

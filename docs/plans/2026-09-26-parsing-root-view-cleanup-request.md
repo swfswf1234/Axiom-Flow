@@ -66,20 +66,42 @@ ARCH-032 勘察在解析侧发现三个「单一事实源」违反点：
 | book.json 字段 | af_books 对应列 | 现状 |
 | --- | --- | --- |
 | book_id / title / authors / page_count / source_file | book_id / title / authors / page_count / file_path | 已有 |
-| sha256（ingest 时计算） | — | **缺，需补 `ingest_sha256 VARCHAR(64) NULL`** |
-| ingested_at（ingest 完成时刻） | created_at 可复用或另建 | 实施时确认 |
+| sha256（ingest 时计算） | `sha256 VARCHAR(64) NOT NULL`（首建即在，`update_ingest` 维护） | 核查表原判「缺」有误，见偏差 D1 |
+| ingested_at（ingest 完成时刻） | `ingested_at DATETIME NULL`（`20260926_0001` 补列，不复用 created_at：后者是行创建时刻，语义不同） | 已落地，不回填（偏差 D2） |
 | engine（最近解析引擎） | 不需补（per-job 在 af_parse_jobs.engine） | — |
 
 ## 工作项
 
 | # | 工作项（=根侧请求 R1~R5 + 回执） | 状态 |
 | --- | --- | --- |
-| W1（R1） | af_books 字段完整化：核查→Alembic 补 `ingest_sha256`（含 ingested_at 口径裁决）→`ingest_book()` 写入 sha256/ingested_at 并**停止向文件系统写 root `book.json`**→删除「空 af_books 回落文件系统 book.json」降级路径（书不在 af_books 即 404，与文件系统解耦） | 待开始 |
-| W2（R2） | `ingest/importer.py` / `ingest/artifacts.py`：ingest 完成不再调用 `build_manifest()` 写根视图 `manifest.json`；完成后根视图仅有 `pages/p*.png` | 待开始 |
-| W3（R3） | `seed_version_from()`（PP-15 播种）：版本目录 `book.json` 改从 af_books DB 读取生成（book_id/title/authors/page_count/ingest_sha256/source_file/ingested_at + 当次 job 的 engine），不再从 root 文件复制 | 待开始 |
-| W4（R4） | `orchestrator/pipeline.py`：`af_books.active_job_id` 更新后删除被替换的旧版本目录 `versions/<old_job_id>/`；D 类留痕（路径+时刻入日志）；旧目录读取中可跳过删除并告警（简单处理即可） | 待开始 |
-| W5（R5） | `parsing-pipeline.md` 同步：产物布局图更新为「根视图仅 pages/*.png + 唯一版本目录」；PP-2（不再写 root book.json/manifest.json）、PP-14（激活即删旧版本，替换「不自动删除」）、PP-15（播种 book.json 从 af_books 生成）、PP-16（删除根视图 manifest 描述） | 待开始 |
-| W6 | 回执根仓库 REQ-097：实施锚点（git commit sha）、af_books 迁移版本号、门禁读数（pytest passed / ruff clean）、S1~S5 逐条判定 | 待开始 |
+| W1（R1） | af_books 字段完整化：核查→Alembic 补 `ingest_sha256`（含 ingested_at 口径裁决）→`ingest_book()` 写入 sha256/ingested_at 并**停止向文件系统写 root `book.json`**→删除「空 af_books 回落文件系统 book.json」降级路径（书不在 af_books 即 404，与文件系统解耦） | Done（本地判据，2026-09-26，锚 `f2fd689`）——按偏差 D1/D2 落地 |
+| W2（R2） | `ingest/importer.py` / `ingest/artifacts.py`：ingest 完成不再调用 `build_manifest()` 写根视图 `manifest.json`；完成后根视图仅有 `pages/p*.png` | Done（本地判据，锚 `f2fd689`）；`read_book_meta()` 随读取面一并删除，manifest 端点 legacy 作用域固定 404（不重算根清单，避免复活被退役文件） |
+| W3（R3） | `seed_version_from()`（PP-15 播种）：版本目录 `book.json` 改从 af_books DB 读取生成（book_id/title/authors/page_count/ingest_sha256/source_file/ingested_at + 当次 job 的 engine），不再从 root 文件复制 | Done（本地判据，锚 `f2fd689`）——按偏差 D3 并入 W1 批次：`book.json` 入播种黑名单 `_NOT_SEEDED`，版本正本由 `run_parse_job` 从 af_books 行生成 |
+| W4（R4） | `orchestrator/pipeline.py`：`af_books.active_job_id` 更新后删除被替换的旧版本目录 `versions/<old_job_id>/`；D 类留痕（路径+时刻入日志）；旧目录读取中可跳过删除并告警（简单处理即可） | Done（本地判据，锚 `f2fd689`）：删除只在指针提交成功后执行；`legacy`/同 job 续跑不删；`OSError` 仅告警保留目录、任务终态不翻转。真机数据根上的删除效果待 D 类窗口（W7） |
+| W5（R5） | `parsing-pipeline.md` 同步：产物布局图更新为「根视图仅 pages/*.png + 唯一版本目录」；PP-2（不再写 root book.json/manifest.json）、PP-14（激活即删旧版本，替换「不自动删除」）、PP-15（播种 book.json 从 af_books 生成）、PP-16（删除根视图 manifest 描述） | Done（锚随文档批）：布局图/PP-2/14/15/16 + 非目标删「旧版本磁盘清理不做」条 + 失败语义加删除持有一行；连带 `parsing-management.md`（mermaid 激活轮换 + 无回落 + manifest legacy 404）、`api.md`（ingest/manifest/pages/书目面/契约测试面五处）、`code-map.md` 三行、`database-design.md`（列清单/迁移表/无回落条文） |
+| W6 | 回执根仓库 REQ-097：实施锚点（git commit sha）、af_books 迁移版本号、门禁读数（pytest passed / ruff clean）、S1~S5 逐条判定 | 正文已成文（见下「REQ-097 回执正文」，含真机递延声明）；S2 真机判定待 W7 后补记，届时随六步收口关闭 |
+| W7 | 真机 D 类窗口（排期在用户）：业务库 `qed` 升 `20260926_0001` + 真实数据根重 ingest/激活删旧实测；恢复 ARCH-011 批量重建的前置之一 | Blocked（待用户批准窗口） |
+
+## 实施偏差登记（2026-09-26 W1~W4 批次）
+
+- **D1 不新增 `ingest_sha256` 列**：字段核查表「sha256 缺列」判定有误——`af_books.sha256`
+  （VARCHAR(64) NOT NULL，`20260917_0001` 首建）本就承载 ingest 源文件指纹且由 `update_ingest`
+  维护。S4 的达成口径改为「af_books 覆盖 book.json 全字段」，非「再加一列」。
+- **D2 `ingested_at` 不回填**：迁移 `20260926_0001` 纯加列；存量行 `NULL` 如实表示「本列规则
+  确立之前 ingest」，不猜值、不重算。
+- **D3 W3 并入 W1/W2 批次实施**：根视图 `book.json` 退役与版本 `book.json` 生成是同一契约的
+  两面，拆开任一批都会出现「版本目录也无 book.json」的中间态；故播种改黑名单 + 任务生成与
+  W1/W2 同批落地（锚点同一）。
+
+## S 判据本地判定（真机项挂 W7）
+
+| ID | 判定 |
+| --- | --- |
+| S1 | ✅ 本地：`test_ingest_writes_only_page_images_into_root_view`（含残留旧布局文件被替换时清退） |
+| S2 | ✅ 本地：`TestActivationRetiresReplacedVersion` 四例 + 契约 `test_second_version_replaces_the_effective_one`；真机磁盘效果待 W7 |
+| S3 | 随 W5 文档同步判定 |
+| S4 | ✅（按 D1 口径）：`ingested_at` 补列 + `test_update_ingest_stamps_ingested_at`；列清单对账守护通过 |
+| S5 | ✅ 门禁 548 passed / 10 skipped + ruff 全绿 + `QED_TEST_MYSQL=1` 集成层 8 passed（`qed_test` 实跑新迁移升降级） |
 
 ## 验证与验收
 
@@ -92,6 +114,23 @@ ARCH-032 勘察在解析侧发现三个「单一事实源」违反点：
 
 - W1~W4 为代码+迁移改动：逐文件回退 + Alembic downgrade；停用删除逻辑即回「旧版本驻留」现状。
 - 已删除的旧版本目录不可回滚——故 W4 只在 active_job_id 事务成功后执行且保留日志留痕。
+
+## REQ-097 回执正文（2026-09-26，本地判据口径）
+
+- **实施锚点**：`f2fd689`（W1~W4 代码批 + database-design 同步）。
+- **迁移版本**：`20260926_0001`（`af_books.ingested_at` 纯加列，不回填）；head 序列
+  `20260917_0001 → 20260920_0002 → 20260921_0001 → 20260926_0001`。
+- **门禁读数**：`pytest tests -q` **548 passed / 10 skipped**；`ruff check src tests scripts` 全绿；
+  `QED_TEST_MYSQL=1` 集成层 **8 passed**（`qed_test` 从 base 重建，经新迁移真实 MySQL DDL）。
+- **S1~S5 判定**：S1 ✅（本地）；S2 ✅（本地），真机磁盘效果待 W7；S3 ✅（parsing-pipeline.md
+  布局图与条文已同步）；S4 ✅（按偏差 D1 口径：复用 `sha256` 列 + 补 `ingested_at`，列清单对账守护
+  通过）；S5 ✅。
+- **真机递延声明**：业务库 `qed` 的 `20260926_0001` 迁移与真实数据根上的激活删旧实测属 D 类
+  操作，未获窗口批准前不执行（W7 Blocked）；根仓库消费面 S6 回归归根仓库自验。
+- **契约面变化提示（供根侧适配）**：① 根视图不再出现 `book.json`/`manifest.json`；② manifest
+  端点在未激活书目上固定 404「尚无生效版本」；③ 页清单 `total` 只取 `af_books.page_count`
+  （NULL → 404，无文件回落）；④ 解析提交门槛只看 `ingest_status`；⑤ 激活后被替换版本目录即删，
+  前端不应缓存旧 `job_id` 的产物路径。
 
 ## 关闭与归档
 

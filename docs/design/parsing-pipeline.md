@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（全链路已实现并真机取证；日期化过程见 trackers/completed.md）
-最后更新：2026-09-24
+最后更新：2026-09-26
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_engines.py`、`tests/unit/test_normalize.py`、`tests/unit/test_chunking.py`、`tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)
@@ -34,7 +34,6 @@
 - 模型文件、容器启停与推理调参（`processing_window_size` 等）→ 根仓库 8900（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）；
   本仓库只连接、不感知。
 - 人工编辑的存储与合并语义 → [PM-3、PM-5](parsing-management.md)；本篇只定义编辑定位所依赖的版面块结构。
-- 旧版本磁盘清理：不做（属 D 类数据操作，需单独批准）。
 
 **形态决策**（为什么长这样）：管线全部在本仓库，模型生命周期在根仓库 8900，解析**直连**模型服务、
 不经网关；引擎以适配器可插拔（MinerU 先落地，PaddleOCR-VL / qwen-vl 预留）。调用粒度**默认全本**
@@ -70,7 +69,7 @@ flowchart LR
     subgraph WIN["Axiom-Flow 8902（Windows）"]
         API["api/ 协议适配"]
         OR["orchestrator/ 任务编排<br/>af_parse_jobs + af_pages(按版本)"]
-        ING["ingest/ 预处理<br/>PDF→页图 + book.json"]
+        ING["ingest/ 预处理<br/>PDF→页图（根视图唯一产物）"]
         ENG["engines/ 引擎适配器"]
         NRM["normalize/ 后处理<br/>统一 blocks + Markdown"]
         CHK["normalize/chunking<br/>blocks→chunks"]
@@ -101,7 +100,7 @@ flowchart LR
 
 | 阶段 | 模块 | 内容 |
 | --- | --- | --- |
-| 预处理 | `ingest/` | 源 PDF（数据根相对路径，只读）→ 150 DPI 原页图 + `book.json`；不调模型 |
+| 预处理 | `ingest/` | 源 PDF（数据根相对路径，只读）→ 150 DPI 原页图（根视图唯一产物）；不调模型、不落元数据文件 |
 | 调用 | `engines/` | 直连模型服务；默认全本（按解析窗口串行提交），指定 pages 时逐页页图 |
 | 后处理 | `normalize/` | 原始输出 → 统一版面块（类型映射/坐标换算/阅读序）+ 页级 Markdown + 质量信号 |
 | 分块 | `normalize/chunking` | 书级有序版面块 → 知识块，落 `chunks.json` |
@@ -116,12 +115,10 @@ flowchart LR
 ├── raw/<domain_id>/<course_id>/<slug>_<sha8>.pdf   # 只读输入（QED-Tracker 写入）
 ├── tmp/                                        # 根仓库工作区；**本服务不写数据根 tmp**（PP-6）
 └── parsed/<domain_id>/<course_id>/<book_id>/
-    ├── book.json            # book_id/title/authors/page_count/sha256/source_file/engine/ingested_at
-    ├── manifest.json        # 根视图清单（路径 + 大小 + SHA-256；**不递归 versions/**）
-    ├── pages/               # 原页图正本（ingest 拥有，150 DPI，对照左栏 + bbox 基准）
+    ├── pages/               # 原页图正本（ingest 拥有，150 DPI，对照左栏 + bbox 基准）——根视图唯一产物
     │   └── p0001.png
-    └── versions/<job_id>/   # 一次解析任务 = 一个完整快照版本
-        ├── book.json        # 自基线继承（使版本目录自解释）
+    └── versions/<job_id>/   # 一次解析任务 = 一个完整快照版本（唯一正本；激活即删被替换版本，PP-14）
+        ├── book.json        # 本版本由任务从 af_books 生成的元数据快照（自证，不继承旧副本）
         ├── manifest.json    # 版本内清单，路径相对该版本目录
         ├── chunks.json      # 知识块（派生、不入库、可重建）
         └── pages/
@@ -130,8 +127,9 @@ flowchart LR
             └── p0001.blocks.json    # 统一版面块（结构化，含 bbox）
 ```
 
-`book.json` 的 `source_file` 为数据根相对路径（同源 `qt_books.file_path`）；`engine` 为实际引擎标识
-（mineru / paddleocr-vl / qwen-vl）。
+根视图**只保留** `pages/p*.png`：`book.json` / `manifest.json` 已退役（书目元数据唯一事实源是
+`af_books`，清单端点一律出自生效版本目录）。版本 `book.json` 的 `source_file` 为数据根相对路径
+（同源 `qt_books.file_path`）；`engine` 为实际引擎标识（mineru / paddleocr-vl / qwen-vl）。
 
 ### 统一版面块格式
 
@@ -179,7 +177,7 @@ flowchart LR
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | PP-1 | **单向流水线：每阶段只吃上一阶段的内存产物**：源 PDF → 页图 → 引擎原始输出 → 归一化 → 知识块切分 → 原子落盘；每阶段只消费上一阶段的内存产物，不读磁盘上的中间暂存 | 边界：不设自动引擎兜底（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)） | `orchestrator/pipeline.py:run_parse_job` → `tests/unit/test_orchestrator.py` |
-| PP-2 | **预处理不调模型**：`ingest/` 把数据根相对路径的源 PDF 渲染为 150 DPI 原页图并生成 `book.json`（page_count/sha256/source_file） | 边界：源 PDF 只读、不复制。归属：预处理与后处理两段恒在本仓库实现，引擎侧只收源件与产物形态开关（见 [MI-15](model-integration.md)） | `ingest/importer.py:ingest_book`（页图渲染 + `write_book_meta`） → `tests/unit/test_ingest.py` |
+| PP-2 | **预处理不调模型、不落元数据文件**：`ingest/` 把数据根相对路径的源 PDF 渲染为 150 DPI 原页图，页图是根视图唯一产物；不写根 `book.json` / `manifest.json`（元数据事实源是 `af_books`：`page_count`/`sha256`/`ingested_at` 由调用方 ingest 完成后回写行） | 边界：源 PDF 只读、不复制。重 ingest 替换根视图时把旧布局残留文件（`book.json`/`manifest.json`/`chunks.json`）一并清退——磁盘上不留第二事实源。归属：预处理与后处理两段恒在本仓库实现，引擎侧只收源件与产物形态开关（见 [MI-15](model-integration.md)） | `ingest/importer.py:ingest_book/_swap_root_view` → `tests/unit/test_ingest.py`（含清退与「根视图只有页图」断言） |
 
 #### 落盘与路径安全
 
@@ -211,9 +209,9 @@ flowchart LR
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | PP-13 | **页级持久化：产物写先于页行提交**：每页成功或失败即 `session.commit()`，且**产物写先于页行提交**，因此「有页行必有对应版本目录里的产物文件」 | 这是断点续跑与「进程被杀不给出空版本」的地基 | `orchestrator/pipeline.py` 页级 commit → `tests/integration/test_parse_persistence.py` |
-| PP-14 | **版本目录唯一落点与齐备判据**：解析产物只写 `<book_dir>/versions/<job_id>/`（`job_id` = `uuid4().hex[:12]`，仍过 PP-5 双闸），内部布局与根布局同构；**齐备** = 目标页全部 `parsed` 且产物在位 + `chunks.json` 与 `manifest.json` 重算成功，同一次判定同时给出任务终态与是否激活生效指针（[PM-11](parsing-management.md)），故「`completed` 但未激活」不可能 | 未齐备、失败、中断一律不激活，文件保留在 `versions/` 下供排查、不自动删除、也不被端点读到——运行中被杀则指针仍指旧版，读取端不可能看到半版本 | `orchestrator/pipeline.py:_version_is_complete()`、`ingest/artifacts.py:version_dir_for()` → `tests/unit/test_orchestrator.py` |
-| PP-15 | **写时复制播种**：新版本先按 `os.link` 从**当前生效作用域**（`active_job_id` 指向的版本目录，为空则根视图）继承页图与既有页产物，再写本次目标页；跳过 `manifest.json` / `chunks.json` 派生文件与 `versions/` 子树 | 例外：页图硬链接失败回落 `copy2` 并记 `WARNING`。后果：逐页重解析不必重跑整本，且旧版本的文件条目不受影响（`os.replace` 只换目录项） | `ingest/artifacts.py:seed_version_from/link_pages_into` → `tests/unit/test_ingest.py` |
-| PP-16 | **清单基准：版本内 POSIX 相对路径**：版本 `manifest.json` 的路径基准是**版本目录内 POSIX 相对路径**（`pages/p0001.blocks.json`），不带 `versions/<job_id>/` 前缀（该字段经 8900 原样透传给前端） | 边界：根 `manifest.json` 只描述 ingest 级文件，`build_manifest()` 显式排除 `versions/` 子树与隐藏临时文件 | `ingest/artifacts.py:build_manifest()` → `tests/unit/test_ingest.py`、`tests/contract/test_api_v1_contract.py` |
+| PP-14 | **版本目录唯一落点、齐备判据与激活轮换**：解析产物只写 `<book_dir>/versions/<job_id>/`（`job_id` = `uuid4().hex[:12]`，仍过 PP-5 双闸），内部布局与根布局同构；**齐备** = 目标页全部 `parsed` 且产物在位 + `chunks.json` 与 `manifest.json` 重算成功，同一次判定同时给出任务终态与是否激活生效指针（[PM-11](parsing-management.md)），故「`completed` 但未激活」不可能；**激活成功即删除被替换的旧版本目录**（删除只发生在指针提交之后；`legacy` 与被替换版本恰为本版本不删） | 磁盘上解析正本只留生效版本，历史可解释性由 `af_pages`/`af_parse_jobs` 行承载、不依赖残留文件。未齐备、失败、中断一律不激活，文件保留在 `versions/` 下供排查、不自动删除、也不被端点读到——运行中被杀则指针仍指旧版，读取端不可能看到半版本。旧目录被读取中句柄持有时删除失败（Windows 共享违例）→ 只告警保留、任务终态不翻转，残留待清理 | `orchestrator/pipeline.py:_version_is_complete()/_retire_replaced_version()`、`ingest/artifacts.py:version_dir_for()` → `tests/unit/test_orchestrator.py`（含删除失败仅告警例） |
+| PP-15 | **写时复制播种**：新版本先按 `os.link` 从**当前生效作用域**（`active_job_id` 指向的版本目录，为空则根视图）继承页图与既有页产物，再写本次目标页；跳过 `manifest.json` / `chunks.json` 派生文件、`book.json` 与 `versions/` 子树——版本 `book.json` 由本次任务从 `af_books` 生成（引擎名与 ingest 时刻必须本版本自证，继承会带回上一版的陈旧值） | 例外：页图硬链接失败回落 `copy2` 并记 `WARNING`。后果：逐页重解析不必重跑整本，且旧版本的文件条目不受影响（`os.replace` 只换目录项） | `ingest/artifacts.py:seed_version_from/link_pages_into`（`_NOT_SEEDED`）、`orchestrator/pipeline.py`（`write_book_meta`） → `tests/unit/test_ingest.py`、`tests/unit/test_orchestrator.py` |
+| PP-16 | **清单基准：版本内 POSIX 相对路径**：版本 `manifest.json` 的路径基准是**版本目录内 POSIX 相对路径**（`pages/p0001.blocks.json`），不带 `versions/<job_id>/` 前缀（该字段经 8900 原样透传给前端） | 边界：根视图已无 `manifest.json`（清单端点对 legacy 作用域固定 404，「尚无生效版本」如实呈现）；`build_manifest()` 仍显式排除 `versions/` 子树与隐藏临时文件 | `ingest/artifacts.py:build_manifest()` → `tests/unit/test_ingest.py`、`tests/contract/test_api_v1_contract.py` |
 | PP-17 | **版本自证：SHA 与页数的写入时机**：`af_parse_jobs.source_sha256` 与 `page_count` 在建任务后、调用引擎前写入，使「这一版解析的是哪份文件、当时全书多少页」在行内可证，不依赖根视图当前状态 | 重新 ingest 后 SHA 变化即可判定旧版本已不匹配当前源文件 | `orchestrator/pipeline.py` 建任务后写 `source_sha256/page_count` → `tests/unit/test_orchestrator.py` |
 | PP-18 | **页行同构与续跑认产物**：新版本播种后把基线里「已 `parsed` **且**产物在位」的页行复制进本版本作用域（`_inherit_page_rows`），因此 `af_pages` 始终如实描述该版本内容，`pages_done` 描述的是生效版本；续跑作用域 = `(book_id, job_id)`：同一 job 重跑时，状态 `parsed` **且** `blocks.json` 在位的页跳过引擎调用（不重解析、不重复落盘） | 只认页行不够——产物缺失时宁可重解析也不给出空版本 | `orchestrator/pipeline.py:_inherit_page_rows/_resumed_pages` → `tests/unit/test_orchestrator.py` |
 
@@ -237,6 +235,7 @@ flowchart LR
 | 模型服务被占用 | 任务在编排层等待闸门，等待期不提交任何内容（闸门判据与文案归属见 [MI-12](model-integration.md)） |
 | 电源中断/进程被杀 | 页级持久化不变式（PP-13）保证已提交页产物齐备 → 启动期归一把遗留活动行判 `interrupted` → 同一 `(book_id, job_id)` 续跑「无行 ∪ failed」页；未激活的版本指针不动，读取端继续看到上一个完整版本 |
 | 磁盘产物被外部删除 | 如实暴露：生效版本目录缺失即 404 不回落根视图；页行 `parsed` 而无产物在逐页清单原样呈现（改判会让磁盘事故从台账消失） |
+| 激活轮换时旧版本目录被读取持有 | 删除失败只告警并保留目录（PP-14）：指针已切换，残留是磁盘面不是语义面，任务终态不翻转 |
 
 进度写入与终态判据的归属见 [PM-11、PM-15](parsing-management.md)；全本任务因按解析窗口提交，进度**按窗口**
 推进（窗口之间必然跨过秒级真实耗时），因此独立连接读到非零中间值是常态。
@@ -280,7 +279,8 @@ flowchart LR
   PP-11、PP-12 由 PLAN-007（REQ-086·REQ-087）确立；PP-8、PP-9 由 DEFECT-004、DEFECT-005 的
   真机锚点实验确立（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md) 划定归属边界，
   [ADR 0007](../adr/0007-parse-status-semantics.md) 划定终态判据）；PP-10 由 ARCH-018 确立；
-  PP-19、PP-20 由 ARCH-004 / ARCH-009 确立。
+  PP-19、PP-20 由 ARCH-004 / ARCH-009 确立；PP-2/14/15/16 的根视图退役与激活轮换修订由
+  PLAN-017（REQ-097）确立。
 - **配置语境**：MinerU 直连地址读 `QED_OCR_MODEL_URL`（5002，`QED_MINERU_URL` 已删除且无别名）；
   单次调用超时读 `AXIOM_OCR_TIMEOUT`；窗口大小读 `AXIOM_PARSE_WINDOW_SIZE`。模型生命周期与调参归 8900，
   本仓库只连接（PLAN-002 配置简化）。v1 的 `llm_client.py` / `fallback/` 已随 `engines/` 落地退役。
