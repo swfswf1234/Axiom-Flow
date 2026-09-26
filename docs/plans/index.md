@@ -1,7 +1,7 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-09-24
+最后更新：2026-09-26
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
@@ -122,3 +122,24 @@
   `git show 268b7d2:docs/plans/2026-09-23-v01-closeout-doc-cleanup.md` 找回（进场裁决 D1~D4、工作项 W0~W6
   逐条状态、B1~B6 收口步骤与阻塞四要素皆在锚点提交内）。**v0.1 主线四行由此全部关闭**，ARCH-011 批量
   与 v1.0 线（PLAN-009）为下一里程碑的前置。
+- PLAN-016 存储规范对齐实施（Axiom-Flow，B 类，承载 ARCH-034）已完成（2026-09-26，S1~S7 逐条判定、
+  W8 回执与六步收口执行后关闭），计划按 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-24-storage-convention-alignment.md)（保留
+  C1~C7 逐条对账表与 Q1~Q4 裁决记录、W7 经批清理的前后指纹（已执行 D 类数据操作，不可再生）、
+  变异复验 M1~M4 与第二窗口独立复验链、ADR 0009 决定 5 措辞按实现收窄的记录）；运行时事实源不在壳内，
+  而以 [ADR 0009](../adr/0009-data-root-must-be-explicit.md)、`overview.md` 数据根顶层白名单哨兵区、
+  [parsing-pipeline.md `PP-4`/`PP-6`](../design/parsing-pipeline.md)、
+  [operations.md 数据目录表与留档区核对步](../guides/operations.md) 与守护
+  `tests/contract/test_storage_conventions_governance.py` 为准；关闭证据见
+  [completed.md](../trackers/completed.md) PLAN-016 / ARCH-034 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-24-storage-convention-alignment.md` 处须改指上述
+  归档位置（本批已同步 `docs/adr/0009`、`docs/trackers/*`）。
+- PLAN-015 ADR 0018 数据根治理承接确认包（Axiom-Flow，A 类，承载 REQ-095）已完成（2026-09-26，
+  A1~A4 全部判「一致」、REQ-095 回执正文成文后关闭），计划按立项判定 **`Delete`** 删除：
+  四条二元判定与回执正文以提交 `a97ccc7` 为锚点，可
+  `git show a97ccc7:docs/plans/2026-09-24-adr0018-data-root-alignment-request.md` 找回（A1~A5 承接确认表、
+  S1~S4 判定与「根仓库 REQ-095 回执正文」全文皆在锚点提交内）；运行时事实源不在壳内，判定所据的
+  落盘规则以 [ADR 0009](../adr/0009-data-root-must-be-explicit.md) 与根仓库 ADR 0018（只读参照）为准；
+  关闭证据见 [completed.md](../trackers/completed.md) PLAN-015 / REQ-095 行；根仓库按判据
+  「A1~A4 回执后关闭」自读登记其 REQ-095 行。**跨项目承载由此清零**：v1.0 主线下临时承接项仅剩
+  REQ-097/PLAN-017（解析产物根视图清理实施，活跃计划）。

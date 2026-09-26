@@ -3,7 +3,7 @@
 状态：Accepted
 任务类型：B
 最后更新：2026-09-26
-关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0009](../adr/0009-data-root-must-be-explicit.md)（数据根显式，ARCH-034 在飞）；无新增 ADR
+关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0009](../adr/0009-data-root-must-be-explicit.md)（数据根显式，其实施轮 PLAN-016/ARCH-034 已于 2026-09-26 关闭）；无新增 ADR
 关联设计：`docs/design/parsing-pipeline.md`（PP-2/PP-14/PP-15/PP-16 为 R5 修订对象）、`docs/architecture/database-design.md`（af_books 列迁移随 R1）；根仓库权威上下文（只读）：`QED-Engine/docs/design/parsing-flow.md` §5、`QED-Engine/docs/design/dataset-conventions.md`
 关联 Tracker：docs/trackers/todo.md（REQ-097 支线行、PLAN-017 主线行）
 归档判定：Retain（含 R1~R5 实施锚点、迁移版本号与门禁读数，作根仓库 REQ-097 回执关闭证据）
@@ -57,8 +57,10 @@ ARCH-032 勘察在解析侧发现三个「单一事实源」违反点：
   book.json 读取）实施时定。
 - **R4 删除语义前置**：删除旧版本目录属 D 类数据操作——仅在 `active_job_id` 更新事务成功后执行、
   记录删除路径与时刻日志；边界为只删被替换的那一个旧版本（不批量清历史）。
-- **与 ARCH-034 边界**：该轮在飞改动（瞬态残留识别、写入面锁 `parsed/`）已完成 W1~W7；本壳改动
-  不得静默覆盖其守护测试口径，冲突处以 REQ-097 目标状态为准并在 W 项记录。
+- **与 ARCH-034（PLAN-016，已关闭）边界**：该轮落地的改动（瞬态残留识别式、写入面锁 `parsed/`、
+  数据根 fail-closed、深度无关枚举及其守护测试）本壳不得静默覆盖其守护口径，冲突处以 REQ-097
+  目标状态为准并在 W 项记录（例：根视图 `book.json` 退役会改变 `is_book_dir` 的产物标记前提，
+  W1/W2 实施时同批改口径并跑存储治理守护）。
 - af_books 字段核查表（R1 第一步，来源＝根仓库 book.json 字段清单）：
 
 | book.json 字段 | af_books 对应列 | 现状 |

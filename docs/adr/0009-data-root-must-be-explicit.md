@@ -69,5 +69,6 @@ ADR 0018 的顶层白名单制不相容：
 关联：根仓库 ADR 0018（顶层白名单与 JSON 岛禁止，跨仓库只读引用、不建相对链接）；
 [ADR 0004](0004-model-boundary-and-pipeline-ownership.md)（无静默兜底）；
 [ADR 0008](0008-fixed-doc-form-and-metadata-genres.md)（固定文档骨架与可对账契约表）；
-实施载体 [PLAN-016](../plans/2026-09-24-storage-convention-alignment.md)（ARCH-034），
-入站确认包 [PLAN-015](../plans/2026-09-24-adr0018-data-root-alignment-request.md)（REQ-095）。
+实施载体 [PLAN-016](../history/plans/2026-09/2026-09-24-storage-convention-alignment.md)（ARCH-034，已关闭），
+入站确认包 PLAN-015（REQ-095，已按 `Delete` 关闭，判定与回执正文见提交 `a97ccc7` 与
+[completed.md](../trackers/completed.md) 同批行）。
