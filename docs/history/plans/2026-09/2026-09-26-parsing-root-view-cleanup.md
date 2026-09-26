@@ -1,16 +1,17 @@
 # 解析产物根视图清理实施（parsing-root-view-cleanup）
 
-状态：Accepted
+状态：Completed
 任务类型：B
 最后更新：2026-09-26
 关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0009](../adr/0009-data-root-must-be-explicit.md)（数据根显式，其实施轮 PLAN-016/ARCH-034 已于 2026-09-26 关闭）；无新增 ADR
 关联设计：`docs/design/parsing-pipeline.md`（PP-2/PP-14/PP-15/PP-16 为 R5 修订对象）、`docs/architecture/database-design.md`（af_books 列迁移随 R1）；根仓库权威上下文（只读）：`QED-Engine/docs/design/parsing-flow.md` §5、`QED-Engine/docs/design/dataset-conventions.md`
-关联 Tracker：docs/trackers/todo.md（REQ-097 支线行、PLAN-017 主线行）
-归档判定：Retain（含 R1~R5 实施锚点、迁移版本号与门禁读数，作根仓库 REQ-097 回执关闭证据）
+关联 Tracker：docs/trackers/todo.md（PLAN-017 行；本任务唯一台账行，根侧请求号 REQ-097 只作来源标注，不单独立行）
+归档判定：Retain（含实施锚点、迁移版本号、门禁读数与 REQ-097 回执正文，作根侧关闭证据）；已归档至
+`docs/history/plans/2026-09/2026-09-26-parsing-root-view-cleanup.md`
 
 > 本壳为根仓库 REQ-097 跨项目请求（2026-09-26 发出，源自 ARCH-032 存储链路勘察）的承接实施计划。
 > 原请求文档 `2026-09-26-parsing-root-view-cleanup-request` 随承接登记正规化为治理合规的计划形态
-> （本文件名保留请求期 slug 以维持根侧引用）。白名单/守护同步：本壳 + todo 两行即 PLAN-017 承接
+> （本文件名保留请求期 slug 以维持根侧引用）。白名单/守护同步：本壳 + todo 单行（PLAN-017，2026-09-26「一任务一行」裁决后 REQ-097 不再单独立行）即 PLAN-017 承接
 > 第一步，`test_plan_governance.py` / `test_tracker_governance.py` 以本壳现状为基准。
 
 ## 背景与根侧设计裁决
@@ -79,8 +80,8 @@ ARCH-032 勘察在解析侧发现三个「单一事实源」违反点：
 | W3（R3） | `seed_version_from()`（PP-15 播种）：版本目录 `book.json` 改从 af_books DB 读取生成（book_id/title/authors/page_count/ingest_sha256/source_file/ingested_at + 当次 job 的 engine），不再从 root 文件复制 | Done（本地判据，锚 `f2fd689`）——按偏差 D3 并入 W1 批次：`book.json` 入播种黑名单 `_NOT_SEEDED`，版本正本由 `run_parse_job` 从 af_books 行生成 |
 | W4（R4） | `orchestrator/pipeline.py`：`af_books.active_job_id` 更新后删除被替换的旧版本目录 `versions/<old_job_id>/`；D 类留痕（路径+时刻入日志）；旧目录读取中可跳过删除并告警（简单处理即可） | Done（本地判据，锚 `f2fd689`）：删除只在指针提交成功后执行；`legacy`/同 job 续跑不删；`OSError` 仅告警保留目录、任务终态不翻转。真机数据根上的删除效果待 D 类窗口（W7） |
 | W5（R5） | `parsing-pipeline.md` 同步：产物布局图更新为「根视图仅 pages/*.png + 唯一版本目录」；PP-2（不再写 root book.json/manifest.json）、PP-14（激活即删旧版本，替换「不自动删除」）、PP-15（播种 book.json 从 af_books 生成）、PP-16（删除根视图 manifest 描述） | Done（锚随文档批）：布局图/PP-2/14/15/16 + 非目标删「旧版本磁盘清理不做」条 + 失败语义加删除持有一行；连带 `parsing-management.md`（mermaid 激活轮换 + 无回落 + manifest legacy 404）、`api.md`（ingest/manifest/pages/书目面/契约测试面五处）、`code-map.md` 三行、`database-design.md`（列清单/迁移表/无回落条文） |
-| W6 | 回执根仓库 REQ-097：实施锚点（git commit sha）、af_books 迁移版本号、门禁读数（pytest passed / ruff clean）、S1~S5 逐条判定 | 正文已成文（见下「REQ-097 回执正文」，含真机递延声明）；S2 真机判定待 W7 后补记，届时随六步收口关闭 |
-| W7 | 真机 D 类窗口（排期在用户）：业务库 `qed` 升 `20260926_0001` + 真实数据根重 ingest/激活删旧实测；恢复 ARCH-011 批量重建的前置之一 | Blocked（待用户批准窗口） |
+| W6 | 回执根仓库 REQ-097：实施锚点（git commit sha）、af_books 迁移版本号、门禁读数（pytest passed / ruff clean）、S1~S5 逐条判定 | Done：回执正文成文（见下「REQ-097 回执正文」），随收口批提交 `6cab58f` 交付根仓库自读登记；S2 真机磁盘证据移交 ARCH-011 窗口（W7） |
+| W7 | 真机 D 类窗口（排期在用户）：业务库 `qed` 升 `20260926_0001` + 真实数据根重 ingest/激活删旧实测；恢复 ARCH-011 批量重建的前置之一 | 移交 ARCH-011（todo「后续待做」节）：业务库 `qed` 升 `20260926_0001` + 真实数据根删旧实测在批量重建窗口执行期顺带验证 |
 
 ## 实施偏差登记（2026-09-26 W1~W4 批次）
 
@@ -93,12 +94,12 @@ ARCH-032 勘察在解析侧发现三个「单一事实源」违反点：
   两面，拆开任一批都会出现「版本目录也无 book.json」的中间态；故播种改黑名单 + 任务生成与
   W1/W2 同批落地（锚点同一）。
 
-## S 判据本地判定（真机项挂 W7）
+## S 判据本地判定（真机磁盘证据移交 ARCH-011 窗口）
 
 | ID | 判定 |
 | --- | --- |
 | S1 | ✅ 本地：`test_ingest_writes_only_page_images_into_root_view`（含残留旧布局文件被替换时清退） |
-| S2 | ✅ 本地：`TestActivationRetiresReplacedVersion` 四例 + 契约 `test_second_version_replaces_the_effective_one`；真机磁盘效果待 W7 |
+| S2 | ✅ 本地：`TestActivationRetiresReplacedVersion` 四例 + 契约 `test_second_version_replaces_the_effective_one`；真机磁盘证据移交 ARCH-011 窗口（W7） |
 | S3 | 随 W5 文档同步判定 |
 | S4 | ✅（按 D1 口径）：`ingested_at` 补列 + `test_update_ingest_stamps_ingested_at`；列清单对账守护通过 |
 | S5 | ✅ 门禁 548 passed / 10 skipped + ruff 全绿 + `QED_TEST_MYSQL=1` 集成层 8 passed（`qed_test` 实跑新迁移升降级） |
@@ -134,6 +135,10 @@ ARCH-032 勘察在解析侧发现三个「单一事实源」违反点：
 
 ## 关闭与归档
 
-- 关闭条件：S1~S5 全达成 + W6 回执成文；按 ADR 0006 六步收口（结论入本壳→todo 两行关闭→
-  completed.md→plans/index 无需登记（索引导航制）→project-status 刷新→门禁全绿）。
+- 关闭条件：S1~S5 全达成 + W6 回执成文；按 ADR 0006 六步收口（结论入本壳→todo 单行关闭→
+  completed.md→plans/index 登记→project-status 刷新→门禁全绿）。
+- **终态判定（2026-09-26 收口批）**：关闭条件按**本地判据口径**全部满足，六步收口执行完毕。真机
+  两项（业务库 `qed` 升 `20260926_0001`、真实数据根删旧实测）不阻塞本壳关闭——其本体是 D 类批量
+  数据操作的执行期验证，移交 todo「后续待做」节 ARCH-011 行（原 W7 判定要求降级为该窗口执行期的
+  顺带取证，用户裁决 2026-09-26）。根仓库据此壳回执自读登记并关闭其 REQ-097 行。
 - 归档判定 Retain：本壳随回执归档（根侧 REQ-097 关闭证据引用其门禁读数与锚点）。

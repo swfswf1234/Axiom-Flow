@@ -142,4 +142,14 @@
   落盘规则以 [ADR 0009](../adr/0009-data-root-must-be-explicit.md) 与根仓库 ADR 0018（只读参照）为准；
   关闭证据见 [completed.md](../trackers/completed.md) PLAN-015 / REQ-095 行；根仓库按判据
   「A1~A4 回执后关闭」自读登记其 REQ-095 行。**跨项目承载由此清零**：v1.0 主线下临时承接项仅剩
-  REQ-097/PLAN-017（解析产物根视图清理实施，活跃计划）。
+  PLAN-017（承载根侧 REQ-097 解析产物根视图清理，活跃计划；该条已于同日收口批关闭，见下条）。
+- PLAN-017 解析产物根视图清理实施（Axiom-Flow，B 类，承载根侧请求 REQ-097）已完成（2026-09-26，
+  S1~S5 本地判据逐条判定、REQ-097 回执正文成文后关闭），计划按立项判定 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-26-parsing-root-view-cleanup.md)（保留
+  R1~R5 实施锚点、字段核查表改判与偏差 D1~D3 登记、S1~S5 判定表与「REQ-097 回执正文」全文——
+  根仓库据此自读登记关闭其 REQ-097 行）；运行时事实源不在壳内，而以
+  [parsing-pipeline.md PP-2/14/15/16](../design/parsing-pipeline.md)、
+  [api.md](../architecture/api.md)、[database-design.md](../architecture/database-design.md) 与迁移
+  `20260926_0001` 为准；关闭证据见 [completed.md](../trackers/completed.md) PLAN-017 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-26-parsing-root-view-cleanup-request.md` 处须改指上述
+  归档位置（本批已同步 `docs/trackers/*`；REQ-097 真机两项移交 todo「后续待做」节 ARCH-011 行）。

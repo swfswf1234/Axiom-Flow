@@ -2,10 +2,10 @@
 
 状态：Accepted
 任务类型：B
-最后更新：2026-09-22
+最后更新：2026-09-26
 关联 ADR：无新增（登记来源＝根仓库 ARCH-025 滚动壳「REQ-089 第一批调研承接」节的 DeepTutor 对照调研结论；治理沿用 [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md) 一任务一承载）
 关联设计：[parsing-pipeline.md](../design/parsing-pipeline.md)、[parsing-management.md](../design/parsing-management.md)、[database-design.md](../architecture/database-design.md)、[api.md](../architecture/api.md)
-关联 Tracker：docs/trackers/todo.md（PLAN-009 镜像行；承载 ARCH-021、ARCH-022/023）
+关联 Tracker：docs/trackers/todo.md（PLAN-009 镜像行；承载 ARCH-011、ARCH-021、ARCH-022/023）
 归档判定：Retain（滚动登记与逐条实施里程碑证据，关闭时按当时里程碑归档）
 
 > **登记沿革**：2026-09-22 用户裁决——根仓库「Axiom-Flow（V1.0）优化轮（ARCH-025）」的优化项
@@ -73,6 +73,23 @@ bridge（P4 暂缓）；查询改写（P 系外 R5 后置，问答面归根仓�
 | R4 | 数学感知切分：以 blocks 为切分单元，公式/定理块原子性（DeepTutor 无此答案，其主链路 SentenceSplitter 512/50 裸切；此为我方自研点） | 自研（根侧 REQ-082 草案承接） | 反例证据：`llamaindex/config.py` chunk_geometry | 待排期 |
 | R5 | 查询改写：LLM ≤3 变体并行检索再聚合 | 后置 | `smart_retriever.py`；问答面归根仓库 | 不排 |
 | R6 | 8 引擎 provider 抽象 / 纯文件无 DB 存储 / GraphRAG 拍平 txt 丢块结构 | 拒绝 | `rag/factory.py`、`graphrag/ingestion.py`（反例） | 无动作 |
+
+## 承载 ARCH-011 · 产物重建批量窗口（D 类，待排期）
+
+- **目的**：把 v0.1 侧未在业务库 `qed` 与真实数据根上执行的产物重建合并为一次批量窗口（其余
+  书目全本重解析），使本壳 P1~P3/R1~R4 有可复测的真实现场——即「前置条件」所指的重建本身。
+- **关闭条件**：与 todo `ARCH-011` 行同一判据（逐本 `active_job_id` 生效、`failed_pages` 为空、
+  前后指纹留档）；窗口执行完毕即关闭该行，本壳的「产物重建」前置同时解除。
+- **工作项**（窗口开工时按变更分级另拆 D 类计划，本节只登记不实施）：W0 待重解析清单
+  （`GET /parse-jobs?status=partial&status=failed&status=interrupted` + `GET /books/{id}/pages`
+  判据 `not has_artifact or status == "failed"`）；W1 备份（`mysqldump` af_* 四表 +
+  `alembic_version`）与数据根前后指纹；W2 按需「先清后建」（`POST /api/v1/admin/purge`，双确认、
+  作用域限 `parsed/`）；W3 逐本串行 ingest + 全本解析（**同一时刻只容一个 MinerU 占用**，排他
+  判据＝`:5002/health` 的 queued+processing==0）；W4 逐本核对与只读复跑；W5 差异复核 + 六步收口。
+- **状态**：`Blocked`（2026-09-26 自 todo「长期任务」节改判入「后续待做」节，类别长期 → 支线，
+  本壳为承载）。开工前置＝窗口执行期先把业务库 `qed` 升 `20260926_0001`（承接原 PLAN-017 W7 真机
+  验证——激活删旧与根视图新形状在批量重解析中顺带取证）。环境侧（容器/GPU/WSL 容量）归根仓库 8900 `scripts/image-model/`，本仓库只连
+  不停、不据此调业务参数。
 
 ## 验证与验收
 
