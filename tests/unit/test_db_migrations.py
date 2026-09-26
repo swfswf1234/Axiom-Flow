@@ -4,7 +4,9 @@
 `20260920_0002`（PLAN-004）额外守护版本作用域：`af_pages` 主键与 `af_block_edits` 唯一键纳入
 `job_id`、生效指针单列、存量 backfill（一书一 job 回填该 job，否则 `legacy` 哨兵）；
 `20260921_0001`（PLAN-006 / ADR 0007）守护进度与结局分列：书目新增 `last_parse_result`、
-任务新增 `failed_pages`，存量只平移不改写历史 job 状态。
+任务新增 `failed_pages`，存量只平移不改写历史 job 状态；
+`20260926_0001`（PLAN-017 / REQ-097）守护 `af_books.ingested_at` 纯加列：存量不回填（NULL =
+「本轮规则之前 ingest」），降级干净删列。
 """
 
 from __future__ import annotations
@@ -363,3 +365,58 @@ def test_upgrade_0003_keeps_rows_and_indexes_on_rebuild(tmp_path):
     assert "ix_af_parse_jobs_book" in {item["name"] for item in inspector.get_indexes("af_parse_jobs")}
     columns = {column["name"]: column for column in inspector.get_columns("af_parse_jobs")}
     assert columns["failed_pages"]["nullable"] is False
+
+
+# ---------- 20260926_0001：ingest 元数据补列（PLAN-017 / REQ-097） ----------
+
+REVISION_0003 = "20260921_0001"
+
+
+def test_upgrade_0004_adds_ingested_at_without_backfill(tmp_path):
+    """纯加列且**不回填**：存量行 `NULL` 如实表示「本列规则确立之前 ingest」，不猜值。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, REVISION_0003)
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        for book_id in ("b_a", "b_b", "b_c"):
+            conn.execute(
+                text(
+                    "INSERT INTO af_books (book_id, domain_id, course_id, title, authors, file_path,"
+                    " sha256, ingest_status, parse_status, last_parse_result, pages_done,"
+                    " synced_at, updated_at)"
+                    " VALUES (:book_id,'','','书名','[]','raw/x.pdf','','ingested','pending','',0,"
+                    " '2026-09-26 00:00:00','2026-09-26 00:00:00')"
+                ),
+                {"book_id": book_id},
+            )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(url))
+    columns = {column["name"]: column for column in inspector.get_columns("af_books")}
+    assert "ingested_at" in columns
+    assert columns["ingested_at"]["nullable"] is True, "从未 ingest 必须能用 NULL 表达"
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        stamps = conn.execute(
+            text("SELECT book_id, ingested_at FROM af_books ORDER BY book_id")
+        ).all()
+    engine.dispose()
+    assert [row[1] for row in stamps] == [None, None, None], "迁移不得为存量行编造 ingest 时刻"
+
+
+def test_downgrade_0004_drops_ingested_at(tmp_path):
+    """降级干净：列消失，回到 0003 形态后可再升回。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, "head")
+
+    command.downgrade(config, REVISION_0003)
+
+    inspector = inspect(create_engine(url))
+    assert "ingested_at" not in {column["name"] for column in inspector.get_columns("af_books")}
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(url))
+    assert "ingested_at" in {column["name"] for column in inspector.get_columns("af_books")}

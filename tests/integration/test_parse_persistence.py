@@ -80,7 +80,7 @@ def sessions(store: Engine) -> tuple[sessionmaker[Session], sessionmaker[Session
 
 
 def _seed_book(writer: sessionmaker[Session], data_root: Path, *, pages: int = 3) -> None:
-    """sync + ingest 一本合成书（含页图与 book.json），供编排走真实落盘路径。"""
+    """sync + ingest 一本合成书（根视图只有页图，元数据在 af_books），供编排走真实落盘路径。"""
     raw_dir = data_root / "raw" / DOMAIN_ID / COURSE_ID
     _make_pdf(raw_dir / "book.pdf", pages=pages)
     with writer() as session:
@@ -102,7 +102,6 @@ def _seed_book(writer: sessionmaker[Session], data_root: Path, *, pages: int = 3
             data_root=data_root,
             domain_id=DOMAIN_ID,
             course_id=COURSE_ID,
-            title="W3 提交边界样本",
         )
         BookRepository(session).update_ingest(
             BOOK_ID, page_count=result.page_count, sha256=result.sha256
@@ -180,7 +179,7 @@ class TestIsolationBoundary:
         assert "alembic_version" in found
         with store.connect() as conn:
             revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "20260921_0001", "集成面必须跑在当前 head 上"
+        assert revision == "20260926_0001", "集成面必须跑在当前 head 上"
 
 
 class TestCommitBoundary:

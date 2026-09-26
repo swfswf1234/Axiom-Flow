@@ -40,9 +40,16 @@ class AfBook(Base):
     display_title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     authors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     file_path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
-    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    page_count: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="全书页数（ingest 写入；页清单枚举域唯一来源）"
+    )
+    sha256: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", comment="源 PDF SHA-256（ingest 写入；book.json 退役后的唯一事实源）"
+    )
     ingest_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    ingested_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, comment="ingest 完成时刻（UTC naive）；NULL = 从未 ingest（REQ-097）"
+    )
     parse_status: Mapped[str] = mapped_column(
         String(24), nullable=False, default="pending", comment="解析进度（pending/parsing）；不表达结局"
     )

@@ -122,8 +122,9 @@ def link_pages_into(root_pages_dir: Path, version_pages_dir: Path, page_no: int)
     return _link_file(source, target)
 
 
-#: 版本目录不继承的派生文件：每次解析必然重算，留着只会给出旧指纹。
-_NOT_SEEDED = frozenset({"manifest.json", "chunks.json"})
+#: 版本目录不继承的文件：派生文件每次解析必然重算（留着只给旧指纹）；`book.json` 由本次
+#: 任务从 af_books 生成（REQ-097/PP-15），继承基线的旧副本会带回旧引擎名与旧时刻。
+_NOT_SEEDED = frozenset({"manifest.json", "chunks.json", "book.json"})
 
 
 def seed_version_from(source_dir: Path, version_dir: Path) -> int:
@@ -209,11 +210,8 @@ def write_json(path: Path, payload: str) -> None:
 
 
 def write_book_meta(book_dir: Path, meta: BookMeta) -> None:
+    """版本目录级 book.json：由解析任务从 af_books 生成（根视图不再有 book.json）。"""
     write_json(book_dir / "book.json", meta.model_dump_json(indent=2))
-
-
-def read_book_meta(book_dir: Path) -> BookMeta:
-    return BookMeta.model_validate_json((book_dir / "book.json").read_text(encoding="utf-8"))
 
 
 def build_manifest(book_dir: Path) -> list[ManifestEntry]:

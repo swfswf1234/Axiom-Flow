@@ -24,7 +24,9 @@ from axiom_flow.db.models import Base  # noqa: E402
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False`：默认 True 会把宿主进程里已存在的 `axiom_flow.*` logger
+    # 全部静音——同进程跑迁移（测试夹具）时应用侧日志与 caplog 断言都会假红。
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

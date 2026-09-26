@@ -2,8 +2,8 @@
 
 设计状态：Accepted
 确认状态：已确认
-实现状态：Verified（af_* 四表与三条迁移已落地，业务库与测试库均经真机验证）
-最后更新：2026-09-23
+实现状态：Verified（af_* 四表与四条迁移已落地，业务库与测试库均经真机验证）
+最后更新：2026-09-26
 关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
 关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py`、`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -100,9 +100,10 @@ ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下�
 | `display_title` | VARCHAR(500) | 否 | — | 展示用标题 |
 | `authors` | JSON | 否 | — | `list[{name, role}]` |
 | `file_path` | VARCHAR(512) | 否 | — | 源 PDF 的数据根相对路径（同源 `qt_books.file_path`） |
-| `page_count` | INT | 是 | — | ingest 时计算；`NULL` = 尚未 ingest |
-| `sha256` | VARCHAR(64) | 否 | — | ingest 时计算的源文件指纹 |
+| `page_count` | INT | 是 | — | 全书页数（ingest 写入；`NULL` = 尚未 ingest，页清单枚举域唯一来源） |
+| `sha256` | VARCHAR(64) | 否 | — | 源 PDF SHA-256（ingest 写入；根 `book.json` 退役后的唯一事实源） |
 | `ingest_status` | VARCHAR(16) | 否 | — | `none` / `ingesting` / `ingested` / `failed` |
+| `ingested_at` | DATETIME | 是 | — | ingest 完成时刻（UTC naive）；`NULL` = 从未 ingest |
 | `parse_status` | VARCHAR(24) | 否 | i | **只表达进度**：`pending` / `parsing` |
 | `last_parse_result` | VARCHAR(16) | 否 | — | 最近一次任务结局：`completed`/`partial`/`failed`/`interrupted`；`''` = 从未有任务 |
 | `pages_done` | INT | 否 | — | 生效版本已 `parsed` 页数（描述的是指针所指版本） |
@@ -114,8 +115,9 @@ ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下�
 索引：`ix_af_books_course(course_id)`、`ix_af_books_status(parse_status)`。引擎 InnoDB / utf8mb4。
 
 **同步与进度语义**：同步以 `book_id` 为幂等键，重复同步只 upsert 不产生重复行；qt_books 侧删除或
-变更不回写已同步行（快照语义）。`ingest_status` / `parse_status` / `pages_done` 由本侧维护，不依赖
-`qt_books` 之外的上游字段。进度与结局分列：`parse_status` 只表达做到哪，结局落在
+变更不回写已同步行（快照语义）。`ingest_status` / `ingested_at` / `parse_status` / `pages_done` 由
+本侧维护，不依赖 `qt_books` 之外的上游字段；`ingested_at` 每次 ingest 成功即刷新。进度与结局分列：
+`parse_status` 只表达做到哪，结局落在
 `last_parse_result` 且**只在终态写入**，因此运行中刷新列表不会看到结局被进度覆盖；重新 ingest 只
 回置进度（`pending` + `pages_done` 归零）并清空 `job_id='legacy'` 的页行，不改结局列。
 
@@ -206,6 +208,7 @@ ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下�
 | `20260917_0001` | `af_*` 四表一次建全 | 无（首建）；不触碰共享 `qed_*` 表 |
 | `20260920_0002` | 解析版本布局：`af_books.active_job_id`、`af_parse_jobs.source_sha256`/`page_count`、`af_pages` 主键与 `af_block_edits` 唯一键纳入 `job_id`、`engine` 去掉死默认值 | 页行与编辑行按「一本书只有一个 job → 回填该 job；否则回填哨兵 `legacy`」定作用域；**不把存量产物搬进 `versions/`**，`active_job_id` 保持 `NULL`；主键/唯一键走「建新表 + 拷贝 + 改名」，同一份 DDL 兼容 SQLite 与 MySQL |
 | `20260921_0001` | 状态语义分列：`af_books.last_parse_result`、`af_parse_jobs.failed_pages` | 旧终态值从 `parse_status` **平移一次**、进度统一归 `pending`、`failed_pages` 回填 `[]`；**不改写历史 job 状态**（回填等于伪造历史）。JSON 列走「加可空 → 回填 → 收紧 NOT NULL」以避开 MySQL 不支持 JSON 字面量 DEFAULT |
+| `20260926_0001` | ingest 元数据：`af_books.ingested_at`（纯加列） | **不回填**：存量行 `NULL` 如实表示「本列规则确立之前 ingest」，不猜值；源文件指纹复用既有 `sha256` 列，不新增重复的 ingest 指纹列（偏差登记在承载计划） |
 
 结构现状 = head 迁移之后的形状，也就是上面四张列清单表。业务库 `qed` 已升到 head；测试库
 `qed_test` 由集成夹具每次从 base 重建到 head，因此新迁移的 MySQL DDL 在门禁里就被真实执行一次。
@@ -231,8 +234,9 @@ ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下�
 - **管理面清除是 DML-only 例外**：`af_*` 四表行都在清除范围内（含任务行），但**无 DDL、无
   `DROP DATABASE`**——共享库里另有其他项目的表；默认不挂载、须管理 token 与逐字确认，作用域内有
   活动态任务时拒绝执行。`af_books` 行同样可清：书目是同步来的快照，可经同步重建，不是持久资产。
-- **外部故障不传导**：8901 离线只影响同步动作，不影响本表读取；空 `af_books` 时端点回落文件系统
-  `book.json`（降级形状见 [api.md](api.md)，不是本表的第二套真相）。
+- **外部故障不传导**：8901 离线只影响同步动作，不影响本表读取。读取面**纯 DB 驱动**：
+  `af_books` 为空即空列表 / 404，不回落文件系统 `book.json`（根视图只剩 `pages/p*.png`，元数据
+  唯一事实源是本表）。
 
 ## 验证与追溯
 

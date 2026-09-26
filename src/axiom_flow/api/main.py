@@ -7,7 +7,6 @@
 是 `_read_scope`，URL、响应结构与 `image_url` 字面量对根仓库前端保持不变。
 """
 
-import json
 import shutil
 import uuid
 from collections.abc import Callable, Iterator
@@ -21,7 +20,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from axiom_flow import __version__ as VERSION
-from axiom_flow.api.admin import iter_book_dirs, mount_admin
+from axiom_flow.api.admin import mount_admin
 from axiom_flow.config import Settings, load_settings
 from axiom_flow.db.engine import create_engine_for
 from axiom_flow.db.models import AfBlockEdit, AfBook
@@ -43,7 +42,6 @@ from axiom_flow.schemas import (
     SAFE_SEGMENT_PATTERN,
     Block,
     BlocksPage,
-    BookMeta,
     BookOut,
     BookSyncItem,
     BookUpdate,
@@ -52,6 +50,7 @@ from axiom_flow.schemas import (
     EditRecord,
     EditRequest,
     IngestResponse,
+    IngestStatus,
     JobStatus,
     ManifestEntry,
     PageData,
@@ -177,18 +176,17 @@ def create_app(
     SessionDep = Annotated[Session, Depends(db_session)]
 
     def _find_book_dir(session: Session, book_id: str) -> Path | None:
+        """产物目录解析唯一入口（REQ-097）：只认 af_books 行，路径按行内段名构造。
+
+        文件系统回落随 PLAN-017 W1 删除：磁盘产物不再算书（它证明不了页数与哈希已回写库）；
+        两层/三层的深度无关由 `book_dir_for` 的空段折叠天然承载。目录不存在返回 None，
+        读取端按「产物缺失」404。
+        """
         book = BookRepository(session).get(book_id)
-        if book is not None:
-            candidate = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
-            if (candidate / "book.json").is_file():
-                return candidate
-        # 空 domain_id 折叠出两层布局：按名回退同样走产物标记枚举，不按固定层数 glob（C7）。
-        for candidate in sorted(
-            found for found in iter_book_dirs(data_root / "parsed") if found.name == book_id
-        ):
-            if (candidate / "book.json").is_file():
-                return candidate
-        return None
+        if book is None:
+            return None
+        candidate = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
+        return candidate if candidate.is_dir() else None
 
     def _require_book_dir(session: Session, book_id: str) -> Path:
         book_dir = _find_book_dir(session, book_id)
@@ -231,32 +229,6 @@ def create_app(
                 continue
         return pages
 
-    def _books_from_filesystem() -> list[BookOut]:
-        books: list[BookOut] = []
-        # 产物标记枚举、命中即剪枝（版本目录不再下钻）：两层与三层布局同样命中（C7）。
-        for book_dir in sorted(iter_book_dirs(data_root / "parsed")):
-            book_json = book_dir / "book.json"
-            if not book_json.is_file():
-                continue
-            try:
-                book_meta = BookMeta.model_validate_json(book_json.read_text(encoding="utf-8"))
-            except ValueError:
-                continue
-            books.append(
-                BookOut(
-                    book_id=book_meta.book_id,
-                    title=book_meta.title,
-                    authors=book_meta.authors,
-                    file_path=book_meta.source_file,
-                    page_count=book_meta.page_count,
-                    sha256=book_meta.sha256,
-                    ingest_status="ingested",
-                    parse_status="pending",
-                    pages_done=len(list((book_dir / "pages").glob("p*.blocks.json"))),
-                )
-            )
-        return books
-
     @app.get("/api/v1/health")
     def health() -> dict:
         """服务健康探针：8900 控制中心与生命周期脚本（--wait/status）的就绪判据。"""
@@ -266,20 +238,17 @@ def create_app(
 
     @app.get("/api/v1/books", response_model=list[BookOut])
     def list_books(session: SessionDep) -> list[BookOut]:
-        """书目列表：af_books；空表回退文件系统产物（独立性降级）。"""
+        """书目列表：只读 af_books（REQ-097：文件系统不再是书目来源）。"""
         rows = BookRepository(session).list_books()
-        return [_book_out(row) for row in rows] if rows else _books_from_filesystem()
+        return [_book_out(row) for row in rows]
 
     @app.get("/api/v1/books/{book_id}", response_model=BookOut)
     def get_book(book_id: SafeBookId, session: SessionDep) -> BookOut:
-        """单书目元数据。"""
+        """单书目元数据（af_books 行；不在库即 404，不查文件系统）。"""
         book = BookRepository(session).get(book_id)
-        if book is not None:
-            return _book_out(book)
-        for candidate in _books_from_filesystem():
-            if candidate.book_id == book_id:
-                return candidate
-        raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
+        if book is None:
+            raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
+        return _book_out(book)
 
     @app.patch("/api/v1/books/{book_id}", response_model=BookOut)
     def update_book(book_id: SafeBookId, payload: BookUpdate, session: SessionDep) -> BookOut:
@@ -340,11 +309,12 @@ def create_app(
 
     @app.post("/api/v1/books/{book_id}/ingest", response_model=IngestResponse)
     def ingest(book_id: SafeBookId, session: SessionDep) -> IngestResponse:
-        """渲染页图 + book.json / manifest.json（不调模型），回写 ingest 进度。
+        """渲染页图（不调模型）并把页数/哈希/时刻回写 af_books（REQ-097：唯一事实源）。
 
-        重复 ingest 替换的只是**根视图**（`book.json` + `pages/`）：解析版本目录完整保留，
-        生效指针回到 `NULL`（根视图），`af_pages` 只清 legacy 行、版本作用域行不动（`PM-16` +
-        `PP-14`）。源文件变了之后旧版本仍可从 `versions/` 直读，但不再对生效端点可见，需重新解析。
+        根视图只替换 `pages/p*.png`——`book.json`/`manifest.json` 不再落盘（产物正本只在
+        `versions/`）；历史解析版本目录完整保留，生效指针回到 `NULL`（根视图），`af_pages`
+        只清 legacy 行、版本作用域行不动（`PM-16` + `PP-14`）。源文件变了之后旧版本仍可从
+        `versions/` 直读，但不再对生效端点可见，需重新解析。
         """
         repo = BookRepository(session)
         book = repo.get(book_id)
@@ -357,9 +327,6 @@ def create_app(
                 data_root=data_root,
                 domain_id=book.domain_id,
                 course_id=book.course_id,
-                title=book.title,
-                authors=book.authors or [],
-                engine=settings.ocr_engine,
             )
         except ValueError as exc:
             code = 404 if "源 PDF 不存在" in str(exc) else 400
@@ -373,23 +340,14 @@ def create_app(
     # ---------- ③ 解析结果与 PDF 对照 ----------
 
     def _page_total(session: Session, book_id: str) -> int:
-        """页清单的枚举域：`af_books.page_count` 优先，NULL 时回落 `book.json` 的 `page_count`。
+        """页清单的枚举域：**只取 `af_books.page_count`**（REQ-097 删除 `book.json` 回落）。
 
-        回落而不是直接报错：该列由 ingest 写入，迁移前存量书可能只剩 `book.json`。两者都取不到时
-        404（与产物目录缺失同一措辞）——「枚举域未知」不能伪装成空清单，否则客户端会判定全书齐备。
+        NULL 即 404——「枚举域未知」不能伪装成空清单，否则客户端会判定全书齐备；磁盘上
+        残留的旧布局 book.json 不再是第二事实源。
         """
         book = BookRepository(session).get(book_id)
         if book is not None and book.page_count:
             return int(book.page_count)
-        book_dir = _find_book_dir(session, book_id)
-        if book_dir is not None:
-            try:
-                raw = json.loads((book_dir / "book.json").read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                raw = {}
-            page_count = raw.get("page_count")
-            if isinstance(page_count, int) and page_count >= 1:
-                return page_count
         raise HTTPException(status_code=404, detail=f"书目不存在或产物缺失：{book_id}")
 
     @app.get("/api/v1/books/{book_id}/pages", response_model=PageListOut)
@@ -424,8 +382,14 @@ def create_app(
 
     @app.get("/api/v1/books/{book_id}/manifest", response_model=list[ManifestEntry])
     def get_manifest(book_id: SafeBookId, session: SessionDep) -> list[ManifestEntry]:
-        """生效版本的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对版本目录。"""
-        artifact_dir, _ = _read_scope(session, book_id)
+        """生效版本的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对版本目录。
+
+        manifest 是**版本**的自证（REQ-097）：legacy 根视图没有清单可给 → 404。端点只重算
+        并写回版本目录内的 `manifest.json`，不再往根视图制造产物文件。
+        """
+        artifact_dir, job_id = _read_scope(session, book_id)
+        if job_id == LEGACY_JOB_ID:
+            raise HTTPException(status_code=404, detail=f"尚无生效版本：{book_id}")
         return write_manifest(artifact_dir)
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}", response_model=PageData)
@@ -549,12 +513,14 @@ def create_app(
         受理前三道门槛（`api.md` 错误码表 + `MI-2` + DEFECT-006）：页码越界 422（不探活、不落任务行，否则会在
         `af_pages` 写出指向不存在页图的状态行）、引擎名解析（未实现 400、未知 422，不回落
         MinerU）、模型服务探活（不可用 503）；三者都不创建任务行。受理后的服务故障才记为 job `failed`。
+
+        「已 ingest」的门槛只看 af_books（`ingest_status`，REQ-097）：根视图 book.json 已退役，
+        磁盘文件证明不了页数与哈希已回写库。
         """
         book = BookRepository(session).get(payload.book_id)
         if book is None:
             raise HTTPException(status_code=404, detail=f"书目不存在：{payload.book_id}")
-        book_dir = book_dir_for(data_root, book.domain_id, book.course_id, payload.book_id)
-        if not (book_dir / "book.json").is_file():
+        if book.ingest_status != IngestStatus.INGESTED:
             raise HTTPException(status_code=404, detail=f"尚未 ingest：{payload.book_id}")
         out_of_range = [p for p in payload.pages or () if p < 1 or p > (book.page_count or 0)]
         if out_of_range:

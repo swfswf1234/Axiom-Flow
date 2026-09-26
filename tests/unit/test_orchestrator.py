@@ -9,6 +9,7 @@ progress 节流写入。
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pymupdf
@@ -30,7 +31,7 @@ from axiom_flow.ingest import ingest_book
 from axiom_flow.orchestrator import jobs as jobs_module
 from axiom_flow.orchestrator import pipeline, run_parse_job
 from axiom_flow.orchestrator.jobs import JobRunner
-from axiom_flow.schemas import BlocksPage
+from axiom_flow.schemas import BlocksPage, BookMeta
 
 
 def _make_pdf(path: Path, pages: int = 2) -> Path:
@@ -146,7 +147,6 @@ def _ingest(session: Session, data_root: Path) -> None:
         data_root=data_root,
         domain_id="math-advanced",
         course_id="math_analysis",
-        title="数学分析原理",
     )
     BookRepository(session).update_ingest("b05", page_count=result.page_count, sha256=result.sha256)
     session.commit()
@@ -158,6 +158,151 @@ def _book_dir(data_root: Path) -> Path:
 
 def _version_dir(data_root: Path, job_id: str) -> Path:
     return _book_dir(data_root) / "versions" / job_id
+
+
+class TestMetadataSourceIsAfBooks:
+    """REQ-097 / PLAN-017 W1+W3：书目元数据唯一事实源是 af_books，版本 `book.json` 由任务生成。
+
+    旧实现从根视图 `book.json` 读 meta（ingest 落盘的第二正本），根视图退役后该文件不存在；
+    版本目录的 book.json 也不得从基线继承——否则引擎名与时刻都是旧版的。
+    """
+
+    def test_parse_succeeds_without_root_book_json_and_writes_version_book_json(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        assert not (_book_dir(data_root) / "book.json").exists(), "根视图不再落 book.json（W2）"
+        job_id = _create_job(session)
+
+        outcome = run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=job_id,
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+        )
+
+        assert outcome.status == "completed", outcome.error
+        meta = BookMeta.model_validate_json(
+            (_version_dir(data_root, job_id) / "book.json").read_text(encoding="utf-8")
+        )
+        assert meta.book_id == "b05"
+        assert meta.title == "数学分析原理"
+        assert meta.page_count == 2
+        assert meta.source_file == "raw/math-advanced/math_analysis/book.pdf"
+        assert meta.engine == "mineru"
+        book = BookRepository(session).get("b05")
+        assert meta.sha256 == book.sha256
+        assert meta.ingested_at == book.ingested_at
+
+    def test_stale_root_book_json_is_not_used(self, env):
+        """基线/根视图里的旧 book.json 是第二正本：解析读 af_books、版本 book.json 不回抄旧值。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        (_book_dir(data_root) / "book.json").write_text(
+            BookMeta(
+                book_id="b05",
+                title="陈旧副本",
+                page_count=9,
+                sha256="f" * 64,
+                source_file="raw/elsewhere.pdf",
+                engine="paddleocr-vl",
+            ).model_dump_json(),
+            encoding="utf-8",
+        )
+        job_id = _create_job(session)
+
+        outcome = run_parse_job(
+            session=session,
+            engine=FakeEngine(),
+            job_id=job_id,
+            book_id="b05",
+            pages=None,
+            data_root=data_root,
+        )
+
+        assert outcome.status == "completed", outcome.error
+        assert outcome.total == 2, "页范围取 af_books.page_count，不取旧 book.json 的 9"
+        meta = BookMeta.model_validate_json(
+            (_version_dir(data_root, job_id) / "book.json").read_text(encoding="utf-8")
+        )
+        assert meta.title == "数学分析原理"
+        assert meta.engine == "mineru"
+
+
+class TestActivationRetiresReplacedVersion:
+    """REQ-097 / PLAN-017 W4：激活成功的下一刻删除被替换的旧版本目录，日志留痕。
+
+    删除只发生在指针切换并提交**之后**：删除失败最多留残磁盘；若发生在切换前，指针会指向
+    已删目录。`partial`/`failed` 不激活也不删；同 job 续跑不删自己；legacy 无目录可删。
+    """
+
+    def _run(self, session, data_root, job_id, *, engine=None, pages=None):
+        return run_parse_job(
+            session=session,
+            engine=engine or FakeEngine(),
+            job_id=job_id,
+            book_id="b05",
+            pages=pages,
+            data_root=data_root,
+        )
+
+    def test_replaced_version_dir_deleted_on_activation(self, env, caplog):
+        session, data_root = env
+        _ingest(session, data_root)
+        assert self._run(session, data_root, _create_job(session, job_id="job-1")).status == "completed"
+        assert _version_dir(data_root, "job-1").is_dir()
+
+        with caplog.at_level(logging.INFO, logger="axiom_flow.orchestrator.pipeline"):
+            outcome = self._run(session, data_root, _create_job(session, job_id="job-2"))
+
+        assert outcome.status == "completed", outcome.error
+        assert not _version_dir(data_root, "job-1").exists(), "激活后旧正本目录必须删除，磁盘上只留生效版本"
+        assert _version_dir(data_root, "job-2").is_dir()
+        assert any("job-1" in record.getMessage() for record in caplog.records), "删除动作必须日志留痕"
+
+    def test_partial_does_not_delete_replaced_version(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        assert self._run(session, data_root, _create_job(session, job_id="job-1")).status == "completed"
+
+        outcome = self._run(
+            session,
+            data_root,
+            _create_job(session, job_id="job-2"),
+            engine=FakeEngine(fail_pages={1}),
+            pages=[1, 2],
+        )
+
+        assert outcome.status == "partial", outcome.status
+        assert _version_dir(data_root, "job-1").is_dir(), "未激活就不删：旧版本仍是唯一可读正本"
+        assert BookRepository(session).get("b05").active_job_id == "job-1"
+
+    def test_rerun_of_active_job_keeps_its_own_dir(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        job_id = _create_job(session, job_id="job-1")
+        assert self._run(session, data_root, job_id).status == "completed"
+
+        assert self._run(session, data_root, job_id).status == "completed"
+
+        assert _version_dir(data_root, "job-1").is_dir(), "被替换版本 == 本版本：不得自删"
+
+    def test_deletion_failure_only_warns_and_keeps_job_completed(self, env, monkeypatch, caplog):
+        session, data_root = env
+        _ingest(session, data_root)
+        assert self._run(session, data_root, _create_job(session, job_id="job-1")).status == "completed"
+
+        def _raise(_path, *args, **kwargs):
+            raise OSError("被读取中的句柄占用")
+
+        monkeypatch.setattr(pipeline.shutil, "rmtree", _raise)
+        with caplog.at_level(logging.WARNING, logger="axiom_flow.orchestrator.pipeline"):
+            outcome = self._run(session, data_root, _create_job(session, job_id="job-2"))
+
+        assert outcome.status == "completed", "删除失败不翻转任务终态：指针已切换，残留只是磁盘面"
+        assert _version_dir(data_root, "job-1").is_dir()
+        assert any("job-1" in record.getMessage() for record in caplog.records), "删除失败必须告警"
 
 
 class TestWholeBookJob:
@@ -432,8 +577,12 @@ class TestPerPageJob:
         assert page.blocks[0].text == "第 2 页"
         assert PageRepository(session).count_parsed("b05", job_id) == 1
 
-    def test_two_versions_coexist_without_overwrite(self, env):
-        """两个版本各写各的目录：后一次解析不抹掉前一次产物（REQ-080 的立项目标）。"""
+    def test_two_versions_write_isolated_until_activation_retires_predecessor(self, env):
+        """各版本写各的目录、互不覆盖；后者激活成功即删除被替换版本（REQ-097 W4）。
+
+        旧契约（PLAN-004 / REQ-080）允许历史版本目录长期共存；W4 后磁盘只留生效版本，
+        历史可解释性由 af_pages/af_parse_jobs 行承载，不再依赖残留文件。
+        """
         session, data_root = env
         _ingest(session, data_root)
         first = _create_job(session, pages=[1], job_id="job-a")
@@ -445,6 +594,7 @@ class TestPerPageJob:
             pages=[1],
             data_root=data_root,
         )
+        assert (_version_dir(data_root, first) / "pages" / "p0001.blocks.json").is_file()
         second = _create_job(session, pages=[2], job_id="job-b")
         run_parse_job(
             session=session,
@@ -455,8 +605,10 @@ class TestPerPageJob:
             data_root=data_root,
         )
 
-        assert (_version_dir(data_root, first) / "pages" / "p0001.blocks.json").is_file()
-        assert not (_version_dir(data_root, first) / "pages" / "p0002.blocks.json").exists()
+        assert not _version_dir(data_root, first).exists(), "job-b 已激活：被替换的 job-a 目录应被删除"
+        assert (_version_dir(data_root, second) / "pages" / "p0001.blocks.json").is_file(), (
+            "生效版本自带继承页产物，不依赖旧版本目录存活"
+        )
         assert (_version_dir(data_root, second) / "pages" / "p0002.blocks.json").is_file()
         assert PageRepository(session).get("b05", first, 2) is None
         assert PageRepository(session).get("b05", second, 2).status == "parsed"
@@ -639,9 +791,8 @@ def _file_env(tmp_path: Path, pages: int = 2):
             data_root=data_root,
             domain_id="math-advanced",
             course_id="math_analysis",
-            title="数学分析原理",
         )
-        BookRepository(session).update_ingest("b05", page_count=pages, sha256="x" * 64)
+        BookRepository(session).update_ingest("b05", page_count=pages, sha256="a" * 64)
         ParseJobRepository(session).create(ParseJobRow(job_id="job-1", book_id="b05", engine="mineru"))
         session.commit()
         return engine, session, data_root

@@ -1,4 +1,4 @@
-"""ingest：预处理——源 PDF → 150 DPI 页图 + book.json / manifest.json（不调模型）。
+"""ingest：预处理——源 PDF → 150 DPI 页图（根视图唯一产物 `pages/p*.png`，不调模型）。
 
 设计关联（DesignRef）：docs/design/parsing-pipeline.md
 实现状态：Current
@@ -18,7 +18,6 @@ from axiom_flow.ingest.artifacts import (
     is_transient_name,
     link_pages_into,
     png_size,
-    read_book_meta,
     scan_transient_residue,
     seed_version_from,
     sha256_file,
@@ -52,7 +51,6 @@ __all__ = [
     "is_transient_name",
     "link_pages_into",
     "png_size",
-    "read_book_meta",
     "resolve_source_pdf",
     "scan_transient_residue",
     "seed_version_from",

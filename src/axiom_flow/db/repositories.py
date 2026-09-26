@@ -151,12 +151,17 @@ class BookRepository:
     def update_ingest(
         self, book_id: str, *, page_count: int, sha256: str, ingest_status: str = "ingested"
     ) -> bool:
+        """ingest 完成回写：页数/哈希/时刻三件套（REQ-097：af_books 是元数据唯一事实源）。
+
+        `ingested_at` 每次 ingest 都刷新——根视图被整体替换，旧时刻对新页图不成立。
+        """
         book = self.session.get(AfBook, book_id)
         if book is None:
             return False
         book.page_count = page_count
         book.sha256 = sha256
         book.ingest_status = ingest_status
+        book.ingested_at = utc_now()
         book.updated_at = utc_now()
         self.session.flush()
         return True
@@ -445,7 +450,7 @@ class PageRepository:
         """按解析版本列**有页行的**页状态清单（`GET /api/v1/books/{book_id}/pages` 的仓储面）。
 
         只投影清单契约列；没有页行的页在此缺席，`1..total` 的补全（缺行 = `pending`）由读取面做，
-        因为仓储面无法知道全书页数该取 `af_books.page_count` 还是 `book.json`。
+        因为 `total` 的事实源在书目行（`af_books.page_count`），不属页仓储的作用域。
         """
         stmt = (
             select(AfPage.page_no, AfPage.status, AfPage.error)

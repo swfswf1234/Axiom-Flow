@@ -114,6 +114,18 @@ class TestBookRepository:
         assert book.pages_done == 12
         assert book.notes == "重点核对第 3 章"
 
+    def test_update_ingest_stamps_ingested_at(self, session):
+        """ingest 完成时刻记入 af_books（REQ-097：根 book.json 退役后 `ingested_at` 的唯一事实源）。"""
+        repo = BookRepository(session)
+        repo.upsert_many([_row()])
+        assert repo.get("mathanalysis-b05").ingested_at is None
+
+        repo.update_ingest("mathanalysis-b05", page_count=320, sha256="a" * 64)
+
+        book = repo.get("mathanalysis-b05")
+        assert book.ingested_at is not None
+        assert book.ingest_status == "ingested"
+
     def test_update_missing_book_returns_false(self, session):
         repo = BookRepository(session)
 

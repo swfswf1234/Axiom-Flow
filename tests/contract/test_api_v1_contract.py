@@ -31,7 +31,6 @@ from axiom_flow.db.repositories import (
     ParseJobRow,
 )
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
-from axiom_flow.schemas import BookMeta
 
 
 class FakeEngine:
@@ -211,68 +210,84 @@ class TestHealthEndpoint:
 
 
 def _seed_fs_book(data_root: Path, book_id: str, *, domain_id: str, course_id: str = "c1") -> Path:
-    """手工铺设文件系统产物（空表回退面）：`domain_id` 为空即两层布局（空段被折叠）。"""
+    """手工铺设**文件系统残留**（无库行书目的产物目录）：反向判据「文件系统不再是书目来源」。"""
     segments = ["parsed", *([domain_id] if domain_id else []), course_id, book_id]
     book_dir = data_root.joinpath(*segments)
     (book_dir / "pages").mkdir(parents=True)
-    meta = BookMeta(
-        book_id=book_id,
-        title="深度无关回归样本",
-        authors=[],
-        page_count=1,
-        sha256="0" * 64,
-        source_file="raw/probe/book.pdf",
-    )
-    (book_dir / "book.json").write_text(meta.model_dump_json(indent=2), encoding="utf-8")
-    (book_dir / "pages" / "p0001.md").write_text("# 第 1 页\n", encoding="utf-8")
+    (book_dir / "pages" / "p0001.png").write_bytes(b"png")
+    (book_dir / "book.json").write_text('{"book_id": "ghost", "page_count": 1}', encoding="utf-8")
+    return book_dir
+
+
+def _seed_db_book(
+    session_factory, data_root: Path, book_id: str, *, domain_id: str, course_id: str = "c1"
+) -> Path:
+    """DB 行 + 页图产物（REQ-097 后的书目来源：af_books 是唯一枚举域）。"""
+    segments = ["parsed", *([domain_id] if domain_id else []), course_id, book_id]
+    book_dir = data_root.joinpath(*segments)
+    (book_dir / "pages").mkdir(parents=True)
+    (book_dir / "pages" / "p0001.png").write_bytes(b"png")
+    with session_factory() as session:
+        repo = BookRepository(session)
+        repo.upsert_many(
+            [
+                BookSyncRow(
+                    book_id=book_id,
+                    domain_id=domain_id,
+                    course_id=course_id,
+                    title="深度无关回归样本",
+                    file_path="raw/probe/book.pdf",
+                )
+            ]
+        )
+        repo.update_ingest(book_id, page_count=1, sha256="0" * 64)
+        session.commit()
     return book_dir
 
 
 class TestBookEnumerationDepthAgnostic:
-    """书目枚举深度无关（PLAN-016 W4 / 偏差 C7）：两层与三层布局必须同样命中书目录本身。
+    """书目来源收敛到 af_books（PLAN-016 C7 的 REQ-097 修订）：目录解析走库行段名，两层三层等价。
 
-    两层＝`domain_id` 为空时空段折叠出的 `parsed/<course_id>/<book_id>/`（业务库 17 本的真实
-    形态）；固定层数 glob 会漏读，识别只看产物标记（与管理面同一判据，admin.py）。
+    文件系统回落删除后，深度无关由 `book_dir_for` 承载（空 `domain_id` 段被 pathlib 折叠）；
+    不在 af_books 的书一律 404——文件系统残留不再算书，也不得成为第二事实源。
     """
 
-    def test_fallback_listing_finds_two_layer_book(self, tmp_path, monkeypatch):
-        client, _ = _build(tmp_path, monkeypatch)
-        _seed_fs_book(tmp_path / "data", "twolayer-b01", domain_id="")
+    def test_two_layer_book_pages_resolve_via_db_row(self, tmp_path, monkeypatch):
+        client, session_factory = _build(tmp_path, monkeypatch)
+        book_dir = _seed_db_book(session_factory, tmp_path / "data", "twolayer-b01", domain_id="")
 
         with client as live:
-            response = live.get("/api/v1/books")
-
-        assert response.status_code == 200
-        assert "twolayer-b01" in {item["book_id"] for item in response.json()}
-
-    def test_fallback_listing_finds_three_layer_book(self, tmp_path, monkeypatch):
-        client, _ = _build(tmp_path, monkeypatch)
-        _seed_fs_book(tmp_path / "data", "threelayer-b01", domain_id="math-advanced")
-
-        with client as live:
-            response = live.get("/api/v1/books")
-
-        assert response.status_code == 200
-        assert "threelayer-b01" in {item["book_id"] for item in response.json()}
-
-    def test_manifest_served_for_two_layer_book(self, tmp_path, monkeypatch):
-        """`_find_book_dir` 回退面：无库行书目按名命中两层目录（走 manifest 端点判 404→200）。"""
-        client, _ = _build(tmp_path, monkeypatch)
-        _seed_fs_book(tmp_path / "data", "twolayer-b02", domain_id="")
-
-        with client as live:
-            response = live.get("/api/v1/books/twolayer-b02/manifest")
+            response = live.get("/api/v1/books/twolayer-b01/pages")
 
         assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["total"], body["scope"], book_dir.is_dir()) == (1, "legacy", True)
 
-    def test_manifest_served_for_three_layer_book(self, tmp_path, monkeypatch):
-        client, _ = _build(tmp_path, monkeypatch)
-        _seed_fs_book(tmp_path / "data", "threelayer-b02", domain_id="math-advanced")
+    def test_three_layer_book_pages_resolve_via_db_row(self, tmp_path, monkeypatch):
+        client, session_factory = _build(tmp_path, monkeypatch)
+        _seed_db_book(
+            session_factory, tmp_path / "data", "threelayer-b01", domain_id="math-advanced"
+        )
 
         with client as live:
-            response = live.get("/api/v1/books/threelayer-b02/manifest")
+            response = live.get("/api/v1/books/threelayer-b01/pages")
 
         assert response.status_code == 200, response.text
+        assert response.json()["total"] == 1
+
+    def test_filesystem_residue_without_db_row_is_invisible(self, tmp_path, monkeypatch):
+        """反向判据：book.json 与页图俱在但无库行 ⇒ 列表为空、读取 404（独立性由此更强）。"""
+        client, _ = _build(tmp_path, monkeypatch)
+        _seed_fs_book(tmp_path / "data", "ghost-b01", domain_id="")
+
+        with client as live:
+            listed = live.get("/api/v1/books")
+            single = live.get("/api/v1/books/ghost-b01")
+            pages = live.get("/api/v1/books/ghost-b01/pages")
+
+        assert listed.json() == []
+        assert single.status_code == 404
+        assert pages.status_code == 404
 
 
 class TestTransientResidueWarning:
@@ -349,16 +364,14 @@ class TestBooksEndpoints:
     def test_get_missing_book_returns_404(self, client):
         assert client.get("/api/v1/books/nope").status_code == 404
 
-    def test_books_fallback_to_filesystem_when_db_empty(self, client, tmp_path):
-        """空表回退文件系统产物（独立性降级）：不 sync 也能列出已 ingest 的书。"""
+    def test_books_listing_has_no_filesystem_fallback(self, client, tmp_path):
+        """REQ-097：空表不再回落文件系统——删了库行，即使页图产物还在，书目也不成书。"""
         _sync_book(client)
         _ingest(client)
-        # 清空 DB 行，模拟 af_books 未建/空表
         assert client.delete("/api/v1/books/mathanalysis-b05").status_code == 200
 
-        books = client.get("/api/v1/books").json()
-        assert [book["book_id"] for book in books] == ["mathanalysis-b05"]
-        assert books[0]["ingest_status"] == "ingested"
+        assert client.get("/api/v1/books").json() == []
+        assert client.get("/api/v1/books/mathanalysis-b05").status_code == 404
 
     def test_ingest_renders_pages_and_updates_progress(self, client):
         _sync_book(client)
@@ -413,6 +426,21 @@ class TestPagesAndManifest:
         self._parsed_book(client)
         assert client.get("/api/v1/books/mathanalysis-b05/pages/99").status_code == 404
         assert client.get("/api/v1/books/mathanalysis-b05/pages/99/image").status_code == 404
+
+    def test_manifest_requires_active_version(self, client, tmp_path):
+        """manifest 是**版本**的自证：ingest 过但无生效版本时，根视图没有 manifest 可给 → 404。
+
+        旧行为在 legacy 作用域对根目录 `write_manifest`，等于把已退役的根清单又写回去
+        （违反 S1「根视图只有 pages/p*.png」）；端点不再制造产物文件。
+        """
+        _sync_book(client)
+        _ingest(client)
+
+        response = client.get("/api/v1/books/mathanalysis-b05/manifest")
+
+        assert response.status_code == 404
+        assert "生效版本" in response.json()["detail"]
+        assert not (tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05" / "manifest.json").exists()
 
     def test_manifest_lists_artifacts_with_hashes(self, client):
         self._parsed_book(client)
@@ -497,6 +525,24 @@ class TestChunksEndpoint:
 
 class TestParseJobsEndpoints:
     """解析任务：202 受理、状态查询、失败语义（引擎被替换为假实现）。"""
+
+    def test_parse_job_gate_is_db_driven_not_book_json(self, client, tmp_path):
+        """受理门槛看 `af_books.ingest_status`：磁盘上有旧布局 book.json 也不算已 ingest。
+
+        根 book.json 退役（REQ-097）后「已 ingest」的判据只剩库行——磁盘文件不能证明页数
+        与哈希已回写 af_books。
+        """
+        _sync_book(client)
+        book_dir = (
+            tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05"
+        )
+        book_dir.mkdir(parents=True)
+        (book_dir / "book.json").write_text('{"page_count": 2}', encoding="utf-8")
+
+        created = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+
+        assert created.status_code == 404, created.text
+        assert "尚未 ingest" in created.json()["detail"]
 
     def test_whole_book_job_completes(self, client):
         _sync_book(client)
@@ -891,8 +937,11 @@ class TestPageListEndpoint:
             pages.upsert("mathanalysis-b05", LEGACY_JOB_ID, 2, status="failed", error="引擎超时")
             book_dir = self._book_dir(tmp_path)
             book_dir.mkdir(parents=True)
-            # 不跑 ingest：只留 book.json，避免根视图页行被重新 ingest 作废（V8 的 reset_legacy）
-            (book_dir / "book.json").write_text('{"page_count": 2}', encoding="utf-8")
+            # 不跑 ingest：直接在 af_books 记 ingest 结果，避免根视图页行被重新 ingest 作废
+            # （V8 的 reset_legacy），也不再造根 book.json（REQ-097：枚举域只看库行）。
+            BookRepository(session).update_ingest(
+                "mathanalysis-b05", page_count=2, sha256="0" * 64
+            )
             session.commit()
 
         with test_client as client:
@@ -941,8 +990,12 @@ class TestPageListEndpoint:
         assert [p["edit_count"] for p in body["pages"]] == [2, 0]
         assert body["job_id"] == job_id
 
-    def test_total_falls_back_to_book_json_and_404_when_unavailable(self, tmp_path, monkeypatch):
-        """`total` 取 `af_books.page_count`，NULL 时回落 `book.json`；两者都取不到 → 404 而非空清单。"""
+    def test_total_is_db_only_and_404_when_page_count_null(self, tmp_path, monkeypatch):
+        """`total` 只取 `af_books.page_count`：NULL 即 404，**不回落任何 book.json**（REQ-097 S1）。
+
+        「枚举域未知」不能伪装成空清单；根布局残留的旧 book.json 带页数也不作数——
+        文件系统不再是元数据第二事实源。
+        """
         test_client, session_factory = _build(tmp_path, monkeypatch)
         with test_client as client:
             _sync_book(client)
@@ -952,13 +1005,13 @@ class TestPageListEndpoint:
                 book.page_count = None
                 session.commit()
 
-            fallback = client.get("/api/v1/books/mathanalysis-b05/pages").json()
-            (self._book_dir(tmp_path) / "book.json").write_text("{}", encoding="utf-8")
             missing = client.get("/api/v1/books/mathanalysis-b05/pages")
+            (self._book_dir(tmp_path) / "book.json").write_text('{"page_count": 2}', encoding="utf-8")
+            stale = client.get("/api/v1/books/mathanalysis-b05/pages")
 
-        assert (fallback["total"], [p["page_no"] for p in fallback["pages"]]) == (2, [1, 2])
         assert missing.status_code == 404
         assert "产物缺失" in missing.json()["detail"]
+        assert stale.status_code == 404, "根 book.json 不再是回落来源"
 
     def test_missing_book_missing_effective_directory_and_bad_segment(self, tmp_path, monkeypatch):
         """404 书不存在 / 404 生效版本产物缺失（**不回落根视图**）/ 422 非法路径段。"""
@@ -1015,7 +1068,7 @@ class TestParseVersions:
             assert client.get("/api/v1/books/mathanalysis-b05/pages/1/image").status_code == 200
 
     def test_second_version_replaces_the_effective_one(self, tmp_path, monkeypatch):
-        """S1：两版本并存，端点只出生效版；历史版留在磁盘上可读。"""
+        """S1：端点只出生效版；激活成功后被替换版本目录即删（磁盘只留生效正本，W4）。"""
         test_client, _ = _build(tmp_path, monkeypatch)
         with test_client as client:
             _sync_book(client)
@@ -1032,12 +1085,12 @@ class TestParseVersions:
             # 未重解析的第 1 页由版本基线继承，端点继续可读（生效版本是完整快照）
             assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 200
             book_dir = self._book_dir(tmp_path)
-            assert (book_dir / "versions" / first / "pages" / "p0002.blocks.json").is_file()
+            assert not (book_dir / "versions" / first).exists(), "W4：被替换版本随激活删除，不留第二正本"
             assert (book_dir / "versions" / second / "pages" / "p0002.blocks.json").is_file()
-            assert "重解析" in (book_dir / "versions" / second / "pages" / "p0002.md").read_text(
-                encoding="utf-8"
+            assert (book_dir / "versions" / second / "pages" / "p0001.blocks.json").is_file(), (
+                "生效版本自带继承页产物，可读性不依赖旧版本目录存活"
             )
-            assert "重解析" not in (book_dir / "versions" / first / "pages" / "p0002.md").read_text(
+            assert "重解析" in (book_dir / "versions" / second / "pages" / "p0002.md").read_text(
                 encoding="utf-8"
             )
 
@@ -1261,7 +1314,8 @@ class TestSubmitTimeHealthProbe:
             assert client.get("/api/v1/health").status_code == 200
             assert client.get("/api/v1/books").status_code == 200
             assert client.get("/api/v1/books/mathanalysis-b05").status_code == 200
-            assert client.get("/api/v1/books/mathanalysis-b05/manifest").status_code == 200
+            # REQ-097：未解析过 = legacy 作用域，清单端点固定 404（不再回落根 manifest 重算）。
+            assert client.get("/api/v1/books/mathanalysis-b05/manifest").status_code == 404
             assert client.get("/api/v1/books/mathanalysis-b05/pages/1/image").status_code == 200
             assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 404
 
@@ -1707,14 +1761,14 @@ class TestAdminPurgeEndpoint:
     def test_empty_domain_book_dir_is_purged_whole(self, tmp_path, monkeypatch):
         """S5 反向：`domain_id=''`（业务库 17 本的真实形态）时书目录只有**两层**。
 
-        固定深度 glob 会把 `pages/`、`versions/` 当成书目录：清除后 `book.json`/`manifest.json`
-        与空书目录残留，第二次清除的清单不再是空 ⇒ 「重跑幂等」在真实布局下不成立。
+        固定深度 glob 会把 `pages/`、`versions/` 当成书目录：清除后产物标记与空书目录残留，
+        第二次清除的清单不再是空 ⇒ 「重跑幂等」在真实布局下不成立。
         """
         test_client, session_factory = _admin_build(tmp_path, monkeypatch)
         with test_client as client:
             self._seed(client, "mathanalysis-b09", domain_id="")
             book_dir = self._book_root(tmp_path, "mathanalysis-b09", domain_id="")
-            assert book_dir.is_dir() and (book_dir / "book.json").is_file()
+            assert book_dir.is_dir() and (book_dir / "pages").is_dir()
 
             dry = client.post(
                 PURGE_URL, json={"scope": {"all": True}}, headers=_admin_headers()

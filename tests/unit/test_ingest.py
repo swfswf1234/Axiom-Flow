@@ -1,7 +1,6 @@
 """ingest 单元测试：源 PDF → 150 DPI 页图 + book.json + manifest.json（parsed/ 布局）。"""
 
 import hashlib
-import json
 import os
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from axiom_flow.ingest import (
     version_dir_for,
     write_json,
 )
-from axiom_flow.schemas import BookMeta
 
 
 def _make_pdf(path: Path, pages: int = 3, text: str = "QED ingest test") -> Path:
@@ -71,9 +69,13 @@ class TestTransientResidueRecognition:
 
 
 class TestIngestBook:
-    """ingest 主流程：产物结构、SHA-256、幂等覆盖与异常。"""
+    """ingest 主流程：根视图只写 `pages/p*.png`、SHA-256、幂等覆盖与异常。
 
-    def test_ingest_writes_parsed_layout(self, tmp_path):
+    REQ-097（PLAN-017 W2）：`book.json`/`manifest.json` 不再落根视图——书目元数据的
+    单一事实源是 af_books，产物正本只在 `versions/<job_id>/`。
+    """
+
+    def test_ingest_writes_only_page_images_into_root_view(self, tmp_path):
         data_root = tmp_path / "data"
         source_file = _source_pdf(tmp_path)
 
@@ -83,34 +85,31 @@ class TestIngestBook:
             data_root=data_root,
             domain_id="math-advanced",
             course_id="math_analysis",
-            title="数学分析原理",
-            authors=[{"name": "Walter Rudin", "role": "author"}],
         )
 
         book_dir = data_root / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05"
         assert result.book_dir == book_dir
         assert result.page_count == 3
-        meta = BookMeta.model_validate_json((book_dir / "book.json").read_text(encoding="utf-8"))
-        assert meta.book_id == "mathanalysis-b05"
-        assert meta.title == "数学分析原理"
-        assert meta.authors[0].name == "Walter Rudin"
-        assert meta.source_file == source_file
-        assert meta.engine == "mineru"
-        assert meta.ingested_at is not None
         pngs = sorted(book_dir.glob("pages/*.png"))
         assert [p.name for p in pngs] == ["p0001.png", "p0002.png", "p0003.png"]
         assert all(p.stat().st_size > 0 for p in pngs)
+        # 根视图除页图外不写任何东西（含派生的 chunks.json）
+        stray = [
+            p
+            for p in book_dir.rglob("*")
+            if p.is_file() and p.name not in {q.name for q in pngs}
+        ]
+        assert stray == []
+        assert not (book_dir / "book.json").exists()
+        assert not (book_dir / "manifest.json").exists()
 
-    def test_manifest_lists_artifacts_without_self(self, tmp_path):
+    def test_ingest_writes_no_root_manifest(self, tmp_path):
+        """manifest 只属于版本目录：ingest 后根视图上不得出现 manifest.json。"""
         data_root = tmp_path / "data"
         result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
 
-        entries = json.loads((result.book_dir / "manifest.json").read_text(encoding="utf-8"))
-        paths = [entry["path"] for entry in entries]
-        assert "book.json" in paths
-        assert "pages/p0001.png" in paths
-        assert "manifest.json" not in paths
-        assert all(len(entry["sha256"]) == 64 for entry in entries)
+        assert not (result.book_dir / "manifest.json").exists()
+        assert not (result.book_dir / "chunks.json").exists()
 
     def test_sha256_matches_source_pdf(self, tmp_path):
         data_root = tmp_path / "data"
@@ -135,9 +134,11 @@ class TestIngestBook:
         assert not list(book_dir.parent.glob(".b1.tmp-*"))  # 临时目录已清理
 
     def test_reingest_preserves_versions_directory(self, tmp_path):
-        """V8/L3：重新 ingest 只替换根视图（`book.json` + `pages/`），历史解析版本目录保留。
+        """V8/L3：重新 ingest 只替换根视图页图，历史解析版本目录保留。
 
         旧实现 `rmtree(book_dir)` 会连 `versions/` 一起删掉——那等于把已解析结果永久删除。
+        旧布局残留的根 `book.json`/`manifest.json` 在替换时一并清退：根视图一旦允许残留，
+        「正本只在 versions/」的前提就名存实亡。
         """
         data_root = tmp_path / "data"
         book_dir = ingest_book(
@@ -147,6 +148,8 @@ class TestIngestBook:
         (version_dir / "pages").mkdir(parents=True)
         (version_dir / "pages" / "p0001.blocks.json").write_text("{}", encoding="utf-8")
         (book_dir / "chunks.json").write_text('{"book_id": "b1"}', encoding="utf-8")
+        (book_dir / "book.json").write_text('{"book_id": "b1"}', encoding="utf-8")
+        (book_dir / "manifest.json").write_text("[]", encoding="utf-8")
 
         ingest_book(
             book_id="b1",
@@ -157,6 +160,8 @@ class TestIngestBook:
         assert (version_dir / "pages" / "p0001.blocks.json").is_file()
         assert len(list(book_dir.glob("pages/*.png"))) == 3
         assert not (book_dir / "chunks.json").exists(), "旧根视图的派生文件一并作废"
+        assert not (book_dir / "book.json").exists(), "旧布局的根 book.json 随替换清退"
+        assert not (book_dir / "manifest.json").exists(), "旧布局的根 manifest.json 随替换清退"
         assert not list(book_dir.parent.glob(".b1.tmp-*"))
         assert not list(book_dir.parent.glob(".b1.old-*"))
 
@@ -216,18 +221,22 @@ class TestVersionDir:
         with pytest.raises(ValueError, match="非法 job_id"):
             version_dir_for(tmp_path / "data", "d", "c", "b05", "../../escape")
 
-    def test_root_manifest_excludes_versions_subtree(self, tmp_path):
-        """根清单只描述根视图：不递归历史版本，否则每次解析都重算全部旧产物（L6）。"""
-        data_root = tmp_path / "data"
-        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
-        version_dir = result.book_dir / "versions" / "job1"
+    def test_build_manifest_skips_versions_subtree(self, tmp_path):
+        """清单只描述目录内文件：`versions/` 子树不入任何清单（L6）。
+
+        根视图不再有 manifest.json（REQ-097），但判据保留在 `build_manifest` 上：误把书目录
+        传进来时不得递归全部历史版本重算哈希。
+        """
+        book_dir = tmp_path / "b1"
+        (book_dir / "pages").mkdir(parents=True)
+        (book_dir / "pages" / "p0001.png").write_bytes(b"png")
+        version_dir = book_dir / "versions" / "job1"
         (version_dir / "pages").mkdir(parents=True)
         (version_dir / "pages" / "p0001.blocks.json").write_text("{}", encoding="utf-8")
 
-        paths = [entry.path for entry in build_manifest(result.book_dir)]
+        paths = [entry.path for entry in build_manifest(book_dir)]
 
-        assert "book.json" in paths
-        assert not [p for p in paths if p.startswith("versions/")], paths
+        assert paths == ["pages/p0001.png"]
 
     def test_version_manifest_is_relative_to_version_dir(self, tmp_path):
         data_root = tmp_path / "data"
@@ -292,14 +301,28 @@ class TestSeedVersion:
 
         seeded = seed_version_from(result.book_dir, version_dir)
 
-        assert (version_dir / "book.json").is_file()
         assert (version_dir / "pages" / "p0001.png").is_file()
         assert (version_dir / "pages" / "p0001.blocks.json").is_file()
-        assert seeded == 5  # book.json + 3 页图 + 1 页 blocks
+        assert seeded == 4  # 3 页图 + 1 页 blocks（根视图不再有 book.json，REQ-097）
         if (version_dir / "pages" / "p0001.png").stat().st_nlink > 1:
             assert (version_dir / "pages" / "p0001.png").stat().st_ino == (
                 result.book_dir / "pages" / "p0001.png"
             ).stat().st_ino
+
+    def test_seed_never_inherits_book_json(self, tmp_path):
+        """`book.json` 只由本次任务从 af_books 生成（PP-15/W3）：即便基线目录还留着旧文件也不继承。
+
+        旧版本目录的 book.json 记的是旧引擎/旧时刻，继承过来就是第二份互相矛盾的正本。
+        """
+        data_root = tmp_path / "data"
+        result = ingest_book(book_id="b1", source_file=_source_pdf(tmp_path), data_root=data_root)
+        (result.book_dir / "book.json").write_text('{"book_id": "b1"}', encoding="utf-8")
+        version_dir = result.book_dir / "versions" / "job2"
+
+        seeded = seed_version_from(result.book_dir, version_dir)
+
+        assert not (version_dir / "book.json").exists()
+        assert seeded == 3  # 只有 3 张页图
 
     def test_seed_skips_derived_and_previous_versions(self, tmp_path):
         """manifest/chunks 由本次重算；`versions/` 子树不递归继承（否则版本指数级嵌套）。"""
@@ -325,7 +348,7 @@ class TestSeedVersion:
         first = seed_version_from(result.book_dir, version_dir)
         second = seed_version_from(result.book_dir, version_dir)
 
-        assert first == 4
+        assert first == 3
         assert second == 0, "重跑同一版本不重复接入（幂等）"
         assert seed_version_from(result.book_dir / "nope", result.book_dir / "versions" / "job4") == 0
 

@@ -14,7 +14,9 @@
 版本布局（PLAN-004 / REQ-080）：一次任务 = 一个解析版本，产物只写 `<book_dir>/versions/<job_id>/`，
 **不回写根视图**（根视图的页图仍由 ingest 拥有，版本目录以硬链接接入）。页状态行按
 `(book_id, job_id, page_no)` 作用域，故同一 job 重跑是**续跑**：已 `parsed` 且产物在位的页跳过引擎。
-生效指针只在目标页齐备且清单重算成功后置位（`af_books.active_job_id`），失败版本文件保留不删。
+生效指针只在目标页齐备且清单重算成功后置位（`af_books.active_job_id`），失败版本文件保留不删；
+激活成功则删除**被替换**的旧版本目录（REQ-097 / PLAN-017 W4）——磁盘上的解析正本只留生效版本，
+删除失败（读取持有句柄）只告警保留，不翻转任务终态。
 
 持久化不变式（PP-13）：**产物写先于页行提交**，故「有页行必有产物」；每页成功/失败即
 提交，使非 `EngineError` 异常穿透后台线程时前序页不被回滚吞掉；`progress` 按「距上次写入 ≥1s
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import math
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,18 +48,26 @@ from axiom_flow.ingest import (
     ensure_within,
     link_pages_into,
     png_size,
-    read_book_meta,
     resolve_source_pdf,
     seed_version_from,
     sha256_file,
     version_dir_for,
+    write_book_meta,
     write_json,
     write_manifest,
     write_page_markdown,
 )
 from axiom_flow.normalize.blocks import blocks_to_markdown, normalize_page
 from axiom_flow.normalize.chunking import build_chunks, chunk_set_payload
-from axiom_flow.schemas import BlocksPage, ChunkParams, ChunkSet, JobStatus, LastParseResult, ParseStatus
+from axiom_flow.schemas import (
+    BlocksPage,
+    BookMeta,
+    ChunkParams,
+    ChunkSet,
+    JobStatus,
+    LastParseResult,
+    ParseStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +199,35 @@ def _page_windows(requested: list[int], size: int) -> list[tuple[int, int]]:
     return [(requested[i], requested[min(i + size, len(requested)) - 1]) for i in range(0, len(requested), size)]
 
 
+def _retire_replaced_version(
+    *,
+    data_root: Path | str,
+    domain_id: str,
+    course_id: str,
+    book_id: str,
+    replaced_job_id: str | None,
+    new_job_id: str,
+) -> None:
+    """激活成功后删除被替换的旧版本目录（REQ-097 / PLAN-017 W4）：磁盘上只留生效版本。
+
+    只在指针切换并提交之后调用：删除失败最多留残磁盘，切换前删除会让指针指向已删目录。
+    `legacy`（根视图，无版本目录）与被替换版本恰为本版本（同 job 续跑）都不删。
+    读取中的调用方持有页文件时（Windows 共享违例）删除失败 → 只告警保留目录，
+    任务终态不翻转：旧版本已非生效视图，残留无误读风险，可事后清理。
+    """
+    if not replaced_job_id or replaced_job_id in (new_job_id, LEGACY_JOB_ID):
+        return
+    target = version_dir_for(data_root, domain_id, course_id, book_id, replaced_job_id)
+    if not target.is_dir():
+        return
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        logger.warning("旧版本目录删除失败（可能正被读取持有），保留待清理：%s：%s", target, exc)
+        return
+    logger.info("版本 %s 激活，已删除被替换的旧版本目录：%s", new_job_id, target)
+
+
 def _version_is_complete(
     page_repo: PageRepository, book_id: str, job_id: str, version_dir: Path, requested: list[int]
 ) -> bool:
@@ -306,14 +346,34 @@ def run_parse_job(
         return _fail(session, job_id, book_id, f"书目不存在：{book_id}", persist=persist_per_page)
     book_dir = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
     version_dir = version_dir_for(data_root, book.domain_id, book.course_id, book_id, job_id)
-    try:
-        meta = read_book_meta(book_dir)
-    except (OSError, ValueError):
+    # 元数据事实源是 af_books（REQ-097 / PLAN-017 W1）：根视图 book.json 已退役，磁盘上
+    # 任何旧副本都不再作数。页数/哈希/源路径不完整 = 未 ingest，按任务失败如实呈现。
+    if not book.file_path:
         return _fail(
             session,
             job_id,
             book_id,
-            f"尚未 ingest 或产物缺失：{book_id}",
+            f"尚未 ingest 或缺源文件路径：{book_id}",
+            book.pages_done,
+            persist=persist_per_page,
+        )
+    try:
+        meta = BookMeta(
+            book_id=book_id,
+            title=book.title or "",
+            authors=list(book.authors or []),
+            page_count=book.page_count or 0,
+            sha256=book.sha256,
+            source_file=book.file_path,
+            engine=engine.name,
+            ingested_at=book.ingested_at,
+        )
+    except ValueError:
+        return _fail(
+            session,
+            job_id,
+            book_id,
+            f"尚未 ingest 或 af_books 元数据不完整：{book_id}",
             book.pages_done,
             persist=persist_per_page,
         )
@@ -350,12 +410,17 @@ def run_parse_job(
     # 版本基线：新版本从当前生效作用域继承产物（active 为空 = 根视图/legacy 作用域）
     baseline_dir = book_dir
     baseline_job_id = LEGACY_JOB_ID
+    # 被替换版本在指针被本任务改写之前就取好：激活后要按它删除旧版本目录（W4）
+    replaced_job_id = book.active_job_id
     if book.active_job_id and book.active_job_id != job_id:
         candidate = version_dir_for(data_root, book.domain_id, book.course_id, book_id, book.active_job_id)
         if candidate.is_dir():
             baseline_dir = candidate
             baseline_job_id = book.active_job_id
     seed_version_from(baseline_dir, version_dir)
+    # 版本 book.json 由本次任务从 af_books 生成（PP-15 / REQ-097 W3）：不继承基线旧副本——
+    # 引擎名与 ingest 时刻必须与本版本自证一致，继承会带回上一版的陈旧值。
+    write_book_meta(version_dir, meta)
 
     geometry = _pdf_geometry(source_pdf)
     requested_pages = list(pages) if pages else list(range(1, meta.page_count + 1))
@@ -504,6 +569,16 @@ def run_parse_job(
         failed_pages=failed,
     )
     _commit()  # 终态与 progress 收尾必写：不依赖调用方提交
+    if complete:
+        # W4：指针已提交，旧版本从此刻起不再是生效视图——删除它才安全（顺序不可颠倒）。
+        _retire_replaced_version(
+            data_root=data_root,
+            domain_id=book.domain_id,
+            course_id=book.course_id,
+            book_id=book_id,
+            replaced_job_id=replaced_job_id,
+            new_job_id=job_id,
+        )
     return ParseOutcome(
         job_id=job_id,
         status=status,

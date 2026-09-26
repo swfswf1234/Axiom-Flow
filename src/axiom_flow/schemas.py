@@ -1,10 +1,9 @@
 """Axiom-Flow 统一格式 schema：内外契约单一事实源（设计见 docs/design/parsing-pipeline.md）。
 
 产物形态（`<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`）：
-- `book.json`               ← BookMeta
-- `manifest.json`           ← ManifestEntry 列表（根清单不递归 `versions/`）
-- `versions/<job_id>/`      ← 一次解析任务 = 一个完整快照版本（book.json + pages/ + chunks.json + manifest.json）
-- `chunks.json`             ← ChunkSet（派生、不入库、可重建）
+- 根视图（ingest 拥有）   ← 只有 `pages/p*.png` 页图；`book.json`/`manifest.json` 已退役（REQ-097）
+- `versions/<job_id>/`   ← 一次解析任务 = 一个完整快照版本（book.json + pages/ + chunks.json + manifest.json，唯一正本）
+- `chunks.json`             ← ChunkSet（派生、不入库、可重建；版本目录内）
 - `pages/p<NNNN>.blocks.json` ← BlocksPage（块级结构化，渲染 + 向量化共同基座）
 - `pages/p<NNNN>.md`          ← 页级 Markdown（`$$...$$` / `$...$` 内嵌公式）
 
@@ -235,7 +234,7 @@ class BlocksPage(BaseModel):
 
 
 class BookMeta(BaseModel):
-    """book.json：书目元数据（产物侧事实源；af_books 承载同步与进度）。"""
+    """版本级 book.json：书目元数据快照（事实源是 af_books，由解析任务生成到版本目录）。"""
 
     book_id: str = Field(description="目录名即 book_id，同源 qt_books")
     title: str

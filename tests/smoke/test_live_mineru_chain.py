@@ -170,8 +170,6 @@ def _prepare_book(*, session: Session, data_root: Path, book_id: str, pages: int
         data_root=data_root,
         domain_id=DOMAIN_ID,
         course_id=COURSE_ID,
-        title=f"Smoke {book_id} ({pages}p)",
-        engine="mineru",
     )
     BookRepository(session).update_ingest(book_id, page_count=result.page_count, sha256=result.sha256)
     session.commit()
