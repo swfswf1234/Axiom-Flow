@@ -1,16 +1,16 @@
 # 存储规范对齐实施（storage-convention-alignment）
 
-状态：In Progress
+状态：Completed
 任务类型：B
 最后更新：2026-09-26
-关联 ADR：[ADR 0009](../adr/0009-data-root-must-be-explicit.md)（本壳 Q4 裁决升格：数据根必须显式配置、仓内 `data/` 去留档区双身份、写入面锁 `parsed/`）；
+关联 ADR：[ADR 0009](../../adr/0009-data-root-must-be-explicit.md)（本壳 Q4 裁决升格：数据根必须显式配置、仓内 `data/` 去留档区双身份、写入面锁 `parsed/`）；
 入站来源＝根仓库 ADR 0018「数据根顶层白名单与元数据 JSON 岛禁止」（`docs/adr/0018-data-root-whitelist-and-meta-json-ban.md`，跨仓库只读引用、不建相对链接），
-治理沿用 [ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（无静默兜底）与
-[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）
-关联设计：[parsing-pipeline.md](../design/parsing-pipeline.md)（PP-3/PP-4/PP-5/PP-6）、
-[overview.md](../architecture/overview.md)（数据边界与产物布局）、
-[api.md](../architecture/api.md)（书目枚举）、[database-design.md](../architecture/database-design.md)
-（`active_job_id` 指针选版）、[operations.md](../guides/operations.md)（数据目录表与 D 类 runbook）
+治理沿用 [ADR 0004](../../adr/0004-model-boundary-and-pipeline-ownership.md)（无静默兜底）与
+[ADR 0006](../../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）
+关联设计：[parsing-pipeline.md](../../design/parsing-pipeline.md)（PP-3/PP-4/PP-5/PP-6）、
+[overview.md](../../architecture/overview.md)（数据边界与产物布局）、
+[api.md](../../architecture/api.md)（书目枚举）、[database-design.md](../../architecture/database-design.md)
+（`active_job_id` 指针选版）、[operations.md](../../guides/operations.md)（数据目录表与 D 类 runbook）
 关联 Tracker：docs/trackers/todo.md（PLAN-016 镜像行；承载 ARCH-034；与 REQ-095 确认包同批不同判——
 REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
 归档判定：Retain（C3 清理已获批准，执行清单与前后指纹属不可再生的数据操作留档；ADR 0009 同批落地）
@@ -89,7 +89,7 @@ REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
 | Q1（C2） | 未配置 `QED_DATA_ROOT` 时的行为 | **(A) 直接报错** | W3 去掉 `Settings.data_dir` 的仓内默认值，缺配置即启动期失败（同 `require_admin_configured` 纪律）；`test_config.py:73,190,196` 三处断言改写为「缺失即报错」 |
 | Q2（C3） | 仓内残骸是否清理 | **进行清理**（dry-run 实测：`data/books/` 399 文件 **1.2 GB**、两个 `.log` 各 0 MB） | W7 解锁：`data/books/01-rudin-trial/` 与 `data/api-8902*.log` 删除；`data/probes/`、`data/backups/` 保留并升格为声明过的留档区。执行前逐路径 dry-run 过目，前后指纹留档 |
 | Q3（C6） | 崩溃残留的处置深度 | **本轮只做识别式＋告警**，重清归 PLAN-009 P2 | W5 范围收窄：`.tmp-`/`.old-`/暂存目录三式成文（已随 W1 写入 `PP-6`）+ 启动期与 purge 路径的告警计数；不做失败重清 |
-| Q4 | 是否升格为本仓 ADR | **立 ADR 0009** | 已成文 [ADR 0009](../adr/0009-data-root-must-be-explicit.md)（状态 Accepted）并登记进 [ADR 索引](../adr/index.md)（下一可用编号 0010） |
+| Q4 | 是否升格为本仓 ADR | **立 ADR 0009** | 已成文 [ADR 0009](../../adr/0009-data-root-must-be-explicit.md)（状态 Accepted）并登记进 [ADR 索引](../../adr/index.md)（下一可用编号 0010） |
 
 ## 工作项
 
@@ -102,7 +102,7 @@ REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
 | W5 | 瞬态残留识别式与告警（Q3 已定：只告警不重清）：三式常量成文 + 启动期与 purge 路径计数告警；`PP-4`/`PP-6` 条文与 `operations.md` runbook 核对步骤 | `src/axiom_flow/ingest/artifacts.py`、`importer.py`、`api/admin.py`、`docs/design/parsing-pipeline.md` | **已完成**（6 例，先取 4 红）：`TRANSIENT_TMP_INFIX`/`TRANSIENT_OLD_INFIX` 两常量 + `is_transient_name`/`scan_transient_residue`/`warn_transient_residue`；lifespan 与 purge 两路径接线；`importer`/`artifacts` 生成式改常量；`PP-4`/`PP-6` 条文与 `operations.md`「留档区与瞬态核对步」同步 |
 | W6 | 备份与留档口径成文：`data/backups/YYYY-MM-DD-<任务标识>` 命名式 + 「仓内留档区不算 JSON 岛、不得出现产物形状」判定 | `docs/guides/operations.md`（数据目录表两行） | **已完成（文档批）**：新增 `<QED_DATA_ROOT>/backups/` 行与本仓备份落点说明；旧式判例 `window-20260922/` 保留为历史留痕不追改 |
 | W7 | C3 残骸清理（Q2 已批准；执行前逐路径 dry-run 过目）：dry-run 清单 → 你确认 → 删除 → 前后指纹留档 `data/probes/storage-align-<日期>/` | 仓内 `data/` | **已完成**（2026-09-24 清单过目获批后执行）：`data/books/` 399 文件 / 1,280,259,077 字节 + 两日志 7,416 字节删除；前后指纹入 `data/probes/storage-align-2026-09-24/`；`git status` 前后 22 项零差异；形状守护随之转绿 |
-| W8 | 回执与收口：C1~C7 判定写入 PLAN-015「登记与结论」并成文 REQ-095 回执正文；code-map 行同步；六步收口 | `docs/plans/2026-09-24-adr0018-data-root-alignment-request.md`、`docs/architecture/code-map.md` | **部分执行**（2026-09-26 用户裁决回执先缓）：code-map 行同步与台账行回写已做；回执成文与关闭四步（todo 关闭 → completed 迁移 → plans/index 登记 → 复跑门禁）待回执口径确认后执行 |
+| W8 | 回执与收口：C1~C7 判定写入 PLAN-015「登记与结论」并成文 REQ-095 回执正文；code-map 行同步；六步收口 | PLAN-015 壳（已按 `Delete` 删除，正文锚点 `a97ccc7`）、`docs/architecture/code-map.md` | **已完成**（2026-09-26 口径确认）：code-map 行同步与台账回写先行落地；A1~A4 判定与 REQ-095 回执正文已回填 PLAN-015 壳并随实现批入库（`a97ccc7`）；六步收口（todo 四行关闭 → completed 迁移 → plans/index 登记 → 本壳 Retain 迁移 → project-status 刷新 → 门禁复跑）随收口批执行 |
 
 ## 验证与验收
 
@@ -130,8 +130,8 @@ REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
 
 ## 关闭与归档
 
-按 [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md) 六步收口：结论写入本壳「登记与结论」→
-ARCH-034 与 PLAN-016 两行压缩并关闭 → 迁移[关闭台账](../trackers/completed.md) →
+按 [ADR 0006](../../adr/0006-ledger-plan-carrier-contract.md) 六步收口：结论写入本壳「登记与结论」→
+ARCH-034 与 PLAN-016 两行压缩并关闭 → 迁移[关闭台账](../../trackers/completed.md) →
 `plans/index.md` 登记去处 → `project-status.md` 刷新 → 全量门禁。归档判定见元数据行：
 执行了 W7 即 **Retain**（数据操作留档），否则 Delete。
 
@@ -150,14 +150,15 @@ ARCH-034 与 PLAN-016 两行压缩并关闭 → 迁移[关闭台账](../trackers
 | ADR 0009 决定 5 措辞对齐 | 独立复验发现原文比实现宽：守护实际断言＝构造器一律前缀 `parsed/` + `ensure_within` 越出**数据根**必抛，而非任意 `parsed/` 越界写必抛（决定 4 的「向其他顶层区写入判为缺陷」仍是评审判据，M2 变异时 36 红为行为侧证据）。已按实况收窄措辞 | 未新增运行期闸门：`atomic_write_*` 不知数据根，加闸需改签名与全部调用点，超出本壳范围 |
 | 门禁 | 全绿（本壳实施时） | `537 passed / 10 skipped / 0 failed` + `ruff check src tests scripts` clean（起点 517 passed） |
 | 门禁（第二窗口复跑） | 本壳改动零红点，全量 `536 passed / 10 skipped / 1 failed` + ruff clean | 唯一红灯 `test_todo_plan_rows_exactly_mirror_active_plan_bodies` 属并行会话新落的 `docs/plans/2026-09-26-parsing-root-view-cleanup-request.md`（尚无 todo 镜像行），不入本壳归属；本壳收口第 6 步（门禁全绿）在该行登记前无法闭合 |
-| W8 | 部分执行：code-map 行同步与台账行回写已做 | 回执成文与关闭四步先缓（2026-09-26 裁决），待口径确认 |
+| W8 | 回执成文 + 六步收口完成（2026-09-26 口径确认后执行） | A1~A4 判定与 REQ-095 回执正文回填 PLAN-015 壳（正文锚点 `a97ccc7`）；收口批＝todo 四行关闭 → completed 迁移 → plans/index 登记 → 本壳 Retain 迁移 → project-status 刷新 → 门禁复跑全绿 |
 
 **S1~S7 逐条判定**：S1 达成（哨兵区成文 + 守护）；S2 达成（fail-closed 去静默回退）；S3 达成
 （写入面守护，M2 变异时治理/单测/作用域三层防线同时转红）；S4 达成（深度无关 + 两形态回归）；
 S5 达成（清理经批执行、前后指纹、`git status` 零差异）；S6 达成（识别式与命名式成文 + runbook
-核对步；M4 证明命名式无门禁，经裁不补）；S7 部分达成——门禁全绿已取，回执正文先缓待口径确认。
+核对步；M4 证明命名式无门禁，经裁不补）；S7 达成——门禁全绿已取，REQ-095 回执正文随 2026-09-26
+口径确认成文于 PLAN-015 壳正文（锚点 `a97ccc7`）。
 
 **Q1~Q4 裁决**：见上「裁决记录」节（已定，ADR 0009 据 Q4 成文）。
 
-**本批已落地**：W1~W7 全部完成（W7 含经批清理与指纹留档）；W8 的 code-map 与台账同步已做，
-回执成文与关闭四步先缓（2026-09-26 用户裁决）。
+**终态**：W1~W8 全部完成。W8 的回执成文与六步收口随 2026-09-26 收口批执行；壳按 **Retain**
+迁 `docs/history/plans/2026-09/`（W7 属已执行的 D 类数据操作，前后指纹为不可再生留档）。
