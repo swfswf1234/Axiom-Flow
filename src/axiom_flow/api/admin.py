@@ -30,6 +30,7 @@ from axiom_flow.db.repositories import (
     PageRepository,
     ParseJobRepository,
 )
+from axiom_flow.ingest import warn_transient_residue
 from axiom_flow.schemas import AdminPurgeCounts, AdminPurgeIn, AdminPurgeOut, AdminPurgeScope
 
 log = logging.getLogger(__name__)
@@ -66,26 +67,27 @@ def _checked_dir(parsed_root: Path, candidate: Path) -> Path:
     return resolved
 
 
-def _is_book_dir(candidate: Path) -> bool:
+def is_book_dir(candidate: Path) -> bool:
     """书目录的识别只看产物标记，不看层数：`book.json` / `pages/` / `versions/` 任一即在。"""
     return (candidate / "book.json").is_file() or any(
         (candidate / name).is_dir() for name in ("pages", "versions")
     )
 
 
-def _iter_book_dirs(parsed_root: Path) -> list[Path]:
+def iter_book_dirs(parsed_root: Path) -> list[Path]:
     """深度无关地枚举书目录——**不能**按固定层数 glob。
 
     书目录的层数随 `domain_id`/`course_id` 是否为空而变：空段在 pathlib 拼接时被折叠，业务库 17 本
     全落在 `parsed/<course_id>/<book_id>/`（两层）。按三层取会把 `pages/`、`versions/` 当成书目录，
     清除后 `book.json`/`manifest.json` 与空目录残留、重跑幂等不成立（判例：2026-09-23 业务侧首次
-    dry-run）。命中即剪枝，不下钻进版本目录。
+    dry-run）。命中即剪枝，不下钻进版本目录。清除侧与读取侧（`api/main.py` 书目枚举回退）
+    共用本判据，防止两侧各自实现再次漂移。
     """
     found: list[Path] = []
 
     def walk(current: Path, depth: int) -> None:
         for child in sorted(p for p in current.iterdir() if p.is_dir()):
-            if _is_book_dir(child):
+            if is_book_dir(child):
                 found.append(child)
             elif depth < _BOOK_DIR_MAX_DEPTH:
                 walk(child, depth + 1)
@@ -100,14 +102,14 @@ def _book_dirs_for_book(data_root: Path, book_id: str) -> list[Path]:
     # book_id 已由 schema 判为安全路径段，目录名精确相等不可能穿越；这里再守一次解析结果。
     return [
         _checked_dir(parsed_root, found)
-        for found in _iter_book_dirs(parsed_root)
+        for found in iter_book_dirs(parsed_root)
         if found.name == book_id
     ]
 
 
 def _all_book_dirs(data_root: Path) -> list[Path]:
     parsed_root = _parsed_root(data_root)
-    return [_checked_dir(parsed_root, found) for found in _iter_book_dirs(parsed_root)]
+    return [_checked_dir(parsed_root, found) for found in iter_book_dirs(parsed_root)]
 
 
 def _planned_counts(session: Session, book_ids: Sequence[str] | None) -> AdminPurgeCounts:
@@ -188,6 +190,8 @@ def purge_books(
     else:
         dirs = [found for book_id in book_ids for found in _book_dirs_for_book(data_root, book_id)]
     targets = sorted({_relative(parsed_root, directory) for directory in dirs})
+    # 瞬态残留只计数告警（Q3 裁决）：真删随 rmtree 一并消失，dry_run 留证供停手判断。
+    warn_transient_residue(parsed_root, context="管理面清除瞬态残留核对")
 
     if dry_run:
         counts = _planned_counts(session, None if use_all else book_ids)

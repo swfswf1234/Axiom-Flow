@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from axiom_flow import __version__ as VERSION
-from axiom_flow.api.admin import mount_admin
+from axiom_flow.api.admin import iter_book_dirs, mount_admin
 from axiom_flow.config import Settings, load_settings
 from axiom_flow.db.engine import create_engine_for
 from axiom_flow.db.models import AfBlockEdit, AfBook
@@ -36,7 +36,7 @@ from axiom_flow.db.repositories import (
 )
 from axiom_flow.engines.base import ParseEngine
 from axiom_flow.engines.factory import EngineSelectionError, build_engine, resolve_engine_name
-from axiom_flow.ingest import book_dir_for, ingest_book, version_dir_for, write_manifest
+from axiom_flow.ingest import book_dir_for, ingest_book, version_dir_for, warn_transient_residue, write_manifest
 from axiom_flow.normalize.chunking import build_chunks, read_chunk_set
 from axiom_flow.orchestrator import MODEL_UNAVAILABLE, JobRunner, rebuild_chunks
 from axiom_flow.schemas import (
@@ -155,6 +155,8 @@ def create_app(
     async def lifespan(_: FastAPI):
         # 受理任何请求之前先归一遗留活动态，避免读取端看到假 running/queued（ADR 0007 决定 4）
         runner.reconcile_on_startup()
+        # 崩溃残留只计数告警不清理（存储规范对齐 W5 / Q3 裁决；重清归版本就绪判据）
+        warn_transient_residue(data_root, context="启动期瞬态残留核对")
         yield
         runner.shutdown()
         if db_engine is not None:
@@ -180,7 +182,10 @@ def create_app(
             candidate = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
             if (candidate / "book.json").is_file():
                 return candidate
-        for candidate in sorted(data_root.glob(f"parsed/*/*/{book_id}")):
+        # 空 domain_id 折叠出两层布局：按名回退同样走产物标记枚举，不按固定层数 glob（C7）。
+        for candidate in sorted(
+            found for found in iter_book_dirs(data_root / "parsed") if found.name == book_id
+        ):
             if (candidate / "book.json").is_file():
                 return candidate
         return None
@@ -228,12 +233,15 @@ def create_app(
 
     def _books_from_filesystem() -> list[BookOut]:
         books: list[BookOut] = []
-        for book_json in sorted(data_root.glob("parsed/*/*/*/book.json")):
+        # 产物标记枚举、命中即剪枝（版本目录不再下钻）：两层与三层布局同样命中（C7）。
+        for book_dir in sorted(iter_book_dirs(data_root / "parsed")):
+            book_json = book_dir / "book.json"
+            if not book_json.is_file():
+                continue
             try:
                 book_meta = BookMeta.model_validate_json(book_json.read_text(encoding="utf-8"))
             except ValueError:
                 continue
-            book_dir = book_json.parent
             books.append(
                 BookOut(
                     book_id=book_meta.book_id,

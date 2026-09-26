@@ -18,6 +18,8 @@ import pymupdf
 
 from axiom_flow.db.engine import utc_now
 from axiom_flow.ingest.artifacts import (
+    TRANSIENT_OLD_INFIX,
+    TRANSIENT_TMP_INFIX,
     atomic_write_text,
     book_dir_for,
     ensure_within,
@@ -63,7 +65,7 @@ def _swap_root_view(book_dir: Path, staging_dir: Path) -> None:
     """
     book_dir.mkdir(parents=True, exist_ok=True)
     old_pages = book_dir / "pages"
-    trash = book_dir.parent / f".{book_dir.name}.old-{uuid.uuid4().hex[:8]}"
+    trash = book_dir.parent / f".{book_dir.name}{TRANSIENT_OLD_INFIX}{uuid.uuid4().hex[:8]}"
     if old_pages.is_dir():
         old_pages.rename(trash)
     try:
@@ -103,7 +105,7 @@ def ingest_book(
 
     book_dir = book_dir_for(data_root, domain_id, course_id, book_id)
     book_dir.parent.mkdir(parents=True, exist_ok=True)
-    tmp_dir = book_dir.parent / f".{book_id}.tmp-{uuid.uuid4().hex[:8]}"
+    tmp_dir = book_dir.parent / f".{book_id}{TRANSIENT_TMP_INFIX}{uuid.uuid4().hex[:8]}"
     try:
         pages_dir = tmp_dir / "pages"
         pages_dir.mkdir(parents=True)

@@ -153,7 +153,8 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
 af_* 表（`af_books` / `af_parse_jobs` / `af_pages` / `af_block_edits`）为 Axiom-Flow 私有（qed 库
 af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](database-design.md)。
 `GET /api/v1/books`、`GET /api/v1/books/{book_id}` 读 `af_books`，**空表回退文件系统 `book.json`**
-（独立性降级）。路径参数 `book_id` 受安全路径段约束（违规 422）。
+（独立性降级；回退枚举**识别只看产物标记、深度无关**——`domain_id` 空段折叠出的两层与三层布局
+同样命中书目录本身，与管理面清除枚举同一判据，命中即剪枝不进版本目录）。路径参数 `book_id` 受安全路径段约束（违规 422）。
 
 #### GET /api/v1/books
 

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from axiom_flow.db.repositories import (
     ParseJobRow,
 )
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
+from axiom_flow.schemas import BookMeta
 
 
 class FakeEngine:
@@ -206,6 +208,102 @@ class TestHealthEndpoint:
 
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
+
+
+def _seed_fs_book(data_root: Path, book_id: str, *, domain_id: str, course_id: str = "c1") -> Path:
+    """手工铺设文件系统产物（空表回退面）：`domain_id` 为空即两层布局（空段被折叠）。"""
+    segments = ["parsed", *([domain_id] if domain_id else []), course_id, book_id]
+    book_dir = data_root.joinpath(*segments)
+    (book_dir / "pages").mkdir(parents=True)
+    meta = BookMeta(
+        book_id=book_id,
+        title="深度无关回归样本",
+        authors=[],
+        page_count=1,
+        sha256="0" * 64,
+        source_file="raw/probe/book.pdf",
+    )
+    (book_dir / "book.json").write_text(meta.model_dump_json(indent=2), encoding="utf-8")
+    (book_dir / "pages" / "p0001.md").write_text("# 第 1 页\n", encoding="utf-8")
+    return book_dir
+
+
+class TestBookEnumerationDepthAgnostic:
+    """书目枚举深度无关（PLAN-016 W4 / 偏差 C7）：两层与三层布局必须同样命中书目录本身。
+
+    两层＝`domain_id` 为空时空段折叠出的 `parsed/<course_id>/<book_id>/`（业务库 17 本的真实
+    形态）；固定层数 glob 会漏读，识别只看产物标记（与管理面同一判据，admin.py）。
+    """
+
+    def test_fallback_listing_finds_two_layer_book(self, tmp_path, monkeypatch):
+        client, _ = _build(tmp_path, monkeypatch)
+        _seed_fs_book(tmp_path / "data", "twolayer-b01", domain_id="")
+
+        with client as live:
+            response = live.get("/api/v1/books")
+
+        assert response.status_code == 200
+        assert "twolayer-b01" in {item["book_id"] for item in response.json()}
+
+    def test_fallback_listing_finds_three_layer_book(self, tmp_path, monkeypatch):
+        client, _ = _build(tmp_path, monkeypatch)
+        _seed_fs_book(tmp_path / "data", "threelayer-b01", domain_id="math-advanced")
+
+        with client as live:
+            response = live.get("/api/v1/books")
+
+        assert response.status_code == 200
+        assert "threelayer-b01" in {item["book_id"] for item in response.json()}
+
+    def test_manifest_served_for_two_layer_book(self, tmp_path, monkeypatch):
+        """`_find_book_dir` 回退面：无库行书目按名命中两层目录（走 manifest 端点判 404→200）。"""
+        client, _ = _build(tmp_path, monkeypatch)
+        _seed_fs_book(tmp_path / "data", "twolayer-b02", domain_id="")
+
+        with client as live:
+            response = live.get("/api/v1/books/twolayer-b02/manifest")
+
+        assert response.status_code == 200, response.text
+
+    def test_manifest_served_for_three_layer_book(self, tmp_path, monkeypatch):
+        client, _ = _build(tmp_path, monkeypatch)
+        _seed_fs_book(tmp_path / "data", "threelayer-b02", domain_id="math-advanced")
+
+        with client as live:
+            response = live.get("/api/v1/books/threelayer-b02/manifest")
+
+        assert response.status_code == 200, response.text
+
+
+class TestTransientResidueWarning:
+    """瞬态残留计数告警（PLAN-016 W5 / Q3 裁决）：启动期与管理面清除两路径，只告警不清理。"""
+
+    def test_lifespan_warns_on_transient_residue(self, tmp_path, monkeypatch, caplog):
+        client, _ = _build(tmp_path, monkeypatch)
+        residue = tmp_path / "data" / "parsed" / ".leftover.tmp-deadbeef"
+        residue.parent.mkdir(parents=True, exist_ok=True)
+        residue.write_text("crash", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="axiom_flow.ingest.artifacts"):
+            with client as live:
+                assert live.get("/api/v1/health").status_code == 200
+
+        assert any("检出 1 个瞬态残留" in record.getMessage() for record in caplog.records)
+
+    def test_purge_dry_run_warns_on_transient_residue(self, tmp_path, monkeypatch, caplog):
+        client, _ = _admin_build(tmp_path, monkeypatch)
+        residue = tmp_path / "data" / "parsed" / ".view.old-deadbeef"
+
+        with client as live, caplog.at_level(logging.WARNING, logger="axiom_flow.ingest.artifacts"):
+            # 进入 lifespan 后再落残留：隔离启动期告警，只验证管理面清除路径的计数告警。
+            residue.parent.mkdir(parents=True, exist_ok=True)
+            residue.write_text("crash", encoding="utf-8")
+            response = live.post(
+                PURGE_URL, json={"scope": {"all": True}}, headers=_admin_headers()
+            )
+
+        assert response.status_code == 200, response.text
+        assert any("检出 1 个瞬态残留" in record.getMessage() for record in caplog.records)
 
 
 class TestBooksEndpoints:

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from axiom_flow.config import llm_api_key, load_settings
+from axiom_flow.config import DataRootError, llm_api_key, load_settings
 from axiom_flow.db.engine import mysql_url, utc_now
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,10 +32,17 @@ _ENV_KEYS = (
 
 @pytest.fixture
 def isolated(monkeypatch, tmp_path):
-    """隔离真实环境与仓库 .env：cwd 移至 tmp_path，清空相关环境变量。"""
+    """隔离真实环境与仓库 .env：cwd 移至 tmp_path，清空相关环境变量，给出已存在的临时数据根。
+
+    ADR 0009 后缺 `QED_DATA_ROOT` 即报错，故夹具默认注入临时根；测缺配行为的用例
+    自行 `monkeypatch.delenv("QED_DATA_ROOT")`。
+    """
     monkeypatch.chdir(tmp_path)
     for key in _ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    data_root = tmp_path / "dataset"
+    data_root.mkdir()
+    monkeypatch.setenv("QED_DATA_ROOT", str(data_root))
     return tmp_path
 
 
@@ -57,7 +64,7 @@ class TestLoadSettingsPriority:
 
         assert load_settings().db_name == "child"
 
-    def test_builtin_defaults_when_nothing_set(self, isolated):
+    def test_builtin_defaults_when_only_data_root_set(self, isolated):
         settings = load_settings()
 
         assert settings.vision_model == "qwen-vl-plus"
@@ -70,7 +77,7 @@ class TestLoadSettingsPriority:
         assert settings.db_user == "root"
         assert settings.db_password == ""
         assert settings.port == 8902
-        assert settings.data_dir == REPO_ROOT / "data"
+        assert settings.data_dir == isolated / "dataset"
 
 
 class TestEnvIntTolerance:
@@ -179,21 +186,39 @@ class TestSettingsPrivacy:
 
 
 class TestDataDir:
-    """data_dir：QED_DATA_ROOT 覆盖，未设置时回退仓库 data/。"""
+    """data_dir（ADR 0009）：唯一事实源 `QED_DATA_ROOT`；缺配、仓内留档区、目录不存在均拒绝启动。"""
 
     def test_data_root_var_wins_over_default(self, isolated, monkeypatch):
-        monkeypatch.setenv("QED_DATA_ROOT", str(isolated / "dataset-root"))
+        target = isolated / "dataset-root"
+        target.mkdir()
+        monkeypatch.setenv("QED_DATA_ROOT", str(target))
 
-        assert load_settings().data_dir == isolated / "dataset-root"
+        assert load_settings().data_dir == target
 
-    def test_default_is_repo_data(self, isolated):
-        assert load_settings().data_dir == REPO_ROOT / "data"
+    def test_missing_data_root_raises(self, isolated, monkeypatch):
+        """缺 `QED_DATA_ROOT` 即报错：无仓内静默回退（Q1 裁决 = 直接报错）。"""
+        monkeypatch.delenv("QED_DATA_ROOT", raising=False)
+
+        with pytest.raises(DataRootError, match="QED_DATA_ROOT"):
+            load_settings()
+
+    def test_nonexistent_data_root_raises(self, isolated, monkeypatch):
+        """目录不存在即报错：不自动创建（决定 1；自动创建会把 `.env` 手误变成真实目录）。"""
+        monkeypatch.setenv("QED_DATA_ROOT", str(isolated / "does-not-exist"))
+
+        with pytest.raises(DataRootError, match="QED_DATA_ROOT"):
+            load_settings()
+
+    def test_repo_data_dir_is_rejected(self, isolated):
+        """仓内 `data/` 永久不是数据根：配置成它同样拒绝（决定 2，留档区单一身份）。"""
+        with pytest.raises(DataRootError, match="QED_DATA_ROOT"):
+            load_settings(data_dir=REPO_ROOT / "data")
 
     def test_retired_flow_var_is_ignored(self, isolated, monkeypatch):
-        """AXIOM_FLOW_DATA_DIR 已删除（配置简化）：设置旧键不生效，数据根只认 QED_DATA_ROOT。"""
+        """AXIOM_FLOW_DATA_DIR 已删除（配置简化）：设置旧键不生效，数据根仍指夹具临时根。"""
         monkeypatch.setenv("AXIOM_FLOW_DATA_DIR", str(isolated / "flow"))
 
-        assert load_settings().data_dir == REPO_ROOT / "data"
+        assert load_settings().data_dir == isolated / "dataset"
 
 
 class TestEngineConfig:

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from axiom_flow.config import Settings
@@ -47,7 +49,7 @@ class TestResolveEngineName:
 
 class TestBuildEngine:
     def test_mineru_uses_model_url_and_timeout(self):
-        settings = Settings(ocr_model_url="http://127.0.0.1:5002", ocr_timeout=42)
+        settings = Settings(data_dir=Path(), ocr_model_url="http://127.0.0.1:5002", ocr_timeout=42)
         engine = build_engine("mineru", settings)
         assert isinstance(engine, MinerUEngine)
         assert engine.base_url == "http://127.0.0.1:5002"
@@ -55,4 +57,4 @@ class TestBuildEngine:
 
     def test_unimplemented_name_raises(self):
         with pytest.raises(EngineSelectionError, match="尚未实现"):
-            build_engine("qwen-vl", Settings())
+            build_engine("qwen-vl", Settings(data_dir=Path()))

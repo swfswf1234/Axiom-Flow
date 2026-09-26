@@ -12,8 +12,10 @@ from axiom_flow.ingest import (
     book_dir_for,
     build_manifest,
     ingest_book,
+    is_transient_name,
     link_pages_into,
     resolve_source_pdf,
+    scan_transient_residue,
     seed_version_from,
     version_dir_for,
     write_json,
@@ -40,6 +42,32 @@ def _source_pdf(tmp_path: Path, name: str = "source.pdf", pages: int = 3, text: 
     raw_dir.mkdir(parents=True, exist_ok=True)
     _make_pdf(raw_dir / name, pages=pages, text=text)
     return f"raw/math-advanced/math_analysis/{name}"
+
+
+class TestTransientResidueRecognition:
+    """PP-6 瞬态残留三式机械识别（PLAN-016 W5）：只读枚举、只告警不清理（Q3 裁决）。"""
+
+    def test_three_forms_recognized(self):
+        names = (".book.json.tmp-ab12cd34", ".b05.old-deadbeef", ".b05.tmp-0badf00d")
+
+        assert all(is_transient_name(name) for name in names)
+
+    def test_regular_and_plain_hidden_not_recognized(self):
+        for name in ("book.json", "p0001.md", "manifest.json", "chunks.json", ".notes"):
+            assert not is_transient_name(name)
+
+    def test_scan_finds_residue_skips_clean_files(self, tmp_path):
+        (tmp_path / "pages").mkdir()
+        (tmp_path / "pages" / ".p0001.md.tmp-cafe1234").write_text("x", encoding="utf-8")
+        (tmp_path / ".b05.tmp-0badf00d").mkdir()
+        (tmp_path / "book.json").write_text("{}", encoding="utf-8")
+
+        found = scan_transient_residue(tmp_path)
+
+        assert [path.name for path in found] == [".b05.tmp-0badf00d", ".p0001.md.tmp-cafe1234"]
+
+    def test_scan_missing_root_returns_empty(self, tmp_path):
+        assert scan_transient_residue(tmp_path / "absent") == []
 
 
 class TestIngestBook:

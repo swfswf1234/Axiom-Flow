@@ -26,6 +26,42 @@ _SEGMENT_RE = re.compile(SAFE_SEGMENT_PATTERN)
 #: 版本产物子树目录名：根清单必须排除它，否则每次解析都要重算全部历史版本。
 VERSIONS_DIRNAME = "versions"
 
+#: 瞬态残留识别式片段（PP-6 三式共用；正常路径 `finally` 即清，崩溃/被 kill 才会留下）：
+#: ① 原子写入临时件 `.<name>.tmp-<hex8>`　② 根视图交换垃圾 `.<book>.old-<hex8>`
+#: ③ ingest 兄弟暂存目录 `.<book_id>.tmp-<hex8>`。
+TRANSIENT_TMP_INFIX = ".tmp-"
+TRANSIENT_OLD_INFIX = ".old-"
+
+
+def is_transient_name(name: str) -> bool:
+    """机械识别式（PP-6）：名字含 `.tmp-` / `.old-` 即瞬态；正常路径恒被 `finally` 清掉。"""
+    return TRANSIENT_TMP_INFIX in name or TRANSIENT_OLD_INFIX in name
+
+
+def scan_transient_residue(root: Path | str) -> list[Path]:
+    """枚举 `root` 下的瞬态残留（只读；Q3 裁决：只告警不重清，重清归 PLAN-009 P2）。"""
+    base = Path(root)
+    if not base.is_dir():
+        return []
+    return sorted(path for path in base.rglob("*") if is_transient_name(path.name))
+
+
+def warn_transient_residue(root: Path | str, *, context: str) -> int:
+    """发现瞬态残留即按计数告警并返回数量（Q3：识别式 + 告警，不清理）。"""
+    residue = scan_transient_residue(root)
+    if not residue:
+        return 0
+    preview = ", ".join(path.name for path in residue[:5])
+    if len(residue) > 5:
+        preview += ", …"
+    logger.warning(
+        "%s：检出 %d 个瞬态残留（.tmp-/.old-，崩溃或被 kill 所致；只告警不清）：%s",
+        context,
+        len(residue),
+        preview,
+    )
+    return len(residue)
+
 
 def ensure_safe_segment(value: str, kind: str, *, allow_empty: bool = False) -> str:
     """单一路径段校验：schemas 层 422 之外的纵深防御（禁分隔符、`..`、隐藏段）。"""
@@ -148,7 +184,7 @@ def png_size(path: Path) -> tuple[int, int]:
 def atomic_write_text(path: Path, content: str) -> None:
     """文本原子写入：同目录临时文件 + `os.replace`。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex[:8]}")
+    tmp = path.with_name(f".{path.name}{TRANSIENT_TMP_INFIX}{uuid.uuid4().hex[:8]}")
     try:
         tmp.write_text(content, encoding="utf-8")
         os.replace(tmp, path)
@@ -159,7 +195,7 @@ def atomic_write_text(path: Path, content: str) -> None:
 def atomic_write_bytes(path: Path, content: bytes) -> None:
     """二进制原子写入：同目录临时文件 + `os.replace`。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex[:8]}")
+    tmp = path.with_name(f".{path.name}{TRANSIENT_TMP_INFIX}{uuid.uuid4().hex[:8]}")
     try:
         tmp.write_bytes(content)
         os.replace(tmp, path)

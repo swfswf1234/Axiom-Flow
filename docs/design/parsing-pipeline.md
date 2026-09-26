@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（全链路已实现并真机取证；日期化过程见 trackers/completed.md）
-最后更新：2026-09-23
+最后更新：2026-09-24
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_engines.py`、`tests/unit/test_normalize.py`、`tests/unit/test_chunking.py`、`tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)
@@ -186,9 +186,9 @@ flowchart LR
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | PP-3 | **页文件名只有一种格式**：`p<NNNN>.png` / `p<NNNN>.md` / `p<NNNN>.blocks.json`，`NNNN` = 页码 1 基四位零填充，由 ingest 首建，解析写入与 API 读取沿用同一格式 | 边界：版本内页图与根页图同名同内容 | `ingest/importer.py` 首建、`orchestrator/pipeline.py:_write_page_artifacts` 与 `api/main.py` 沿用 → `tests/unit/test_ingest.py` |
-| PP-4 | **原子落盘、无搬迁阶段**：任何产物写入都是「临时文件 → 校验 → 原子替换」，不留半成品；版本目录从**第一页产物写入起**就是目标目录 | 不存在「先写别处、成功末尾再搬」——那会与 PP-13 的页级持久化不变式冲突 | `ingest/artifacts.py` 原子写入 + `version_dir_for()` → `tests/unit/test_ingest.py` |
-| PP-5 | **数据根双闸：单段名 + 根内路径**：`domain_id`、`course_id`、`book_id`、`job_id` 必须是安全单段（拒绝 `/`、`..`、前导点与空串；`domain_id`/`course_id` 允许空表示未归属），违规在 schema 层 422；源 PDF 与全部落盘路径必须位于 `QED_DATA_ROOT` 之内（`resolve_source_pdf` 对绝对路径同样受限） | 写盘前经 `ingest/artifacts.ensure_within()` 纵深防御（符号链接与 `..` 归一化后仍受限）；数据根唯一事实源是 `config.load_settings().data_dir` | `ingest/artifacts.py:ensure_safe_segment/ensure_within`、`schemas.py` → `tests/unit/test_schemas.py`、`tests/unit/test_ingest.py` |
-| PP-6 | **不写数据根 `tmp/`**：引擎提交/轮询/取结果的全部中间产物只存在于内存（HTTP 响应字节 → 解析后的结构），因此 `tmp/axiom-flow/<job_id>/` 恒不应出现 | 该目录一旦存在即视为缺陷。曾按 v1 习惯把它记作「未实现的暂存目录」，属设计表述错误，后改判为本条的字面判据 | 无落盘中间产物（内存直解） → `tests/contract/test_api_v1_contract.py`（数据根只有 `raw/`+`parsed/`） |
+| PP-4 | **原子落盘、无搬迁阶段**：任何产物写入都是「临时文件 → 校验 → 原子替换」，不留半成品；版本目录从**第一页产物写入起**就是目标目录；崩溃/被 kill 留下的瞬态残留（`.tmp-`/`.old-` 三式）由 `warn_transient_residue` 在**启动期与管理面清除路径计数告警**（只告警不清；重清归版本就绪判据） | 不存在「先写别处、成功末尾再搬」——那会与 PP-13 的页级持久化不变式冲突 | `ingest/artifacts.py` 原子写入 + `version_dir_for()` + `is_transient_name`/`warn_transient_residue` → `tests/unit/test_ingest.py`（三式识别与扫描）、`tests/contract/test_api_v1_contract.py`（两路径告警） |
+| PP-5 | **数据根双闸：单段名 + 根内路径**：`domain_id`、`course_id`、`book_id`、`job_id` 必须是安全单段（拒绝 `/`、`..`、前导点与空串；`domain_id`/`course_id` 允许空表示未归属），违规在 schema 层 422；源 PDF 与全部落盘路径必须位于 `QED_DATA_ROOT` 之内（`resolve_source_pdf` 对绝对路径同样受限） | 写盘前经 `ingest/artifacts.ensure_within()` 纵深防御（符号链接与 `..` 归一化后仍受限）；数据根唯一事实源是 `config.load_settings().data_dir`，且它**必须显式配置**——缺 `QED_DATA_ROOT` 即启动期报错，不静默回退到仓内目录（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)），仓内 `data/` 是留档区不是数据根候选 | `ingest/artifacts.py:ensure_safe_segment/ensure_within`、`schemas.py` → `tests/unit/test_schemas.py`、`tests/unit/test_ingest.py` |
+| PP-6 | **不写数据根 `tmp/`，瞬态只有两种形态且用完即清**：引擎提交/轮询/取结果的全部中间产物只存在于内存（HTTP 响应字节 → 解析后的结构），本服务落在磁盘上的瞬态文件仅①产物同目录隐藏临时文件（`.<name>.tmp-<hex>`、交换垃圾 `.<book>.old-<hex>`）②ingest 的兄弟隐藏暂存目录（`.<book_id>.tmp-<hex>`），两者在 `finally` 里清理；因此数据根顶层恒只出现白名单四区，`tmp/axiom-flow/<job_id>/` 永不出现 | 该目录一旦存在即视为缺陷（曾按 v1 习惯把它记作「未实现的暂存目录」，属设计表述错误，根仓库已按实况删除该虚构约定）。瞬态以点开头，`manifest` 与读取端天然排除，故**崩溃或被 kill 导致的残留不改变产物语义**，但可用 `.tmp-`/`.old-` 前缀机械识别（已实现启动期与管理面清除路径的计数告警，见 `PP-4`）；残留的清理语义归版本就绪判据（`PP-4`） | `ingest/artifacts.py:atomic_write_text/atomic_write_bytes`、`ingest/importer.py:ingest_book/_swap_root_view` → `tests/contract/test_api_v1_contract.py`（数据根顶层只有 `raw/`+`parsed/`） |
 
 #### 版面块归一
 

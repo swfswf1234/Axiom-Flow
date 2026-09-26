@@ -18,7 +18,7 @@
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
 | `AXIOM_PORT` | 本服务监听端口 | `8902` |
-| `QED_DATA_ROOT` | 数据根：产物落 `parsed/`，源 PDF 读 `raw/` | `<workspace>/dataset` |
+| `QED_DATA_ROOT` | 数据根：产物落 `parsed/`，源 PDF 读 `raw/` | **必填**（无默认，缺配启动期报错，[ADR 0009](../adr/0009-data-root-must-be-explicit.md)） |
 | `QED_DB_*` | MySQL 连接（qed 库 af_* 表；`qed_test` 为测试库） | — |
 | `AXIOM_OCR_ENGINE` | 解析引擎：`mineru`（先落地）/ `paddleocr-vl` / `qwen-vl`（预留） | `mineru` |
 | `QED_OCR_MODEL_URL` | 图像槽位本地端点（MinerU 容器，`/health`） | `http://127.0.0.1:5002` |

@@ -1,7 +1,7 @@
 # 待做任务
 
 状态：Current
-最后更新：2026-09-24
+最后更新：2026-09-26
 
 本表是全部未关闭工作的统一导航，按「轮次 → 阶段」分节。本表只回答「做什么、为了什么目的、
 现在到哪/卡在哪」；日期化进度与证据一律写入承载计划（[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)）。
@@ -13,14 +13,20 @@
 根仓库 ARCH-025 轮（REQ-089 第一批 DeepTutor 对照调研）产出的优化项下沉本仓库承载，
 作为本仓库 1.0 版本任务登记。**本轮只立项登记，不排实施**：实施前置 = 产物重建（D 类窗口）+
 你的排期裁决；条目清单与判据见
-[PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)。
+[PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)。**推进顺序**：先 v0.1 侧收口与真机联调，再排本表条目；例外＝三项不依赖产物重建、可即刻推进的承接任务——REQ-095（根仓库 ADR 0018 入站确认包，只限文档与台账）、ARCH-034（本仓存储规范对齐实施，临时任务，回执后即可独立关闭）与 REQ-097（根侧解析产物根视图清理实施，承载 PLAN-017，不等 v1.0 排期）。
 
 | ID | 类别 | 优先级 | 状态 | 任务 | 关闭条件 | 证据/下一条件 |
 | --- | --- | --- | --- | --- | --- | --- |
-| ARCH-021 | 主线 | 中 | Open | V1.0 解析与知识库优化轮（聚合行）：解析产物易消费优化 + 知识库面（RAG 切片与检索）向本仓库 1.0 版本收敛 | PLAN-009 登记条目全部关闭且 V1.0 端到端验收通过 | 子行：ARCH-022/023、PLAN-009。登记来源＝根仓库 ARCH-025 滚动壳「REQ-089 第一批调研承接」节；本轮只登记不排期（用户裁决 2026-09-22） |
+| ARCH-021 | 主线 | 中 | Open | V1.0 解析与知识库优化轮（聚合行）：解析产物易消费优化 + 知识库面（RAG 切片与检索）向本仓库 1.0 版本收敛 | PLAN-009 条目全关、REQ-095 回执、ARCH-034 存储对齐关闭且 V1.0 端到端验收通过 | 子行：ARCH-022/023/034、REQ-095/097（临时承接）、PLAN-009/015/016/017。登记来源＝根仓库 ARCH-025 滚动壳「REQ-089 第一批调研承接」节；本轮只登记不排期（用户裁决 2026-09-22） |
 | ARCH-022 | 支线 | 中 | Open | 解析产物大模型易消费优化（P1 重跑判定签名、P2 manifest-last 就绪、P3 blocks 语义分诊 ledger） | P1~P3 实施带契约测试且全本复测通过 | 承载 ⇒ [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)；前置＝产物重建（D 类窗口）+ 用户排期裁决 |
 | ARCH-023 | 支线 | 中 | Open | 知识库面（R1 索引版本行增量、R2 块级知识单元 self_ref、R3 向量+BM25+RRF+rerank 检索配方、R4 数学感知切分；检索端点入 8902 契约） | R1~R4 实施带契约测试且根侧探索验证界面验收 | 承载 ⇒ [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md)；知识图谱暂不做（roadmap 预留） |
 | PLAN-009 | 主线 | 中 | Accepted | [V1.0 解析与知识库优化轮（v1-parsing-knowledge-optimization）](../plans/2026-09-22-v1-parsing-knowledge-optimization.md) | 登记条目全部关闭且 V1.0 形态交付 | 2026-09-22 登记（用户裁决下沉本仓库为 1.0 任务）；条目台账与目标形态见壳 |
+| REQ-095 | 支线 | 低 | Open | **请求接收（QED-Engine 根仓库）**——ADR 0018 数据根顶层白名单与元数据 JSON 岛禁止的承接确认包：A1~A4 逐条口径判定并回执，A5 插图消费链观察预留（不实施） | A1~A4 出书面判定并回执根仓库，`src`/`tests` 零改动 | C1~C7 判定取证已随 PLAN-016 落地，回执成文先缓（2026-09-26 裁决待口径确认）；判据见 [承接确认包](../plans/2026-09-24-adr0018-data-root-alignment-request.md) |
+| PLAN-015 | 主线 | 低 | Accepted | [ADR 0018 数据根治理承接确认包（adr0018-data-root-alignment-request）](../plans/2026-09-24-adr0018-data-root-alignment-request.md) | S1~S4 达成且根仓库回执成文 | 2026-09-24 立项（承接 REQ-095 入站）；A1~A4 判定取证随 PLAN-016 完成，回执正文先缓（2026-09-26 裁决待口径），A5 未触发 |
+| ARCH-034 | 支线 | 中 | In Progress | 存储规范对齐实施：数据根顶层白名单成文并加守护、写入面锁在 `parsed/`、去数据根静默回退、书目枚举改深度无关、瞬态残留定识别式 | S1~S7 达成（白名单与越界写守护转绿＋两形态枚举回归） | W1~W7 全部落地（守护先红后绿、变异复验 M1~M4、W7 清理经批执行并留指纹），门禁 537 passed + ruff clean；仅剩 W8 回执先缓；[存储规范对齐实施](../plans/2026-09-24-storage-convention-alignment.md) |
+| PLAN-016 | 主线 | 中 | In Progress | [存储规范对齐实施（storage-convention-alignment）](../plans/2026-09-24-storage-convention-alignment.md) | S1~S7 逐条判定达成并六步收口 | 2026-09-24 立项；Q1~Q4 已裁（Q4⇒ADR 0009），W1~W7 完成（W2/W3 判据追认、M4 裁不补、W7 指纹留档），W8 回执先缓；判据与偏差证据见壳 |
+| REQ-097 | 支线 | 中 | Open | **请求接收（QED-Engine 根仓库）**——解析产物根视图清理：根视图只留 `pages/*.png`、版本目录唯一正本、激活时删旧版本、book.json 改从 af_books 生成（R1~R5） | W1~W5（R1~R5）全实施且 S1~S5 通过，回执根仓库 REQ-097 | 2026-09-26 承接登记（请求文档已正规化为 PLAN-017 壳）；R1 Alembic 补列前置，W4 删除属 D 类需用户窗口批准；详见 [解析产物根视图清理实施（parsing-root-view-cleanup）](../plans/2026-09-26-parsing-root-view-cleanup-request.md) |
+| PLAN-017 | 主线 | 中 | Accepted | [解析产物根视图清理实施（parsing-root-view-cleanup）](../plans/2026-09-26-parsing-root-view-cleanup-request.md) | S1~S5 达成、W6 回执完成并六步收口 | 2026-09-26 立项（承接根仓库 REQ-097 请求；原请求文档正规化为本壳）；工作项、判据与边界见壳 |
 
 ## 长期任务
 

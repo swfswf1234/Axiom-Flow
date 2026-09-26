@@ -67,7 +67,8 @@ Windows 文件系统大小写不敏感，历史文档曾写作 `qed_env`，与�
   mineru-api 容器（5002）后重试；首次请求含 vLLM warmup（约 1 分钟）。
 - **配置语境（2026-09-17 简化）**：Axiom-Flow 只做「模型 API 调用 + 预处理/后处理」，配置
   三段式（服务 / 数据与库 / 解析引擎）；服务脚本无 `--mode`，配置由 `config.py` 向上走查
-  `.env` 自读（`AXIOM_PORT`、`QED_DATA_ROOT`、`QED_DB_*`、`AXIOM_OCR_ENGINE`、
+  `.env` 自读（`AXIOM_PORT`、`QED_DATA_ROOT`【**必填**：缺配、指向仓内 `data/` 或目录不存在
+  即启动期报错，ADR 0009】、`QED_DB_*`、`AXIOM_OCR_ENGINE`、
   `QED_OCR_MODEL_URL`、`AXIOM_OCR_TIMEOUT`、`AXIOM_PARSE_WINDOW_SIZE`）。
 - **解析超时**：全本按 `AXIOM_PARSE_WINDOW_SIZE`（默认 56 页/块）**串行分块**提交，超时读
   `AXIOM_OCR_TIMEOUT`（默认 600s）且**每次调用独立计**，故整本挂钟上限 = 块数 × 600s、单块失败只损失

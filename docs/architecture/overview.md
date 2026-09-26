@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（v2 拓扑与 8902 服务面已落地并真机取证）
-最后更新：2026-09-23
+最后更新：2026-09-24
 关联代码：`src/axiom_flow/api/main.py`（应用装配与生命周期）、`src/axiom_flow/config.py`（端口、数据根、引擎地址）、`scripts/axiom_flow_service.py`（8902 唯一启停入口）
 关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -107,6 +107,17 @@ flowchart TB
 
 ### 数据边界与产物布局
 
+数据根顶层是**白名单登记制**（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）：顶层只允许
+下列目录，白名单之外一律为野生区，发现即登记处置；条目的增删权限在根仓库 ADR 0018，本仓库不自行
+扩张。本服务在该骨架里的位置是**唯一写入 `parsed/`**。
+
+<!-- data-root-whitelist:start -->
+- `raw/` — 源 PDF 只读输入区（QED-Tracker 写入，本服务只读不写）
+- `tmp/` — 临时区（**本服务不写**，见 `PP-6`）
+- `parsed/` — 解析产物区（**本服务唯一写入区**）
+- `backups/` — D 类数据操作的备份留痕例外区
+<!-- data-root-whitelist:end -->
+
 ```text
 <QED_DATA_ROOT>/
 ├── raw/<domain_id>/<course_id>/*.pdf          # 源 PDF，只读、不复制
@@ -118,6 +129,15 @@ flowchart TB
         ├── pages/…  manifest.json  chunks.json
 ```
 
+> 上图只展开本服务读写的两区（`raw/` 只读、`parsed/` 唯一写入）；白名单里的 `tmp/` 与
+> `backups/` 不在产物布局内，本服务不写它们（`PP-6`）。
+
+- **数据根必须显式配置**：`QED_DATA_ROOT` 缺失即在启动期报错，不静默回退到仓库内目录
+  （[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）。仓内 `data/` 是留档与备份区，**不是数据根
+  候选**，其**顶层**也不得出现 `book.json`/`pages/`/`versions/` 产物形状；合法例外是
+  `data/probes/<窗口>/root/`（显式声明的探针数据根，其内 `parsed/` 正当）。
+- **写入与清除同域**：产物路径一律经 `ingest/artifacts.py` 的两个构造器生成（自带 `parsed/`
+  前缀与单段名校验），清除作用域同样限 `parsed/` 子树（[api.md](api.md) 管理端点节）。
 - 路径唯一格式与原子落盘判据是 [parsing-pipeline.md 的 `PP-3`/`PP-4`](../design/parsing-pipeline.md)；
   「哪一版生效」的唯一事实源是 `af_books.active_job_id`，切版＝单列 UPDATE，不搬文件（`PP-14`/`PP-15`）。
 - 全部落盘路径必须位于数据根之内，`domain_id`/`course_id`/`book_id`/`job_id` 必须是安全单段（`PP-5`）。

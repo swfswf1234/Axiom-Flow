@@ -1,6 +1,8 @@
 """统一配置（三段式：服务 / 数据与数据库 / 解析引擎）。
 
 读取优先级：真实环境变量 > 自身 `.env` > 父目录 `.env`（向上走查）> 内置最小默认值。
+**数据根 `QED_DATA_ROOT` 无默认值**：缺配、指向仓内 `data/`、或目录不存在时 `load_settings()`
+在启动期抛 `DataRootError` 拒绝起服，不静默回退（ADR 0009，Q1 裁决＝直接报错）。
 本服务只做「模型 API 调用 + 预处理/后处理」：模型生命周期与调参归 QED-Engine（8900），
 配置只保留必要参数与本地模型地址；服务启动不依赖 8900 与模型在线。
 
@@ -44,13 +46,21 @@ def _strip_env_comment(value: str) -> str:
     return _INLINE_COMMENT.sub("", value).strip()
 
 
-def _default_data_dir() -> Path:
-    """仓库内默认数据目录（无 `QED_DATA_ROOT` 时的兜底）。"""
+def _repo_archive_dir() -> Path:
+    """仓内留档与备份区（`data/`）：ADR 0009 决定 2，永久不作数据根，只作拒绝比较用。"""
     return Path(__file__).resolve().parents[2] / "data"
 
 
 class AdminConfigError(RuntimeError):
     """管理面启用却无 token：拒绝启动（ADR 0004 无静默兜底）。异常文本不含 token 值。"""
+
+
+class DataRootError(RuntimeError):
+    """数据根未配置或不可用：拒绝启动（ADR 0009 决定 1/2）。
+
+    缺 `QED_DATA_ROOT`、指向仓内留档区 `data/`、或目录不存在均属配置错误；
+    异常文本不含机密，必含变量名与推荐值（失败即可自助修复）。
+    """
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -71,7 +81,8 @@ def _to_bool(value: Any, default: bool = False) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    data_dir: Path = _default_data_dir()
+    #: 数据根：唯一事实源 `QED_DATA_ROOT`，无仓内默认值（ADR 0009），只经 `load_settings()` 校验注入。
+    data_dir: Path
     vision_model: str = "qwen-vl-plus"  # qwen-vl 云端档位身份（预留引擎，注释态配置）
     ocr_engine: str = "mineru"  # 解析引擎：mineru / paddleocr-vl / qwen-vl（后两者预留）
     ocr_model_url: str = "http://127.0.0.1:5002"  # 图像槽位本地端点（MinerU 容器，/health）
@@ -122,8 +133,8 @@ _ENV_MAP = {
     "QED_ADMIN_TOKEN": ("admin_token", str),
 }
 
-# 数据根键：根 .env 统一数据根（本仓库不再有私有覆盖键）。
-_DATA_DIR_KEYS = ("QED_DATA_ROOT",)
+# 数据根键：根 .env 统一数据根（本仓库不再有私有覆盖键）。无默认值，见 `_resolve_data_dir`。
+DATA_ROOT_ENV = "QED_DATA_ROOT"
 
 
 def _env_file_values(start: Path | None = None) -> dict[str, str]:
@@ -156,6 +167,32 @@ def _env_value(key: str) -> str:
     return os.environ.get(key) or _env_file_values().get(key) or ""
 
 
+def _resolve_data_dir(raw: str | Path | None) -> Path:
+    """数据根解析（ADR 0009 决定 1/2）：显式配置、不落仓内留档区、必须是既有目录。
+
+    不自动创建目录：创建会把 `.env` 手误路径变成真实目录、掩盖配置错误，与 fail-closed
+    纪律相悖；错误文案必含变量名与推荐值（失败即可自助修复）。
+    """
+    if raw is None or not str(raw).strip():
+        raise DataRootError(
+            f"缺少必填配置 {DATA_ROOT_ENV}（数据根）：无仓内默认值，"
+            "请设置环境变量或 .env，例如 QED_DATA_ROOT=<workspace>/dataset（ADR 0009）"
+        )
+    path = Path(str(raw).strip()).expanduser()
+    path = path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
+    if path == _repo_archive_dir().resolve():
+        raise DataRootError(
+            f"{DATA_ROOT_ENV} 不得指向仓内 data/：那是留档与备份区，"
+            "永久不是数据根（ADR 0009 决定 2）"
+        )
+    if not path.is_dir():
+        raise DataRootError(
+            f"{DATA_ROOT_ENV} 目录不存在或不是目录：{path}。"
+            f"请创建该目录或修正配置（不自动创建，ADR 0009 决定 1）"
+        )
+    return path
+
+
 def load_settings(**overrides: Any) -> Settings:
     file_values = _env_file_values()
     values: dict[str, Any] = {}
@@ -163,23 +200,16 @@ def load_settings(**overrides: Any) -> Settings:
         raw = os.environ.get(env_name) or file_values.get(env_name)
         if raw is not None:
             values[field_name] = converter(raw)
-    for env_name in _DATA_DIR_KEYS:
-        raw = os.environ.get(env_name) or file_values.get(env_name)
-        if raw:
-            values["data_dir"] = raw
-            break
-    values.update({key: value for key, value in overrides.items() if value is not None})
-    if "data_dir" in values:
-        values["data_dir"] = Path(values["data_dir"]).expanduser()
-    settings = replace(Settings(), **values)
-    data_dir = settings.data_dir
-    if not data_dir.is_absolute():
-        data_dir = (Path.cwd() / data_dir).resolve()
-    return replace(
-        settings,
-        data_dir=data_dir,
-        ocr_model_url=settings.ocr_model_url.rstrip("/"),
+    env_root = os.environ.get(DATA_ROOT_ENV) or file_values.get(DATA_ROOT_ENV)
+    override_root = overrides.get("data_dir")
+    values["data_dir"] = _resolve_data_dir(
+        override_root if override_root is not None else env_root
     )
+    values.update(
+        {key: value for key, value in overrides.items() if value is not None and key != "data_dir"}
+    )
+    settings = Settings(**values)
+    return replace(settings, ocr_model_url=settings.ocr_model_url.rstrip("/"))
 
 
 def llm_api_key() -> str:

@@ -2,7 +2,7 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-23
+最后更新：2026-09-26
 覆盖范围：`src/axiom_flow/` 全部受管包与模块、`scripts/` 与仓库级数据/评估目录；映射目标为
 `docs/architecture/` 契约正文与 `docs/design/` 三篇的守则条文
 
@@ -45,9 +45,9 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | 路径 | 层级 | 一句话职责 | 事实源（条文 / 固定文档小节） | 关联测试 |
 | --- | --- | --- | --- | --- |
 | `src/axiom_flow/api/` | 接口层 | 对外 `/api/v1` 路由，只做协议适配与读取作用域解析 | [api.md](api.md) 全文；`_read_scope` 唯一入口见 api.md「兼容与不可变规则」；PM-6、PM-10、PM-16 | `tests/contract/test_api_v1_contract.py` |
-| `src/axiom_flow/api/main.py` | 接口层 | 公共契约端点 + lifespan 启动期归一 | [api.md](api.md)「① 生命周期与健康」「② 数据查询」「③ 解析结果与 PDF 对照」；PM-12 | `tests/contract/test_api_v1_contract.py`、`tests/unit/test_orchestrator.py` |
-| `src/axiom_flow/api/admin.py` | 运维接口层 | 非公开管理面：`af_*` 四表行 + `parsed/` 产物一键清除 | [api.md](api.md)「非公开管理面」节（挂载/token/双确认/守卫次序/六条不变式）；PM-17 | `tests/contract/test_api_v1_contract.py`（`TestAdminPurgeEndpoint`） |
-| `src/axiom_flow/ingest/` | 预处理 | PDF 导入、页图渲染、`book.json`/manifest 原子落盘与版本目录播种 | PP-2、PP-3、PP-4、PP-5、PP-15、PP-16；[api.md](api.md) ingest 端点节 | `tests/unit/test_ingest.py` |
+| `src/axiom_flow/api/main.py` | 接口层 | 公共契约端点 + lifespan 启动期归一与瞬态残留告警 | [api.md](api.md)「① 生命周期与健康」「② 数据查询」「③ 解析结果与 PDF 对照」；PM-12；PP-4 | `tests/contract/test_api_v1_contract.py`、`tests/unit/test_orchestrator.py` |
+| `src/axiom_flow/api/admin.py` | 运维接口层 | 非公开管理面：`af_*` 四表行 + `parsed/` 产物一键清除 | [api.md](api.md)「非公开管理面」节（挂载/token/双确认/守卫次序/六条不变式）；PM-17；PP-4 | `tests/contract/test_api_v1_contract.py`（`TestAdminPurgeEndpoint`） |
+| `src/axiom_flow/ingest/` | 预处理 | PDF 导入、页图渲染、`book.json`/manifest 原子落盘与版本目录播种 | PP-2、PP-3、PP-4、PP-5、PP-15、PP-16；[api.md](api.md) ingest 端点节 | `tests/unit/test_ingest.py`、`tests/contract/test_storage_conventions_governance.py` |
 | `src/axiom_flow/orchestrator/` | 编排层 | 全本按窗口串行提交、逐页解析、失败语义、分块重建、af_* 回写、版本激活 | PP-11、PP-13、PP-14、PP-16、PP-17、PP-18；PM-8、PM-11、PM-12、PM-15；MI-12 | `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py`、`tests/smoke/test_live_mineru_chain.py` |
 | `src/axiom_flow/orchestrator/jobs.py` | 编排层 | 后台单 worker 队列与任务生命周期转发 | PM-8、PM-13；[api.md](api.md)「单占用与排队」 | `tests/unit/test_orchestrator.py` |
 | `src/axiom_flow/orchestrator/pipeline.py` | 编排层 | 一次解析版本的执行主体（窗口循环、页级持久化、终态判定） | PP-11、PP-13、PP-14、PP-18；PM-11、PM-15；MI-9 | `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py` |
@@ -57,7 +57,7 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | `src/axiom_flow/db/engine.py` | 持久层 | 双 Session 工厂（业务库 / 测试库）与连接参数装配 | [database-design.md](database-design.md)「边界」；ADR 0005 | `tests/integration/test_parse_persistence.py` |
 | `src/axiom_flow/migrations/` | 持久层 | Alembic 迁移（建表、解析版本布局、状态语义分列） | [database-design.md](database-design.md)「迁移序列」表 + 「边界」的无自动迁移约定 | `tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py` |
 | `src/axiom_flow/schemas.py` | 契约模型 | 统一格式与请求/响应的 Pydantic 单一事实源 | [api.md](api.md)「兼容承诺」；PP-7、PP-20；PM-8、PM-10 | `tests/unit/test_schemas.py` |
-| `src/axiom_flow/config.py` | 配置 | 三段式配置读取与 `.env` 走查（含管理面 fail-closed 校验） | MI-1；[model-integration.md](../design/model-integration.md)「配置键」表；PM-11 的超时/窗口键；[api.md](api.md)「非公开管理面」 | `tests/unit/test_config.py` |
+| `src/axiom_flow/config.py` | 配置 | 三段式配置读取、数据根 fail-closed 解析与 `.env` 走查（含管理面 fail-closed 校验） | MI-1；[model-integration.md](../design/model-integration.md)「配置键」表；PM-11 的超时/窗口键；[api.md](api.md)「非公开管理面」；ADR 0009；[operations.md](../guides/operations.md)「数据目录」 | `tests/unit/test_config.py`、`tests/contract/test_storage_conventions_governance.py` |
 
 ### 非受管配置
 
@@ -68,7 +68,7 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | `scripts/tmp/` | 真机窗口驱动与只读取证脚本（**已入库**，被运维手册按路径引用）
  | [operations.md](../guides/operations.md) runbook |
 | `alembic.ini` | Alembic CLI 入口（URL 解析见 `migrations/env.py`） | [database-design.md](database-design.md)「迁移序列」 |
-| `data/` | 仓库内兜底数据根（无 `QED_DATA_ROOT` 时；ignore、可再生） | [local-dev.md](../standards/local-dev.md) |
+| `data/` | 仓库内留档与备份区（`probes/` 窗口证据、`backups/` D 类留痕；**非数据根候选**，ignore、可再生） | [operations.md](../guides/operations.md)「数据目录」；[local-dev.md](../standards/local-dev.md) |
 | `evaluation/` | 评估专区（样本与报告，与主链路隔离） | [testing.md](../standards/testing.md) |
 | `model/`（根仓库） | 模型文件槽位，由根仓库 8900 管理，本仓库只读引用 | [model-integration.md](../design/model-integration.md) |
 
@@ -100,7 +100,8 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
   「关联测试」列里的测试文件真实存在（映射表指向不存在的回归面即失败）。
 - **来源**：模块划分自 ARCH-020 的 v2 重构（`PLAN-001`，已归档）；`versions/<job_id>/` 与
   `active_job_id` 作用域自 REQ-080（`PLAN-004`，已归档）；状态语义分列自 ADR 0007（`PLAN-006`，
-  已归档）；管理面清除行自 ARCH-024 / ARCH-026（`PLAN-010` / `PLAN-011`，已归档）；本轮形式改造
+  已归档）；管理面清除行自 ARCH-024 / ARCH-026（`PLAN-010` / `PLAN-011`，已归档）；数据根 fail-closed
+  与存储治理守护自 ADR 0009（`PLAN-016`，进行中）；本轮形式改造
   依据 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)（`PLAN-014`）。
 - **删→存于登记**：原「备注」列复述的行为判据全部回指既有条文，未新增事实：`_read_scope` 唯一
   入口 → PM-6 + api.md 兼容规则；`_page_total()` 枚举域 → api.md 页清单节「枚举域」；lifespan

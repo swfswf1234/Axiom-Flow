@@ -46,13 +46,25 @@
 
 ## 数据目录
 
+`<QED_DATA_ROOT>` 为**必填配置**（缺配、指向仓内 `data/` 或目录不存在即启动期报错，无仓内默认值，[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）。其顶层是白名单登记制（正文事实源在[系统概览](../architecture/overview.md)「数据边界与产物布局」节与根仓库 ADR 0018）：只允许 `raw/`、`tmp/`、`parsed/`、`backups/`，白名单外即野生区，发现即登记处置。**本服务只写 `parsed/`**。
+
 | 路径 | 内容 |
 | --- | --- |
 | `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/` | **根视图**：`book.json`、`pages/p<NNNN>.png`（150 DPI 页图正本，ingest 产物）、`manifest.json`；重新 ingest 只原子替换这三者 |
 | `…/<book_id>/versions/<job_id>/` | **一次解析任务 = 一个版本**（PLAN-004 / REQ-080）：`book.json`、`pages/p<NNNN>.{png,md,blocks.json}`、`chunks.json`、`manifest.json`；生效版本由 `af_books.active_job_id` 指认，页图为根视图页图的**硬链接**（同一页图在 N 个版本不重复占盘） |
 | `<QED_DATA_ROOT>/raw/<domain_id>/<course_id>/*.pdf` | 源书库（只读，QED-Tracker 写入；如 `math-advanced/math_analysis/`） |
+| `<QED_DATA_ROOT>/backups/` | D 类数据操作的备份留痕例外区（根仓库 ADR 0018）：命名 `YYYY-MM-DD-<任务标识>`，对应操作必须在本仓 todo/收口记录登记；本仓当前备份落**仓内** `data/backups/`（不在数据根内），沿用同一命名式；未来若把备份写进数据根必须改用本行路径 |
 | `<QED_DATA_ROOT>/tmp/` | **本服务不写**：引擎中间产物只在内存（[PP-6](../design/parsing-pipeline.md)），`tmp/axiom-flow/<job_id>/` 一旦存在即缺陷 |
-| `data/` | 仓库内探针与合成样本留档区（`data/probes/`，`.gitignore` 内不入版本库）；**不作数据根候选**，真实数据根唯一事实源是 `QED_DATA_ROOT` |
+| `data/` | 仓库内**留档与备份区**（`data/probes/` 真机窗口证据、`data/backups/` D 类备份留痕；`.gitignore` 内不入版本库）；**不是数据根候选**——缺 `QED_DATA_ROOT` 时服务启动期直接报错，无仓内静默回退（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）；区内不得出现 `book.json`/`pages/`/`versions/` 产物形状（v1 扁平布局残骸属野生区，见下方「留档区与瞬态核对步」）。**唯一例外**：`data/probes/<窗口>/root/` 是窗口脚本显式声明的**探针数据根**，其内 `parsed/` 正当 |
+
+**留档区与瞬态核对步**（发现即登记处置，勿随手删）：
+
+1. `data/` 不得出现产物形状（`book.json`/`pages/`/`versions/`），唯一例外 `data/probes/<窗口>/root/`
+   探针数据根——由 `tests/contract/test_storage_conventions_governance.py` 在默认门禁断言。
+2. 数据根 `tmp/axiom-flow/<job_id>/` 一旦存在即缺陷（PP-6 字面判据；治理条文里该目录只允许以
+   「禁止它」的语境出现，同守护文件按行断言）。
+3. 瞬态残留（名字含 `.tmp-`/`.old-`）：服务**启动期**与**管理面清除**都会计数告警（只告警不清理，
+   PP-4 / PP-6）；手动核对按同一识别式，重清归版本就绪判据（PLAN-009 P2）。
 
 产物只落 Windows 本地；WSL 不读写 Windows 文件系统（MinerU 容器不挂载 Windows 盘）。
 
