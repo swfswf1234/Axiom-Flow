@@ -3,7 +3,8 @@
 设计事实源：`docs/design/parsing-management.md`、`docs/architecture/database-design.md`。
 仓储只做数据访问；事务边界由调用方（orchestrator/api）控制，`flush` 后可读回同一 Session。
 作用域约束：`af_pages` 与 `af_block_edits` 的键都包含 `job_id`，因此**所有读写必须显式给出解析
-版本**——省略作用域会让一个版本的产物污染另一个版本的状态与人工编辑。
+版本**——省略作用域会让一个版本的产物污染另一个版本的状态与人工编辑。唯一的例外是
+`af_page_regions`（页级、无 `job_id`，ADR 0010 决定 1）：它的读写只按 `(book_id, page_no)` 作用域。
 """
 
 from __future__ import annotations
@@ -17,7 +18,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from axiom_flow.db.engine import utc_now
-from axiom_flow.db.models import LEGACY_JOB_ID, AfBlockEdit, AfBook, AfPage, AfParseJob
+from axiom_flow.db.models import (
+    LEGACY_JOB_ID,
+    AfBlockEdit,
+    AfBook,
+    AfPage,
+    AfPageRegion,
+    AfParseJob,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +80,56 @@ class PageStateRow:
     page_no: int
     status: str
     error: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegionIntent:
+    """一条页级结构意图（`af_page_regions` 的一行输入）。
+
+    几何由调用方（api 面）在**受理时生效版本**的产物上换算得到，仓储不参与锚定：把换算留在
+    仓储会让数据访问层依赖磁盘产物。
+    """
+
+    op: str
+    bbox: list[int] | None = None
+    anchor_bbox: list[int] | None = None
+    members: list[list[int]] | None = None
+    kind: str = ""
+    note: str = ""
+
+
+def _geometry_key(value: object) -> str:
+    """几何的稳定字符串形式：列表/元组与 int/float 的表示差异都不进入身份。"""
+    if value is None:
+        return "none"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_geometry_key(item) for item in value) + "]"
+    return f"{float(value):g}"  # type: ignore[arg-type]
+
+
+def region_identity(intent: RegionIntent) -> str:
+    """意图的身份几何：`add` 看自身框，`delete` 看锚，`merge` 看**成员集合**（顺序不参与）。
+
+    合并成员的数组序是阅读序而非身份——调换顺序仍是同一组合并，换 id 会让人工调整阅读序
+    变成「撤销旧意图 + 新建意图」。
+    """
+    if intent.op == "merge":
+        return "|".join(sorted(_geometry_key(member) for member in intent.members or []))
+    if intent.op == "delete":
+        return _geometry_key(intent.anchor_bbox)
+    return _geometry_key(intent.bbox)
+
+
+def region_id_for(book_id: str, page_no: int, intent: RegionIntent) -> str:
+    """区域主键：`rgn_<md5(book_id:page_no:op:身份几何)[:12]>`（确定性派生）。
+
+    确定性而非随机：重复提交同一组意图必须命中同一行，否则「全量声明即幂等」要靠客户端记住
+    服务端发过什么 id，两次并发提交还会各造一行。`kind`/`note` 有意不参与身份——改备注不是新意图。
+    """
+    digest = hashlib.md5(
+        f"{book_id}:{page_no}:{intent.op}:{region_identity(intent)}".encode()
+    ).hexdigest()
+    return f"rgn_{digest[:12]}"
 
 
 def edit_id_for(book_id: str, job_id: str, page_no: int, block_index: int) -> str:
@@ -494,6 +552,91 @@ class PageRepository:
     def delete_all(self) -> int:
         """管理面全项目清除原语：整表清空所有版本的页行（PLAN-010）。"""
         deleted = self.session.execute(delete(AfPage)).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+
+class RegionRepository:
+    """af_page_regions：页级人工结构意图（全量声明，缺席即撤销）。
+
+    作用域是 `(book_id, page_no)` 而**不含 `job_id`**：区域承载人的意图、跨解析版本存活，
+    因此本仓储没有「按版本读区域」的入口（ADR 0010 决定 1/2）。
+    """
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def list_for_page(self, book_id: str, page_no: int) -> list[AfPageRegion]:
+        stmt = (
+            select(AfPageRegion)
+            .where(AfPageRegion.book_id == book_id, AfPageRegion.page_no == page_no)
+            .order_by(AfPageRegion.region_id)
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_for_book(self, book_id: str) -> list[AfPageRegion]:
+        stmt = (
+            select(AfPageRegion)
+            .where(AfPageRegion.book_id == book_id)
+            .order_by(AfPageRegion.page_no, AfPageRegion.region_id)
+        )
+        return list(self.session.scalars(stmt))
+
+    def replace_page(
+        self, book_id: str, page_no: int, intents: Sequence[RegionIntent]
+    ) -> list[AfPageRegion]:
+        """把该页区域改写为声明的**全集**：新增/覆盖列出的意图，删除缺席的意图。
+
+        全量声明天然幂等（无需 undo 端点），因此一次调用必须同时做「写声明的」和「删缺席的」；
+        只写不删会让人工撤销静默失效，只删不写会把重复提交变成清空。
+        """
+        now = utc_now()
+        by_id: dict[str, RegionIntent] = {}
+        for intent in intents:
+            by_id[region_id_for(book_id, page_no, intent)] = intent
+        stmt = select(AfPageRegion).where(
+            AfPageRegion.book_id == book_id, AfPageRegion.page_no == page_no
+        )
+        for row in self.session.scalars(stmt):
+            if row.region_id not in by_id:
+                self.session.delete(row)
+        for region_id, intent in by_id.items():
+            row = self.session.get(AfPageRegion, (book_id, page_no, region_id))
+            if row is None:
+                row = AfPageRegion(
+                    book_id=book_id, page_no=page_no, region_id=region_id, created_at=now
+                )
+                self.session.add(row)
+            row.op = intent.op
+            row.bbox = intent.bbox
+            row.anchor_bbox = intent.anchor_bbox
+            row.members = intent.members
+            row.kind = intent.kind
+            row.note = intent.note[:1000]
+            row.updated_at = now
+        self.session.flush()
+        return self.list_for_page(book_id, page_no)
+
+    def delete_for_page(self, book_id: str, page_no: int) -> int:
+        deleted = self.session.execute(
+            delete(AfPageRegion).where(
+                AfPageRegion.book_id == book_id, AfPageRegion.page_no == page_no
+            )
+        ).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+    def delete_for_book(self, book_id: str) -> int:
+        """删书带走全部区域行：区域是页的输入，页不存在时留着会驱动一次指向空页的解析。"""
+        deleted = self.session.execute(
+            delete(AfPageRegion).where(AfPageRegion.book_id == book_id)
+        ).rowcount
+        self.session.flush()
+        return int(deleted or 0)
+
+    def delete_all(self) -> int:
+        """管理面全项目清除原语：整表清空人工区域（PLAN-020 S5 覆盖面的一分子）。"""
+        deleted = self.session.execute(delete(AfPageRegion)).rowcount
         self.session.flush()
         return int(deleted or 0)
 

@@ -88,6 +88,7 @@ class Settings:
     ocr_model_url: str = "http://127.0.0.1:5002"  # 图像槽位本地端点（MinerU 容器，/health）
     ocr_timeout: int = 600  # 单个解析块一次调用的超时秒数（见 `parse_window_size`）
     parse_window_size: int = 56  # 全本解析的每块页数（真机 W0 冻结，PLAN-007）
+    max_regions_per_page: int = 16  # 每页人工结构意图上限（ADR 0010 决定 6：每框一次提交，成本必须可见）
     db_host: str = "127.0.0.1"
     db_port: int = 3306
     db_name: str = "qed"
@@ -123,6 +124,7 @@ _ENV_MAP = {
     "QED_OCR_MODEL_URL": ("ocr_model_url", str),
     "AXIOM_OCR_TIMEOUT": ("ocr_timeout", partial(_to_int, default=600)),
     "AXIOM_PARSE_WINDOW_SIZE": ("parse_window_size", partial(_to_int, default=56)),
+    "AXIOM_MAX_REGIONS_PER_PAGE": ("max_regions_per_page", partial(_to_int, default=16)),
     "QED_DB_HOST": ("db_host", str),
     "QED_DB_PORT": ("db_port", partial(_to_int, default=3306)),
     "QED_DB_NAME": ("db_name", str),

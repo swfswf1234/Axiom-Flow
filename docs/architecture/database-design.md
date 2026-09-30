@@ -2,14 +2,15 @@
 
 设计状态：Accepted
 确认状态：已确认
-实现状态：Verified（af_* 表族与全部 af_* 迁移已落地，业务库与测试库均经真机验证）
-最后更新：2026-09-29
+实现状态：Verified（af_* 表族读写面与迁移双栈验证；新表 af_page_regions 的业务库迁移待执行）
+最后更新：2026-10-01
 关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
-关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py`、`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
+关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_page_regions.py`、`tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py`、`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
 [ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、
 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)、
-[ADR 0007](../adr/0007-parse-status-semantics.md)、根仓库
+[ADR 0007](../adr/0007-parse-status-semantics.md)、
+[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)（页级区域是解析输入）、根仓库
 [ADR 0003](https://github.com/QED-Engine/qed-engine/blob/main/docs/history/adr/v0.1/0003-shared-qed-database-independence.md)（共享 qed 库独立性例外）
 
 > 本篇回答唯一问题：**af_\* 表族各自存什么、列的语义是什么、结构如何演进**。
@@ -45,17 +46,25 @@
 | `af_parse_jobs` | 一次解析任务 = **一个解析版本**（目标页、状态、进度、源快照自证） | `job_id` | 任务生命周期（提交→终态） | [↓](#af_parse_jobs-列清单) |
 | `af_pages` | 一页**在某个解析版本内**的状态与质量信号 | (`book_id`, `job_id`, `page_no`) | 逐页持久化（产物写先于页行） | [↓](#af_pages-列清单) |
 | `af_block_edits` | 一次块级人工编辑（判定 / 备注 / 文字 / 范围），**绑定其所属解析版本** | (`book_id`, `job_id`, `page_no`, `block_index`) | 人工校验覆盖层 upsert | [↓](#af_block_edits-列清单) |
+| `af_page_regions` | 一页上人工声明的**一条结构意图**（新框 / 删块 / 并块），**跨版本存活** | (`book_id`, `page_no`, `region_id`) | 结构编辑端点全量声明（缺席即撤销） | [↓](#af_page_regions-列清单) |
 
 「哪一版生效」只看 `af_books.active_job_id`（`NULL` = 根视图 `legacy`）。页表与编辑表都以 `job_id`
 为作用域的一分子，因此同一页在不同版本可有各自状态、旧版本的人工编辑不会套到新版本上（块下标
 `block_index` 只在版本内有意义）。产物文件侧对应 `parsed/…/<book_id>/versions/<job_id>/`，判据见
 [parsing-pipeline.md](../design/parsing-pipeline.md)。
 
+`af_page_regions` 的作用域键**刻意不含 `job_id`**（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)
+决定 1）：人工框是**页解析的输入**，不是某一版结果上的覆盖层，所以「先画框后解析」与「换版后框
+仍在」都必须成立。它与 `af_block_edits` 语义正交——前者存人对页面结构的意图（跨版本），后者存人对
+**某一次解析结果**的判定（绑版本）；同一区域可以同时有意图行与编辑行，互不覆写。表族内无物理外键，
+按业务键关联（`book_id` → `af_books`，`(book_id, page_no)` 逻辑引用页）。
+
 ```mermaid
 erDiagram
     af_books ||--o{ af_parse_jobs : "book_id"
     af_parse_jobs ||--o{ af_pages : "job_id（版本作用域）"
     af_parse_jobs ||--o{ af_block_edits : "job_id（版本作用域）"
+    af_books ||--o{ af_page_regions : "book_id（页级，不含 job_id）"
     af_books {
         varchar book_id PK "同源 qt_books.book_id"
         varchar active_job_id "生效解析版本；NULL=根视图 legacy"
@@ -87,9 +96,18 @@ erDiagram
         int block_index UQ "仅在该版本内有意义"
         varchar verdict
     }
+    af_page_regions {
+        varchar book_id PK
+        int page_no PK
+        varchar region_id PK "服务端按几何派生，跨版本不变"
+        varchar op "add/delete/merge"
+        json bbox "op=add：人工框"
+        json anchor_bbox "op=delete：受理时生效版本的几何快照"
+        json members "op=merge：成员列表，数组序即阅读序"
+    }
 ```
 
-ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下面四张列清单表**（与 ORM 由守护对账）。
+ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下面每张表的列清单表**（与 ORM 由守护对账）。
 
 ### af_books 列清单
 
@@ -206,6 +224,33 @@ ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下�
 归一化规则一变，同页下标含义就变，跨版本共用位置等于把人工核对结论套到另一版产物上。仓储一律按
 唯一键 upsert/查询，不重算摘要，因此迁移前的旧编辑（`edit_id` 不含 `job_id`）升级后仍可达。
 
+### af_page_regions 列清单
+
+| 列 | 类型 | 可空 | 键 | 语义 |
+| --- | --- | --- | --- | --- |
+| `book_id` | VARCHAR(100) | 否 | PK | → `af_books.book_id`，「哪本书」 |
+| `page_no` | INT | 否 | PK | 1 基页码，页码域按 `af_books.page_count` 在受理前判 |
+| `region_id` | VARCHAR(64) | 否 | PK | 区域稳定身份 `rgn_<md5(book_id:page_no:op:身份几何)[:12]>`，**跨版本不变**，响应回给根侧作长期定位键 |
+| `op` | VARCHAR(16) | 否 | i | 意图三值：`add`（人工新框）/ `delete`（删某块）/ `merge`（并多块） |
+| `bbox` | JSON | 是 | — | `op=add` 必填：人工框 `[x0,y0,x1,y1]`，原页图像素、左上原点（与产物块同一坐标系，不引入第二套坐标约定） |
+| `anchor_bbox` | JSON | 是 | — | `op=delete` 必填：操作对象块在**受理时生效版本**产物中的几何快照（重解析后按 IoU 重新命中） |
+| `members` | JSON | 是 | — | `op=merge` 必填：参与合并块的几何快照列表，**数组序即阅读序**（合并文本按此拼接） |
+| `kind` | VARCHAR(24) | 否 | — | 区域用途提示（属性路线，**不扩 `BlockType` 枚举**）；空串 = 未提示 |
+| `note` | VARCHAR(1000) | 否 | — | 人工备注，供校验现场留话 |
+| `created_at` | DATETIME | 否 | — | 首次受理时刻 |
+| `updated_at` | DATETIME | 否 | — | 最近一次全量声明刷新时刻 |
+
+索引：`ix_af_page_regions_page(book_id, page_no, op)`。**无 `job_id` 列**是设计不变式（区域是解析
+输入，见 [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 1），由守护断言钉住。
+
+**区域表语义**：`region_id` 确定性派生而非随机发放——重复提交同一组意图必须命中同一行，否则
+「全量声明即幂等」要靠客户端记住服务端发过什么 id，两次并发提交还会各造一行。身份几何只看
+`op` 决定性的那一份：`add` 看自身框、`delete` 看锚、`merge` 看**成员集合**（数组序不参与身份，
+改判阅读序仍是同一个合并）；`kind`/`note` 有意不参与——改备注不是新意图。合并成员的快照**唯一**
+落在 `members`，不另存并集列（同一事实两处存必漂移）。行只在三种情形消失：全量声明中缺席（缺席
+即撤销）、删书或管理面清除、且**不随版本更替删除**；其余任何路径删它判为缺陷。页码因重新 ingest
+而收缩时，越界区域行可见保留、不静默删。
+
 ### 迁移序列
 
 | 迁移 | 结构变化 | 存量处置判据 |
@@ -214,10 +259,13 @@ ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下�
 | `20260920_0002` | 解析版本布局：`af_books.active_job_id`、`af_parse_jobs.source_sha256`/`page_count`、`af_pages` 主键与 `af_block_edits` 唯一键纳入 `job_id`、`engine` 去掉死默认值 | 页行与编辑行按「一本书只有一个 job → 回填该 job；否则回填哨兵 `legacy`」定作用域；**不把存量产物搬进 `versions/`**，`active_job_id` 保持 `NULL`；主键/唯一键走「建新表 + 拷贝 + 改名」，同一份 DDL 兼容 SQLite 与 MySQL |
 | `20260921_0001` | 状态语义分列：`af_books.last_parse_result`、`af_parse_jobs.failed_pages` | 旧终态值从 `parse_status` **平移一次**、进度统一归 `pending`、`failed_pages` 回填 `[]`；**不改写历史 job 状态**（回填等于伪造历史）。JSON 列走「加可空 → 回填 → 收紧 NOT NULL」以避开 MySQL 不支持 JSON 字面量 DEFAULT |
 | `20260926_0001` | ingest 元数据：`af_books.ingested_at`（纯加列） | **不回填**：存量行 `NULL` 如实表示「本列规则确立之前 ingest」，不猜值；源文件指纹复用既有 `sha256` 列，不新增重复的 ingest 指纹列（偏差登记在承载计划） |
+| `20260926_0002` | 新表 `af_page_regions`（页级结构意图，`op`/`kind`/`note` 带 DDL 默认值） | 无存量（新表）；**不触碰其余 `af_*` 表**，降级即 `drop_index` + `drop_table`，人工意图行随之消失属显式有损操作 |
 
-结构现状 = head 迁移之后的形状，也就是上面四张列清单表。业务库 `qed` 已升到 head；测试库
-`qed_test` 由集成夹具每次从 base 重建到 head，因此新迁移的 MySQL DDL 在门禁里就被真实执行一次。
-迁移的运维执行步骤与备份要求是操作事实源，见 [operations.md](../guides/operations.md)。
+结构现状 = head 迁移之后的形状，也就是上面的各张列清单表。业务库 `qed` 的 head 停在
+`20260926_0001`，`20260926_0002` 属 D 类窗口动作（备份 → 用户批准 → `alembic upgrade`），**尚未在
+业务库执行**；测试库 `qed_test` 由集成夹具每次从 base 重建到 head，因此新迁移的 MySQL DDL 在门禁里
+就被真实执行一次。迁移的运维执行步骤与备份要求是操作事实源，见
+[operations.md](../guides/operations.md)。
 
 ### 凭据与敏感字段
 
@@ -239,13 +287,20 @@ ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下�
 - **管理面清除是 DML-only 例外**：`af_*` 表族行都在清除范围内（含任务行），但**无 DDL、无
   `DROP DATABASE`**——共享库里另有其他项目的表；默认不挂载、须管理 token 与逐字确认，作用域内有
   活动态任务时拒绝执行。`af_books` 行同样可清：书目是同步来的快照，可经同步重建，不是持久资产。
+- **表张数不是散文事实**：`AF_TABLES`（`db/models.py`）是表族登记的唯一口径，清除模型元组、将删
+  行计数字段、集成夹具的 DROP 白名单全部由它派生，因此「漏改一处删除面」这类漂移在守护层即红
+  （`tests/unit/test_db_table_family_governance.py`）。加表的改动面＝`AF_TABLES` + 本篇表清单与
+  列清单 + [ADR 0005](../adr/0005-mysql-integration-test-isolation.md) 白名单逐名枚举 + 一个迁移。
+- **无生效版本时写入面拒绝**：`af_page_regions` 的删除/合并意图要锚在生效版本产物的几何上，根视图
+  存量没有可锚的块，因此结构声明在无生效版本时整体拒绝而不是猜一个位置（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)
+  决定 7）；区域行本身跨版本存活，激活新版本不会带走它。
 - **外部故障不传导**：8901 离线只影响同步动作，不影响本表读取。读取面**纯 DB 驱动**：
   `af_books` 为空即空列表 / 404，不回落文件系统 `book.json`（根视图只剩 `pages/p*.png`，元数据
   唯一事实源是本表）。
 
 ## 验证与追溯
 
-- **结构对账守护**：`tests/contract/test_fixed_document_form.py` 把本篇四张列清单表与
+- **结构对账守护**：`tests/contract/test_fixed_document_form.py` 把本篇每张表的列清单与
   `src/axiom_flow/db/models.py` 的 SQLAlchemy 表定义双向比对（列名集合、可空、主键/唯一键标记），
   因此本篇不可能声明一个 ORM 里不存在的列，也不可能漏掉 ORM 新增的列。
 - **迁移守护**：`tests/unit/test_db_migrations.py`——SQLite 临时库上升降级可重复、主键与唯一键形状、

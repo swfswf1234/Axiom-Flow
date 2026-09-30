@@ -6,7 +6,9 @@
 `20260921_0001`（PLAN-006 / ADR 0007）守护进度与结局分列：书目新增 `last_parse_result`、
 任务新增 `failed_pages`，存量只平移不改写历史 job 状态；
 `20260926_0001`（PLAN-017 / REQ-097）守护 `af_books.ingested_at` 纯加列：存量不回填（NULL =
-「本轮规则之前 ingest」），降级干净删列。
+「本轮规则之前 ingest」），降级干净删列；
+`20260926_0002`（PLAN-018 W2 / ADR 0010）守护 `af_page_regions`：页级三列主键、**无
+`job_id`**、显式索引名，降级只带走该表且不动其余 `af_*` 表。
 """
 
 from __future__ import annotations
@@ -18,8 +20,11 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
+from axiom_flow.db.models import AF_TABLES as _AF_TABLE_REGISTRY
+
 ROOT = Path(__file__).resolve().parents[2]
-AF_TABLES = {"af_books", "af_parse_jobs", "af_pages", "af_block_edits"}
+#: 表名集合从 ORM 派生，不再本地硬编码（PLAN-020 S2：加表只改 `AF_TABLES`，升降级往返自动覆盖新表）。
+AF_TABLES = {table.name for table in _AF_TABLE_REGISTRY}
 REVISION_0001 = "20260917_0001"
 REVISION_0002 = "20260920_0002"
 LEGACY_JOB_ID = "legacy"
@@ -420,3 +425,63 @@ def test_downgrade_0004_drops_ingested_at(tmp_path):
 
     inspector = inspect(create_engine(url))
     assert "ingested_at" in {column["name"] for column in inspector.get_columns("af_books")}
+
+
+# ---------- 20260926_0002：页级区域表（PLAN-018 W2 / ADR 0010） ----------
+
+REVISION_PAGE_REGIONS = "20260926_0002"
+REVISION_HEAD_BEFORE_REGIONS = "20260926_0001"
+
+
+def test_upgrade_0005_creates_page_regions_without_job_id(tmp_path):
+    """`af_page_regions` 按页级建：主键三列、**无 `job_id`**，索引显式命名（PLAN-020 评审壳的列清单口径）。"""
+    config, url = _config(tmp_path)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(url))
+    assert "af_page_regions" in inspector.get_table_names()
+    with create_engine(url).connect() as conn:
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == (
+            REVISION_PAGE_REGIONS
+        ), "区域表迁移接在 20260926_0001 之后成为现 head"
+    columns = {column["name"] for column in inspector.get_columns("af_page_regions")}
+    assert columns == {
+        "book_id",
+        "page_no",
+        "region_id",
+        "op",
+        "bbox",
+        "anchor_bbox",
+        "members",
+        "kind",
+        "note",
+        "created_at",
+        "updated_at",
+    }, f"列集合与 database-design.md 列清单漂移：{sorted(columns)}"
+    assert "job_id" not in columns, "区域是页级解析输入，不是版本内覆盖层（ADR 0010 决定 1）"
+    assert set(inspector.get_pk_constraint("af_page_regions")["constrained_columns"]) == {
+        "book_id",
+        "page_no",
+        "region_id",
+    }
+    indexed = {item["name"]: item["column_names"] for item in inspector.get_indexes("af_page_regions")}
+    assert indexed.get("ix_af_page_regions_page") == ["book_id", "page_no", "op"], indexed
+
+
+def test_page_regions_downgrade_is_clean_and_repeatable(tmp_path):
+    """降级只带走 `af_page_regions`（其余表与列不动）；升回来后可重复。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, "head")
+
+    command.downgrade(config, REVISION_HEAD_BEFORE_REGIONS)
+
+    inspector = inspect(create_engine(url))
+    assert "af_page_regions" not in inspector.get_table_names()
+    retained = {t.name for t in _AF_TABLE_REGISTRY} - {"af_page_regions"}
+    assert retained <= set(inspector.get_table_names())
+    assert "ingested_at" in {column["name"] for column in inspector.get_columns("af_books")}
+
+    command.upgrade(config, "head")
+
+    assert "af_page_regions" in inspect(create_engine(url)).get_table_names()

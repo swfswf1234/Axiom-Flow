@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pymupdf
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -31,11 +33,19 @@ from axiom_flow.ingest import ingest_book
 from axiom_flow.orchestrator import pipeline, run_parse_job
 from axiom_flow.schemas import BlocksPage
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 BOOK_ID = "w3b05"
 DOMAIN_ID = "math-advanced"
 COURSE_ID = "math_analysis"
 SOURCE_FILE = f"raw/{DOMAIN_ID}/{COURSE_ID}/book.pdf"
 JOB_ID = "job-w3"
+
+
+def _head_revision() -> str:
+    """迁移脚本目录的当前 head（不写死序号：夹具漏跑最新迁移才是这里要抓的漂移）。"""
+    script = ScriptDirectory.from_config(Config(str(REPO_ROOT / "alembic.ini")))
+    return str(script.get_current_head())
 
 
 def _make_pdf(path: Path, pages: int) -> Path:
@@ -179,7 +189,7 @@ class TestIsolationBoundary:
         assert "alembic_version" in found
         with store.connect() as conn:
             revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert revision == "20260926_0001", "集成面必须跑在当前 head 上"
+        assert revision == _head_revision(), "集成面必须跑在当前 head 上"
 
 
 class TestCommitBoundary:

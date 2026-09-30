@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（v2 拓扑与 8902 服务面已落地并真机取证）
-最后更新：2026-09-24
+最后更新：2026-10-01
 关联代码：`src/axiom_flow/api/main.py`（应用装配与生命周期）、`src/axiom_flow/config.py`（端口、数据根、引擎地址）、`scripts/axiom_flow_service.py`（8902 唯一启停入口）
 关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -47,8 +47,8 @@ Axiom-Flow 是 QED-Engine 的**后端解析组件**：把 PDF 教材完整解析
 - **文档与架构纪元＝v2**（推倒重来后的新序列，[ADR 0001](../adr/0001-v2-exploration-direction.md)；
   v1 资料整体在 `docs/history/v1-20260814/`，只解释背景，不覆盖当前设计）。纪元是**文档与决策
   序列**，不随产品版本改写，因此不出现在文档标题里。
-- **产品版本＝v0.1**（跑通完整服务），登记在 [ADR 索引](../adr/index.md)；版本切换由用户确认，
-  当前版本的已交付/未交付判据见本篇「能力矩阵」，逐任务进度只在
+- **产品版本＝v1.0（解析与知识库优化轮）**，登记在 [ADR 索引](../adr/index.md)；版本切换由用户确认，
+  v0.1 的已交付/未交付判据见本篇「能力矩阵（v0.1）」（交付基线，随版本留档），逐任务进度只在
   [`trackers/project-status.md`](../trackers/project-status.md)。
 - **包版本与 HTTP 自报版本**是第三个独立坐标（`pyproject.toml` 与 `axiom_flow.__version__`，
   经 FastAPI 的 `version` 字段自报），与上面两者都不等价；三者关系变化时须同步
@@ -156,11 +156,11 @@ flowchart TB
   新增调参开关（[model-integration.md 的 `MI-15`](../design/model-integration.md)）。
 - **数据边界**：源 PDF 只读；产物落 `QED_DATA_ROOT/parsed/`，目录布局沿用根仓库 dataset 约定
   （只链接不复制）。
-- **元数据入 DB**：书目 / 任务 / 页状态 / 人工编辑落 `qed` 库 `af_*` 表族
+- **元数据入 DB**：书目 / 任务 / 页状态 / 人工编辑 / 页级结构意图落 `qed` 库 `af_*` 表族
   （[database-design.md](database-design.md)），产物正本在文件系统，DB 不存大字段。
 - **WSL 只经 HTTP**：容器不挂载 Windows 盘，产物一律由 Windows 编排层落盘。
 - **测试隔离**：默认测试不访问公网、不调用外部模型服务、不写运行数据库；MySQL 层只在显式 opt-in
-  时启用，且只用 `qed_test` 内本方自有的四张表（[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)）。
+  时启用，且只用 `qed_test` 内本方自有的 `af_*` 表族（[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)）。
 
 ### 能力矩阵（v0.1）
 
@@ -174,6 +174,7 @@ flowchart TB
 | 状态语义（结局三态、进度/结局分列、启动期归一） | 已交付 | [ADR 0007](../adr/0007-parse-status-semantics.md)、`PM-8`~`PM-15` |
 | 只读对照数据供给（清单 / 逐页状态 / 页图 / 分块 / 版本 / 作业列表） | 已交付 | [api.md](api.md) ③ 类 |
 | 块级人工编辑落库与回显 | 已交付 | `PM-3`、`PM-5` |
+| 页级结构意图声明落库（人工框 / 删块 / 并块，跨版本存活） | 已实现，待真机窗口 | [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[api.md](api.md) ③ 类 |
 | 非公开一键清除（先清后建） | 已交付 | [api.md 管理面节](api.md)、`PM-17` |
 | PaddleOCR-VL / qwen-vl 引擎槽位 | 预留，未实现 | `MI-11`~`MI-13` |
 | 8903 端到端联调与重建产物后的真机校验写入 | 未交付（等根侧排期与产物重建窗口） | 只在 `trackers/` 登记 |

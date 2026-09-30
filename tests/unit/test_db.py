@@ -58,13 +58,9 @@ def _row(book_id: str = "mathanalysis-b05", **overrides) -> BookSyncRow:
 class TestTableStructure:
     """表族结构：表名与设计（database-design.md）一致。"""
 
-    def test_four_tables_created(self, engine):
-        assert set(inspect(engine).get_table_names()) == {
-            "af_books",
-            "af_parse_jobs",
-            "af_pages",
-            "af_block_edits",
-        }
+    def test_table_family_created(self, engine):
+        """建表面：`create_all` 落出的表集合恰为 `AF_TABLES`（表集合不本地硬编码）。"""
+        assert set(inspect(engine).get_table_names()) == {table.name for table in AF_TABLES}
 
     def test_af_pages_composite_primary_key(self, engine):
         pk = inspect(engine).get_pk_constraint("af_pages")
@@ -75,11 +71,13 @@ class TestTableStructure:
         assert any(u["column_names"] == ["book_id", "job_id", "page_no", "block_index"] for u in uniques)
 
     def test_af_tables_registry_matches(self):
+        """逐名 pin（改名/增表须同批改本行与 `database-design.md` 表清单）：集合形状由上条派生守护。"""
         assert {table.name for table in AF_TABLES} == {
             "af_books",
             "af_parse_jobs",
             "af_pages",
             "af_block_edits",
+            "af_page_regions",
         }
 
 

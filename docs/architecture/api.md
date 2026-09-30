@@ -2,11 +2,11 @@
 
 设计状态：Accepted
 确认状态：已确认
-实现状态：Verified（8902 全部对外端点已实现并真机取证）
-最后更新：2026-09-26
+实现状态：Verified（既有端点真机取证；结构声明端点 Implemented，待真机窗口）
+最后更新：2026-10-01
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/api/admin.py`（管理面）、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/contract/test_fixed_document_form.py`、`tests/unit/test_service_scripts.py`
-关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)
+关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)
 
 ## 目的与边界
 
@@ -83,7 +83,7 @@ sequenceDiagram
 | --- | --- | --- |
 | ① 生命周期与健康 | `GET /api/v1/health` + `scripts/axiom_flow_service.py {start\|stop\|restart\|status}` | 服务启停/重启/健康检测 |
 | ② 数据查询（af_*） | `GET /api/v1/books`、`GET/PATCH/DELETE /api/v1/books/{book_id}`、`POST /api/v1/books/sync`、`POST /api/v1/books/{book_id}/ingest` | 书目同步与 CRUD、页图 ingest |
-| ③ 解析结果与 PDF 对照 | `GET /api/v1/books/{book_id}/manifest`、`/pages`、`/pages/{page_no}`、`/pages/{page_no}/image`、`PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit`、`GET /api/v1/books/{book_id}/pages/{page_no}/edits`、`GET /api/v1/books/{book_id}/chunks`、`GET /api/v1/books/{book_id}/versions`、`POST /api/v1/parse-jobs`、`GET /api/v1/parse-jobs`、`GET /api/v1/parse-jobs/{job_id}` | 解析进度、逐页状态清单、对照供给、块编辑、分块预览、版本列举、作业列表 |
+| ③ 解析结果与 PDF 对照 | `GET /api/v1/books/{book_id}/manifest`、`/pages`、`/pages/{page_no}`、`/pages/{page_no}/image`、`PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit`、`PUT /api/v1/books/{book_id}/pages/{page_no}/structure`、`GET /api/v1/books/{book_id}/pages/{page_no}/edits`、`GET /api/v1/books/{book_id}/chunks`、`GET /api/v1/books/{book_id}/versions`、`POST /api/v1/parse-jobs`、`GET /api/v1/parse-jobs`、`GET /api/v1/parse-jobs/{job_id}` | 解析进度、逐页状态清单、对照供给、块编辑、结构意图声明、分块预览、版本列举、作业列表 |
 | ④ 未来 RAG·知识图谱预留 | 无端点，见「④ 未来 RAG·知识图谱预留（无端点）」节 | Milvus 接入占位、检索端点设计 |
 | 非公开管理面（不进上表四类） | `POST /api/v1/admin/purge` | 一键清除，默认不挂载，8900/8903 不得透传 |
 
@@ -99,7 +99,7 @@ sequenceDiagram
 | `GET` | `/api/v1/books` | ② | 书目列表（含进度与生效版本指针） |
 | `GET` | `/api/v1/books/{book_id}` | ② | 单书目元数据 |
 | `PATCH` | `/api/v1/books/{book_id}` | ② | 修改本仓库自有字段 |
-| `DELETE` | `/api/v1/books/{book_id}` | ② | 删书（页行/编辑行全版本，可选连产物） |
+| `DELETE` | `/api/v1/books/{book_id}` | ② | 删书（页行/编辑行/区域行全版本，可选连产物） |
 | `POST` | `/api/v1/books/sync` | ② | 批量同步已验证书目（upsert 幂等） |
 | `POST` | `/api/v1/books/{book_id}/ingest` | ② | 渲染页图（根视图唯一产物 `pages/`，不调模型；元数据回写 `af_books`） |
 | `GET` | `/api/v1/books/{book_id}/manifest` | ③ | 生效版本产物清单（路径 + 大小 + SHA-256） |
@@ -107,12 +107,14 @@ sequenceDiagram
 | `GET` | `/api/v1/books/{book_id}/pages/{page_no}` | ③ | 单页完整数据（对照主数据源） |
 | `GET` | `/api/v1/books/{book_id}/pages/{page_no}/image` | ③ | 原页高清图（`image/png`） |
 | `PUT` | `/api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit` | ③ | 块编辑 upsert（绑定生效版本） |
+| `PUT` | `/api/v1/books/{book_id}/pages/{page_no}/structure` | ③ | 页结构意图全量声明（人工框 / 删块 / 并块，跨版本存活） |
 | `GET` | `/api/v1/books/{book_id}/pages/{page_no}/edits` | ③ | 页内编辑列表（生效版本作用域） |
 | `GET` | `/api/v1/books/{book_id}/versions` | ③ | 解析版本列举（只读） |
 | `GET` | `/api/v1/books/{book_id}/chunks` | ③ | 分块预览（派生数据，不入库） |
 | `POST` | `/api/v1/parse-jobs` | ③ | 提交解析任务（202 受理） |
 | `GET` | `/api/v1/parse-jobs` | ③ | 解析作业列表（过滤 + 分页） |
 | `GET` | `/api/v1/parse-jobs/{job_id}` | ③ | 单任务状态与进度 |
+
 ### ① 生命周期与健康
 
 #### GET /api/v1/health
@@ -150,7 +152,8 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
 
 ### ② 数据查询（af_*）
 
-af_* 表（`af_books` / `af_parse_jobs` / `af_pages` / `af_block_edits`）为 Axiom-Flow 私有（qed 库
+af_* 表（`af_books` / `af_parse_jobs` / `af_pages` / `af_block_edits` / `af_page_regions`）为 Axiom-Flow
+私有（qed 库
 af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](database-design.md)。
 `GET /api/v1/books`、`GET /api/v1/books/{book_id}` 读 `af_books`，读取面**纯 DB 驱动**：空表即
 空列表 / 404，**不回落文件系统 `book.json`**（根视图只保留 `pages/p*.png`，`af_books` 是书目元数据
@@ -176,10 +179,11 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 
 #### DELETE /api/v1/books/{book_id}
 
-删除 `af_books` 行、该书**全部解析版本**的 `af_pages` 页行与 `af_block_edits` 编辑行（`?purge=true`
-时同时删除 `parsed/` 产物目录，含 `versions/` 子树）。`af_parse_jobs` 历史行保留为审计，不随删除
-清理——**唯一例外**是管理面 `POST /api/v1/admin/purge`（见「非公开管理面」节，它按书目或全项目
-连任务行一起清除）。**错误：** 404。
+删除 `af_books` 行、该书**全部解析版本**的 `af_pages` 页行与 `af_block_edits` 编辑行，以及该书的
+`af_page_regions` 区域行（人工框随书消失：区域行只在「全量声明缺席 / 删书与清除」两种情形下消失，
+版本更替不删它）；`?purge=true` 时同时删除 `parsed/` 产物目录，含 `versions/` 子树。
+`af_parse_jobs` 历史行保留为审计，不随删除清理——**唯一例外**是管理面 `POST /api/v1/admin/purge`
+（见「非公开管理面」节，它按书目或全项目连任务行一起清除）。**错误：** 404。
 
 #### POST /api/v1/books/sync
 
@@ -213,9 +217,11 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 ### ③ 解析结果与 PDF 对照
 
 本节端点以**生效解析版本**为读取作用域（`af_books.active_job_id` → `versions/<job_id>/`；
-NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/{index}/edit`）为 af_* 表族契约，
-**取代** 8900 现用的 `/review`（ok/bad）；8900 侧适配（`/review`→`/edit`、补 ingest/chunks 透传）
-归根仓库的请求承载（见「验证与追溯」的来源条）。
+NULL → 书目录根 = 根视图 legacy）。唯一的例外是结构声明端点（`PUT .../structure`）：它写的是
+**页级**人工意图，作用域不含版本（跨版本存活，[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)
+决定 1），只在把块下标换算成几何锚时读一次生效版本产物。块编辑端点（`PUT .../blocks/{index}/edit`）为
+af_* 表族契约，**取代** 8900 现用的 `/review`（ok/bad）；8900 侧适配（`/review`→`/edit`、补
+ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的来源条）。
 
 #### GET /api/v1/books/{book_id}/manifest
 
@@ -298,6 +304,44 @@ NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/
 请求：`{verdict?: "ok"|"bad", note?: string, corrected_text?: string, corrected_bbox?:
 [x0,y0,x1,y1]}`；响应：编辑记录（`EditRecord`，含 `job_id`）。编辑绑定其核对时的版本：块下标 `index`
 只在版本内有意义，换版本后旧编辑不自动套用。**错误：** 400 块下标越界 / 404。
+
+#### PUT /api/v1/books/{book_id}/pages/{page_no}/structure
+
+页结构意图**全量声明**（落 `af_page_regions`，**页级作用域、不绑解析版本**，
+[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 1）：新框（`add`）、删块（`delete`）、
+并块（`merge`）一次说清，**缺席即撤销**——本次未列出的意图行随之删除，所以重复提交同一组意图结果不变
+（幂等，不需要 undo 端点）。本端点不调模型服务：画框先于解析，模型不可用时也必须能声明意图。
+
+```json
+{
+  "adds": [[72, 900, 600, 1010]],
+  "deletes": [{"block_index": 1}],
+  "merges": [{"targets": [{"block_index": 0}, {"bbox": [600, 96, 1100, 210]}]}]
+}
+```
+
+三类键都可省略（= 空列表），请求体不接受未知字段。`deletes` 与 `merges[].targets` 用**三选一定位**：
+`block_index`（生效版本产物里的块下标）、`region_id`（上次响应给过的区域身份）或 `bbox`（直接给几何），
+**恰好给一项**——给多给少都拒绝，猜一个等于替人做结构决定。下标只在版本内有意义，因此服务端在
+**受理时生效版本**的产物上把它换算成几何锚（`anchor_bbox`/`members`）后才落库；重解析后的重新命中用的
+就是这份快照，下标 ↔ `region_id` 的翻译归本仓库。
+
+响应：`RegionRecord[]`（本页当前意图行，`region_id`/`op`/`bbox`/`anchor_bbox`/`members`/`kind`/`note`/
+`created_at`/`updated_at`）。`region_id` 由 `op` + 身份几何**确定性派生**：`add` 看自身框、`delete` 看锚、
+`merge` 看**成员集合**（数组序不参与身份——改判阅读序仍是同一个合并，`kind`/`note` 同理不算新意图），
+因此跨版本、跨请求稳定，根侧可长期持有。合并成员的快照唯一落在 `members`，不另存并集列。人工框几何与
+产物块同一坐标系（原页图像素、左上原点），不引入第二套坐标约定。区域投影视图（人工区域 + 生效版本块
+的服务端合并结果）是另一条**读语义**，`GET /api/v1/books/{book_id}/pages/{page_no}` 现状仍并列返回
+`blocks` 与 `edits`，本端点只承载写入面。
+
+**错误：** 404 书目不存在 / **页不存在**（`page_no` 小于 1 或超出 `af_books.page_count`，受理前判）/
+无生效解析版本（legacy 根视图无可锚定的块，故 add/delete/merge 一并拒绝，
+[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 7）；422 请求体形状违规（未知字段、
+`block_index < 0`）；400 意图条数超出每页上限（`AXIOM_MAX_REGIONS_PER_PAGE`，默认 16，判在落库前）、
+定位未恰好给一项、块下标越出产物、`region_id` 不存在于本页、`bbox` 形状非法（负坐标或 `x1≤x0`/`y1≤y0`）、
+合并成员少于 2。**所有拒绝都判在写入之前**，失败批次零落库。状态码归属与提交面不同：本端点是
+**结构意图的取值违规**（超上限归 400），[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 4
+给 `POST /api/v1/parse-jobs` 的框数上限定的是 422（该端点受理前判，防的是请求打到模型）。
 
 #### GET /api/v1/books/{book_id}/pages/{page_no}/edits
 
@@ -460,7 +504,7 @@ NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/
 | `scope` | object | 请求作用域原样回显 |
 | `dry_run` | bool | 本次是否为演练（`true` 时零删除） |
 | `targets` | str[] | 命中的书目录，**相对数据根**的路径（不含绝对路径与磁盘位置） |
-| `deleted` | object | `af_books`/`af_parse_jobs`/`af_pages`/`af_block_edits` 行数 + `directories` 目录数 |
+| `deleted` | object | `af_*` 表族逐表行数（键名即表名，与 `AF_TABLES` 同集合）+ `directories` 目录数 |
 | `failures` | str[] | 人类可读中文失败项（逐项列出删除失败的对象与后果）；**不含**凭据与绝对路径 |
 
 `dry_run:true` 时 `deleted` 是**将删计数**（枚举得到、未执行），`dry_run:false` 时是**已删计数**；
@@ -504,10 +548,11 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
 
 | 场景 | 状态码 |
 | --- | --- |
-| 参数非法（**块下标**越界、verdict 非枚举、引擎槽位未实现等） | 400 |
-| book / page / job / 产物不存在 | 404（中文 detail，如「书目不存在：{id}」） |
+| 参数非法（**块下标**越界、verdict 非枚举、引擎槽位未实现、结构意图定位违规〔三选一给多或给少 / `region_id` 不存在于本页 / `bbox` 形状非法 / 合并成员少于 2〕、结构声明**每页意图条数超上限**等） | 400 |
+| book / page / job / 产物不存在（含 `PUT …/structure` 的 `page_no` 小于 1 或越出 `af_books.page_count`，受理前判） | 404（中文 detail，如「书目不存在：{id}」「页不存在：{id} 共 {n} 页，请求第 {p} 页」） |
+| **无生效解析版本时声明结构意图** | 404 `无生效解析版本，拒绝结构操作：{book_id}`（legacy 根视图无可锚定的块，add/delete/merge 一并拒绝，ADR 0010 决定 7） |
 | **生效版本产物目录缺失** | 404 `生效版本产物缺失：{book_id} @ {job_id}`（指针所指版本目录被外部删除等；**不回落根视图**，ADR 0004 无自动兜底） |
-| 入参 schema 违规（安全路径段、引擎字面值、`file_path` 形态、**`pages` 页码越界**） | 422 |
+| 入参 schema 违规（安全路径段、引擎字面值、`file_path` 形态、**`pages` 页码越界**、未知字段） | 422 |
 | **列表端点**查询参数违规（`status` 不在六态内、`limit` 非 `1..200`、`offset` 为负、`book_id` 非法路径段） | 422 |
 | `GET /api/v1/parse-jobs?book_id=<不存在的书>` | **200 + 空 `jobs`**（列表过滤不判资源存在性；单本读取面仍是 404） |
 | 模型服务不可用（**提交期探活失败**，MinerU 未起等） | 503（提示经 8900 `/models/{slot}` 启停模型或检查 `QED_OCR_MODEL_URL`（5002））；**不创建任务行** |
@@ -573,6 +618,11 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
 - `TestAdminPurgeEndpoint`：未启用即 404 且 `/openapi.json` 不收录、fail-closed 启动、token 缺失/错值
   401、`dry_run` 缺省零删除、缺 `confirm` 400、在飞任务 409、作用域越界不落库、脏落点与在飞同时命中
   判 400（守卫次序）、磁盘失败保留库行、响应只给相对路径与计数；
+- `TestStructureEndpoint`：`add`/`delete`/`merge` 三类意图落库与几何锚换算（下标 → 锚逐字等于产物块
+  `bbox`，转译错一次即污染人工核对现场）、`region_id` 确定性派生（重复声明幂等、改判阅读序不换身份）、
+  作用域只作用于本页、legacy 一律 404 且 detail 指到原因、页码越界判 404（页不存在）、超每页上限判 400，
+  两者都判在写入前（零落库）、
+  定位三选一违规判 400、重复 ingest 与删书对人工框的保留/带走两向；
 - 手动冒烟：`python scripts/axiom_flow_service.py start --wait` → `GET /api/v1/health` 200 →
   `GET /api/v1/books` 返回书目 → `status` → `stop` → `status stopped`。
 

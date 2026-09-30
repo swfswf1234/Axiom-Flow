@@ -23,12 +23,20 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from axiom_flow.config import Settings
-from axiom_flow.db.models import AfBlockEdit, AfBook, AfPage, AfParseJob
+from axiom_flow.db.models import (
+    AF_TABLES,
+    AfBlockEdit,
+    AfBook,
+    AfPage,
+    AfPageRegion,
+    AfParseJob,
+)
 from axiom_flow.db.repositories import (
     BookRepository,
     EditRepository,
     PageRepository,
     ParseJobRepository,
+    RegionRepository,
 )
 from axiom_flow.ingest import warn_transient_residue
 from axiom_flow.schemas import AdminPurgeCounts, AdminPurgeIn, AdminPurgeOut, AdminPurgeScope
@@ -42,7 +50,11 @@ ADMIN_TOKEN_HEADER = "X-QED-Admin-Token"
 ACTIVE_JOB_STATUSES = ("queued", "running")
 # 书目录最深 = `parsed/<domain>/<course>/<book>`；更深的层属于版本目录，不遍历。
 _BOOK_DIR_MAX_DEPTH = 3
-_FOUR_TABLES = (AfBook, AfParseJob, AfPage, AfBlockEdit)
+# 删除面覆盖的 ORM 模型元组：判据守护要求其集合 ≡ `AF_TABLES`（加表只改这一处 + 仓储分支）。
+# 标识符刻意不带张数——带张数就是把「表族有几张」写进名字，加一张表即全仓改名。
+_AF_TABLE_MODELS = (AfBook, AfParseJob, AfPage, AfBlockEdit, AfPageRegion)
+#: 行数计数字段名 = 表名（唯一口径来自 `AF_TABLES`，不在本文件逐字写死表名）。
+_ROW_COUNT_FIELDS = tuple(tbl.name for tbl in AF_TABLES)
 
 
 class PurgeScopeError(ValueError):
@@ -115,13 +127,19 @@ def _all_book_dirs(data_root: Path) -> list[Path]:
 def _planned_counts(session: Session, book_ids: Sequence[str] | None) -> AdminPurgeCounts:
     """演练态的「将删计数」：与真删同一套作用域条件，否则清单数字不可信。"""
     counts = AdminPurgeCounts()
-    fields = ("af_books", "af_parse_jobs", "af_pages", "af_block_edits")
-    for model, field_name in zip(_FOUR_TABLES, fields, strict=True):
+    for model in _AF_TABLE_MODELS:
         stmt = select(func.count()).select_from(model)
         if book_ids is not None:
             stmt = stmt.where(model.book_id.in_(list(book_ids)))
-        setattr(counts, field_name, int(session.scalar(stmt) or 0))
+        setattr(counts, model.__table__.name, int(session.scalar(stmt) or 0))
     return counts
+
+
+def _merge_counts(target: AdminPurgeCounts, add: AdminPurgeCounts) -> None:
+    """把一次删除的行数并进总账；字段名按 `AF_TABLES` 派生，加表不必改本函数。"""
+    for name in _ROW_COUNT_FIELDS:
+        setattr(target, name, getattr(target, name) + getattr(add, name))
+    target.directories += add.directories
 
 
 def _delete_rows_for_book(session: Session, book_id: str) -> AdminPurgeCounts:
@@ -130,6 +148,7 @@ def _delete_rows_for_book(session: Session, book_id: str) -> AdminPurgeCounts:
     counts.af_parse_jobs = ParseJobRepository(session).delete_for_book(book_id)
     counts.af_pages = PageRepository(session).delete_for_book(book_id)
     counts.af_block_edits = EditRepository(session).delete_for_book(book_id)
+    counts.af_page_regions = RegionRepository(session).delete_for_book(book_id)
     return counts
 
 
@@ -139,6 +158,7 @@ def _delete_all_rows(session: Session) -> AdminPurgeCounts:
     counts.af_parse_jobs = ParseJobRepository(session).delete_all()
     counts.af_pages = PageRepository(session).delete_all()
     counts.af_block_edits = EditRepository(session).delete_all()
+    counts.af_page_regions = RegionRepository(session).delete_all()
     return counts
 
 
@@ -219,11 +239,7 @@ def purge_books(
         if failures:
             failures.append("全项目清除未完成：存在失败项，未执行全表扫尾（残行由下一次清除收掉）")
         else:
-            swept = _delete_all_rows(session)
-            counts.af_books += swept.af_books
-            counts.af_parse_jobs += swept.af_parse_jobs
-            counts.af_pages += swept.af_pages
-            counts.af_block_edits += swept.af_block_edits
+            _merge_counts(counts, _delete_all_rows(session))
     else:
         for book_id in book_ids:
             if book_id in blocked:
@@ -234,10 +250,7 @@ def purge_books(
                 log.exception("管理面清除：库行删除失败 %s", book_id)
                 failures.append(f"库行清除失败：{book_id}（产物目录已删，重跑本清除即可收掉残行）")
                 continue
-            counts.af_books += deleted.af_books
-            counts.af_parse_jobs += deleted.af_parse_jobs
-            counts.af_pages += deleted.af_pages
-            counts.af_block_edits += deleted.af_block_edits
+            _merge_counts(counts, deleted)
     session.commit()
     return AdminPurgeOut(
         scope=scope, dry_run=False, targets=targets, deleted=counts, failures=failures

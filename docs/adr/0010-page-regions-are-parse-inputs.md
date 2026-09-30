@@ -1,15 +1,18 @@
 # ADR 0010：页框图是页级解析输入，不是版本内覆盖层
 
 状态：Accepted
-最后更新：2026-09-29
-关联代码：`src/axiom_flow/db/models.py`（`AfBlockEdit` 唯一键，待新增 `af_page_regions`）、
-`src/axiom_flow/db/repositories.py`（`EditRepository`）、`src/axiom_flow/api/main.py`
-（`edit_block` 的下标校验、`get_page` 的读取作用域）、`src/axiom_flow/engines/base.py`
+最后更新：2026-10-01
+关联代码：`src/axiom_flow/db/models.py`（`AfPageRegion` 与 `AfBlockEdit` 唯一键）、
+`src/axiom_flow/db/repositories.py`（`RegionRepository`/`RegionIntent`/`region_id_for`、
+`EditRepository`）、`src/axiom_flow/migrations/versions/20260926_0002_page_regions.py`、
+`src/axiom_flow/api/main.py`（`put_structure` 的三选一定位与几何锚换算、`edit_block` 的下标校验、
+`get_page` 的读取作用域）、`src/axiom_flow/engines/base.py`
 （`ParseEngine.parse_page`）、`src/axiom_flow/engines/mineru.py`（`_submit`/`_run` 请求字段）、
 `src/axiom_flow/orchestrator/pipeline.py`（页级解析路径）
-关联测试：待实施带（`tests/contract/test_api_v1_contract.py` 区域视图与结构编辑用例、
-`tests/unit/test_orchestrator.py` 每框一次调用与退化路径、
-`tests/contract/test_storage_conventions_governance.py` 的落盘面复用）
+关联测试：`tests/unit/test_db_page_regions.py`（表不变式与仓储）、
+`tests/contract/test_api_v1_contract.py`（`TestStructureEndpoint` 写入面；区域读视图投影待实施）、
+`tests/unit/test_orchestrator.py`（每框一次调用与退化路径，待实施）、
+`tests/contract/test_storage_conventions_governance.py` 的落盘面复用
 
 ## 背景
 

@@ -1,7 +1,7 @@
 # 待做任务
 
 状态：Current
-最后更新：2026-09-30
+最后更新：2026-10-01
 
 本表是全部未关闭工作的**导航表**，按「轮次 → 阶段」分节；每行只回答三件事——**做什么**（任务）、
 **完成时系统长什么样**（成功标准）、**去哪读**（承载）。三列的口径正文（列界、禁词、唯一指针判据、
@@ -26,11 +26,11 @@ D 类窗口」随 ARCH-011 关闭而解除（判据重复，终态与操作规�
 | ID | 类别 | 优先级 | 状态 | 任务 | 成功标准 | 承载 |
 | --- | --- | --- | --- | --- | --- | --- |
 | ARCH-021 | 主线 | 中 | Open | V1.0 解析与知识库优化轮（聚合行）：把产物从「解析得出来」升级为「大模型易消费＋可检索」。解析面＝P1 重跑判定签名与受理门、P2 就绪口径 DB 单源、P3 块策略版本化＋逐块分诊 ledger（ARCH-022）；知识库面＝R1 索引版本行增量、R2 块级知识单元与 `self_ref` 锚点、R3 向量＋BM25＋RRF＋可选 rerank 检索配方、R4 数学感知切分（ARCH-023）；交付含 8902 检索端点契约 | ARCH-022/023 两支线终态齐备，且 b05 全链路检索命中、命中可回溯到页与块 | [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md) |
-| ARCH-022 | 支线 | 中 | Open | 解析产物增量可判与可信消费（P 系列）：P1 `parser_signature` 只哈希影响块产物的参数，`(源哈希, 签名)` 双全等默认不重跑、`force` 才重跑，并配只读重跑清单与过时清点；P2 就绪以 DB 元数据为唯一事实源（manifest 降为完整性校验数据，不得作第二判据）；P3 `_TYPE_MAP` 与分块过滤规则版本化，未知字面值宁收不丢并落逐块 ledger | 双全等默认不重跑、`force` 才重跑；就绪只读 DB 判定；逐块分诊落 ledger 且未知字面值不丢 | [PLAN-019](../plans/2026-09-28-parse-artifact-trust.md) |
+| ARCH-022 | 支线 | 中 | In Progress | 解析产物增量可判与可信消费（P 系列）：P1 `parser_signature` 只哈希影响块产物的参数，`(源哈希, 签名)` 双全等默认不重跑、`force` 才重跑，配只读重跑清单与过时清点；P2 就绪、激活与续跑判据去文件系统（改读 `af_pages` 页行与生效指针，manifest 降为完整性数据）；P3 `_TYPE_MAP` 与分块过滤规则版本化，未知字面值收为兜底类型不丢并落页级 ledger | 双全等默认不重跑、`force` 才重跑；就绪与激活只凭 DB 页行与生效指针判定；未知字面值收为兜底类型并逐页落 ledger | [PLAN-019](../plans/2026-09-28-parse-artifact-trust.md) |
 | ARCH-023 | 支线 | 中 | Open | 知识库面（R 系列，8902 检索端点契约先行）：R1 索引版本行增量（换模型/换维度写新版本，旧版可读可回滚，同签名只追加不重建）；R2 块级知识单元＋`self_ref="blocks.json#/{index}"` 页与块序号锚点；R3 向量与 BM25 各取 2×top_k → RRF 融合 → 可选 CrossEncoder rerank，索引持久化且 top_k 按语料量 clamp；R4 数学感知切分（以 blocks 为切分单元、公式/定理块原子性，我方自研点）。R5 查询改写后置、R6 无 DB 存储与 GraphRAG 拍平拒绝 | 索引按签名增量写新版本可回滚；块级单元带 `self_ref` 页块锚点；向量＋BM25＋RRF 端点可检索且 top_k 随语料 clamp | [PLAN-009](../plans/2026-09-22-v1-parsing-knowledge-optimization.md) |
 | PLAN-009 | 主线 | 中 | Accepted | 做什么＝V1.0 条目登记与判定台账（PLAN-009 自承载）：P 系列解析面判定表、R1~R6 知识库面判定表、批量重建窗口的操作规程留档 | P 系列与 R 系列判定表条目全部落地：产物可检索、命中可回溯到页与块 | [V1.0 解析与知识库优化轮（v1-parsing-knowledge-optimization）](../plans/2026-09-22-v1-parsing-knowledge-optimization.md) |
-| PLAN-018 | 主线 | 中 | Accepted | **请求接收（QED-Engine 根仓库 REQ-099）**；做什么＝W2 建页级 `af_page_regions` 表＋删除/合并/新增区域 API → W1 逐框裁剪提交 `parse_page` 的区域驱动解析（框数上限＋受理前 422 门）→ W3 页数据回服务端投影的区域集合 → W8 每页人工确认门（确认态落 `af_pages`，chunk 只聚合已确认页）→ W7 未完成页可跳过或列清单 → W6 回执根仓库 REQ-099；W4 目录长线、W5 节题取证 | 按框重解析生效；区域可删/并/增并落 `af_page_regions`；每页人工确认后才进 chunk；未完成页可跳过或列清单 | [解析页区域驱动重解析与块结构编辑承接实施（parsing-region-edit）](../plans/2026-09-26-parsing-region-edit-typography-request.md) |
-| PLAN-019 | 主线 | 中 | Accepted | 做什么＝W2 `parser_signature` 加列迁移 → W3 重跑受理门 → W4 只读重跑清单端点 → W5 就绪以 DB 元数据为唯一事实源 → W6 块策略版本表＋逐块 ledger → W7 过时版本只读清点 → W8 文档晋升 → W9 真机窗口 | 签名相同不重跑、`force` 才重跑；就绪判定只读 DB；策略版本表与逐块 ledger 落盘；过时版本可只读清点 | [解析产物可信与增量重跑实施（parse-artifact-trust）](../plans/2026-09-28-parse-artifact-trust.md) |
+| PLAN-018 | 主线 | 中 | In Progress | **请求接收（QED-Engine 根仓库 REQ-099）**；进度＝**W2 已落地**：`af_page_regions`（页级、不绑 `job_id`）+ 迁移 `20260926_0002` + `PUT …/structure` 结构意图全量声明（超每页上限判 400、页越界判 404，都判在写入前；业务库迁移待 D 类窗口），偏差登记见壳「W2 落地结论与偏差登记」节，当前在 W1/W3；做什么＝W2 建页级 `af_page_regions` 表＋删除/合并/新增区域 API → W1 逐框裁剪提交 `parse_page` 的区域驱动解析（框数上限＋受理前 422 门）→ W3 页数据回服务端投影的区域集合 → W8 每页人工确认门（确认态落 `af_pages`，chunk 只聚合已确认页）→ W7 未完成页可跳过或列清单 → W6 回执根仓库 REQ-099；W4 目录长线、W5 节题取证 | 按框重解析生效；区域可删/并/增并落 `af_page_regions`；每页人工确认后才进 chunk；未完成页可跳过或列清单 | [解析页区域驱动重解析与块结构编辑承接实施（parsing-region-edit）](../plans/2026-09-26-parsing-region-edit-typography-request.md) |
+| PLAN-019 | 主线 | 中 | In Progress | 做什么＝W2 `parser_signature` 加列迁移 → W3 重跑受理门 → W4 只读重跑清单端点 → W5 就绪以 DB 元数据为唯一事实源 → W6 块策略版本表＋逐块 ledger → W7 过时版本只读清点 → W8 文档晋升 → W9 真机窗口 | 签名相同不重跑、`force` 才重跑；就绪判定只读 DB；策略版本表与逐块 ledger 落盘；过时版本可只读清点 | [解析产物可信与增量重跑实施（parse-artifact-trust）](../plans/2026-09-28-parse-artifact-trust.md) |
 
 ## 长期任务
 

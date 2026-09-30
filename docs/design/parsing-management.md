@@ -3,10 +3,10 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（af_* 表族 + 8902 管理与对照端点已实现并真机取证）
-最后更新：2026-09-26
+最后更新：2026-10-01
 关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`（含 `api/admin.py` 管理面）、`src/axiom_flow/orchestrator/`
-关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`
-关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)
+关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`、`tests/unit/test_db_page_regions.py`
+关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)
 
 > **本篇回答的唯一问题**：一本书从「已验证书目」到「人工校验完成」，**状态如何流转、职责落在哪一段**。
 > 产物怎么生成与什么算合格归 [parsing-pipeline.md](parsing-pipeline.md)；如何与模型服务对话归
@@ -74,6 +74,8 @@ sequenceDiagram
     FE->>GW: 对照（GET /books/{id}/pages/{no}）
     FE->>GW: 编辑（PUT /books/{id}/pages/{no}/blocks/{index}/edit）
     GW->>AX: upsert af_block_edits
+    FE->>GW: 结构声明（PUT /books/{id}/pages/{no}/structure）
+    GW->>AX: 全量声明 af_page_regions（页级、缺席即撤销，不调模型）
     FE->>GW: 分块预览（GET /books/{id}/chunks）
     GW->>AX: chunks.json（可带参数重算）
 ```
@@ -128,8 +130,14 @@ sequenceDiagram
 
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
-| PM-16 | **重复 ingest 只作废根视图**：`POST /books/{id}/ingest` 成功后把 `active_job_id` 置 `NULL`、`parse_status` 归 `pending`、`pages_done` 归零，并只清 `job_id='legacy'` 的页行；历史版本作用域的页行、任务行与编辑行全部保留 | 为什么：源文件已变，旧版本不再对生效端点可见，但不会被伪造或删除。例外：`last_parse_result` **不回置**——ingest 不是任务 | `db/repositories.py:PageRepository.reset_legacy`、`api/main.py` ingest 路由 → `tests/contract/test_api_v1_contract.py` |
-| PM-17 | **删除保审计，一键清除是唯一例外**：`DELETE /books/{id}` 删书目行与该书**所有版本**的页行/编辑行（`?purge=true` 连产物目录一并删），但 `af_parse_jobs` 历史行保留为审计线索 | 例外：唯一能删任务行的路径是 `POST /api/v1/admin/purge`（见下「管理面」），它存在的目的正是回到干净状态 | `api/admin.py`、`db/repositories.py:ParseJobRepository.delete_for_book` → `tests/contract/test_api_v1_contract.py` |
+| PM-16 | **重复 ingest 只作废根视图**：`POST /books/{id}/ingest` 成功后把 `active_job_id` 置 `NULL`、`parse_status` 归 `pending`、`pages_done` 归零，并只清 `job_id='legacy'` 的页行；历史版本作用域的页行、任务行、编辑行与**页级区域意图（PM-18）**全部保留 | 为什么：源文件已变，旧版本不再对生效端点可见，但不会被伪造或删除。区域意图是页级输入，换源文件后仍要按锚重新命中，故不随 ingest 作废。例外：`last_parse_result` **不回置**——ingest 不是任务 | `db/repositories.py:PageRepository.reset_legacy`、`api/main.py` ingest 路由 → `tests/contract/test_api_v1_contract.py`（重复 ingest 保留人工框） |
+| PM-17 | **删除保审计，一键清除是唯一例外**：`DELETE /books/{id}` 删书目行与该书**所有版本**的页行/编辑行**及页级区域意图行**（`?purge=true` 连产物目录一并删），但 `af_parse_jobs` 历史行保留为审计线索 | 为什么：书目行是区域的唯一归属键，书没了锚就不存在，留着只会指向不存在的页。例外：唯一能删任务行的路径是 `POST /api/v1/admin/purge`（见下「管理面」），它存在的目的正是回到干净状态 | `api/admin.py`、`db/repositories.py:ParseJobRepository.delete_for_book`、`RegionRepository.delete_for_book` → `tests/contract/test_api_v1_contract.py`（删书带走人工框）、`tests/unit/test_db_page_regions.py` |
+
+#### 页级结构意图
+
+| 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
+| --- | --- | --- | --- |
+| PM-18 | **结构意图是页级解析输入，不是版本内覆盖层**：人工框 / 删块 / 并块落 `af_page_regions`（作用域 `(book_id, page_no)`，PK **不含 `job_id`**），写入是**全量声明**＝缺席即撤销，故重复提交同一组意图幂等、无需 undo 端点；受理时把三选一（下标 / `region_id` / 框）统一换算成**几何锚**才落库 | 为什么与 PM-5 分列：编辑结论绑版本（换版不自动套用），结构意图跨版本存活（换版后按锚重新命中）。下标 ↔ `region_id` 的翻译归本仓（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)）；画框先于解析 ⇒ 本端点不调模型服务；投影合并的读语义与重锚定阈值另批落，本篇不复制形状（事实源见文首指针） | `db/repositories.py:RegionRepository.replace_page`、`api/main.py:put_structure` → `tests/unit/test_db_page_regions.py`、`tests/contract/test_api_v1_contract.py::TestStructureEndpoint` |
 
 ### 端点语义（形状一律见 api.md）
 
@@ -145,6 +153,10 @@ sequenceDiagram
   （「齐备与否」是全集判据）。客户端只需实现一条判据：无产物或 `failed` ⇒ 需重解析。
 - **对照与编辑**（`GET /books/{id}/pages/{no}`、`PUT .../blocks/{index}/edit`、`GET .../edits`）：
   作用域恒等于生效版本；写入落到该 `job_id` 的编辑行（PM-5）。
+- **结构声明**（`PUT /books/{id}/pages/{no}/structure`）：画框先于解析，所以本端点**不调模型服务**——
+  模型离线时人工意图仍必须能落库；作用域是页级（PM-18），legacy 无生效版本时一律拒绝（无可锚定的块，
+  不回落根视图）。区域投影读语义（单页响应的 `regions`）与区域驱动提交不在本批：前者换版重命中规则
+  未定稿，后者要等管线侧每框一次调用成型。
 - **版本列举**（`GET /books/{id}/versions`）：**只读**；切换/回滚不提供写入端点（属既定契约缺口，
   不是遗漏），天然回滚方式是把 `active_job_id` 置回 `NULL`。
 - **分块预览**（`GET /books/{id}/chunks`、`GET /books/{id}/manifest`）：读生效版本的派生产物；
@@ -165,7 +177,8 @@ sequenceDiagram
 - **8900 离线** → 本仓库可经根仓库脚本手动启停模型并独立解析（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
 - **磁盘产物被外部删除** → 读取端**如实报错不回落**：生效版本目录缺失即 404，页行 `parsed` 而无产物
   在逐页清单里原样暴露。静默改判会让磁盘事故从台账上消失。
-- **错误码归属**：400 参数非法（版面块下标越界、引擎槽位未实现）；404 资源不存在**或生效版本产物缺失**；
+- **错误码归属**：400 参数非法（版面块下标越界、引擎槽位未实现、结构意图定位违规与每页意图条数超上限）；
+  404 资源不存在**或生效版本产物缺失**（结构声明里页码越出 `af_books.page_count` 按「页不存在」同码）；
   422 入参 schema 违规（含列表端点查询参数）；503 只属于提交期探活失败。逐行定义见
   [api.md 错误语义](../architecture/api.md)。
 
@@ -178,6 +191,10 @@ sequenceDiagram
 4. 只读端点结构与 schemas 一致、不泄漏磁盘绝对路径与凭据 → `tests/contract/test_api_v1_contract.py`。
 5. 端到端联调（8903 → 8900 → 8901/8902：同步 → ingest → 解析 → 对照 → 编辑 → 回显）与 8901/8902
    离线降级 → 需 8903 排期窗口，联调证据归根仓库侧（`docs/trackers/completed.md` 的对照/编辑两行）。
+6. 结构意图落库（PM-18）：同一页重复声明幂等、缺席即撤销、三选一定位换算成几何锚、legacy 拒绝一切
+   结构操作、超限与越界判在写入前 → `tests/unit/test_db_page_regions.py`、
+   `tests/contract/test_api_v1_contract.py::TestStructureEndpoint`（真机面：业务库迁移与 8903 画框
+   链路另批）。
 
 ## 追溯
 

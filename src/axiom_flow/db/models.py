@@ -138,4 +138,47 @@ class AfBlockEdit(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
-AF_TABLES = (AfBook.__table__, AfParseJob.__table__, AfPage.__table__, AfBlockEdit.__table__)
+class AfPageRegion(Base):
+    """af_page_regions：人工声明的**页级**结构意图（新框 / 删块 / 并块）。
+
+    主键不含 `job_id`（ADR 0010 决定 1）：区域是页解析的**输入**，必须跨版本存活，否则「改框再解析
+    块随框变化」与「删除不复活」不可达；与 `af_block_edits`（版本级人工判定）语义正交。
+    """
+
+    __tablename__ = "af_page_regions"
+    __table_args__ = (Index("ix_af_page_regions_page", "book_id", "page_no", "op"),)
+
+    book_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    page_no: Mapped[int] = mapped_column(Integer, primary_key=True)
+    region_id: Mapped[str] = mapped_column(
+        String(64),
+        primary_key=True,
+        comment="区域稳定身份（服务端按几何派生，跨版本不变；响应回给根侧长期定位）",
+    )
+    op: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="add", comment="add=人工新框 / delete=删块 / merge=并块"
+    )
+    bbox: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="op=add 必填：人工框几何（原页图像素）"
+    )
+    anchor_bbox: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="op=delete 必填：操作对象在受理时生效版本产物中的几何快照"
+    )
+    members: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, comment="op=merge 必填：参与合并的几何快照列表，数组序即阅读序"
+    )
+    kind: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="", comment="区域用途提示（属性路线，不扩 BlockType 枚举）"
+    )
+    note: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+AF_TABLES = (
+    AfBook.__table__,
+    AfParseJob.__table__,
+    AfPage.__table__,
+    AfBlockEdit.__table__,
+    AfPageRegion.__table__,
+)

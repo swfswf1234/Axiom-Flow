@@ -20,7 +20,14 @@ from sqlalchemy.pool import StaticPool
 
 from axiom_flow.api.main import create_app
 from axiom_flow.config import AdminConfigError, load_settings
-from axiom_flow.db.models import AfBlockEdit, AfBook, AfPage, AfParseJob, Base
+from axiom_flow.db.models import (
+    AF_TABLES,
+    AfBook,
+    AfPage,
+    AfPageRegion,
+    AfParseJob,
+    Base,
+)
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
@@ -29,6 +36,8 @@ from axiom_flow.db.repositories import (
     PageRepository,
     ParseJobRepository,
     ParseJobRow,
+    RegionIntent,
+    RegionRepository,
 )
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
 
@@ -132,6 +141,7 @@ def _build(
     engine_factory=None,
     book_pages: int = 2,
     parse_window_size: int | None = None,
+    max_regions_per_page: int | None = None,
     admin_enabled: bool = False,
     admin_token: str | None = "",
 ):
@@ -149,6 +159,7 @@ def _build(
         data_dir=data_root,
         ocr_engine=ocr_engine,
         parse_window_size=parse_window_size,
+        max_regions_per_page=max_regions_per_page,
         admin_enabled=admin_enabled,
         admin_token=admin_token,
     )
@@ -199,6 +210,24 @@ def _sync_book(client: TestClient, book_id: str = "mathanalysis-b05") -> None:
 def _ingest(client: TestClient, book_id: str = "mathanalysis-b05") -> None:
     response = client.post(f"/api/v1/books/{book_id}/ingest")
     assert response.status_code == 200, response.text
+
+
+def _parsed_book(client: TestClient) -> None:
+    """sync → ingest → 全本解析：给出一个**有生效版本**的书（结构面与编辑面的共同前置）。"""
+    _sync_book(client)
+    _ingest(client)
+    job = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+    assert job.status_code == 202, job.text
+    assert job.json()["status"] == "completed"
+
+
+def _add_region(session_factory, book_id: str, page_no: int = 1) -> None:
+    """经仓储落一条人工区域行（结构端点归 `TestStructureEndpoint`，这里只喂删除面与跨版本存活判据）。"""
+    with session_factory() as session:
+        RegionRepository(session).replace_page(
+            book_id, page_no, [RegionIntent(op="add", bbox=[72, 900, 600, 1010])]
+        )
+        session.commit()
 
 
 class TestHealthEndpoint:
@@ -391,15 +420,8 @@ class TestBooksEndpoints:
 class TestPagesAndManifest:
     """对照供给：页数据、页图、manifest、编辑合并。"""
 
-    def _parsed_book(self, client: TestClient) -> None:
-        _sync_book(client)
-        _ingest(client)
-        job = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
-        assert job.status_code == 202, job.text
-        assert job.json()["status"] == "completed"
-
     def test_page_returns_blocks_markdown_and_image_url(self, client):
-        self._parsed_book(client)
+        _parsed_book(client)
 
         response = client.get("/api/v1/books/mathanalysis-b05/pages/1")
         assert response.status_code == 200, response.text
@@ -415,7 +437,7 @@ class TestPagesAndManifest:
         assert payload["edits"] == []
 
     def test_page_image_serves_png(self, client):
-        self._parsed_book(client)
+        _parsed_book(client)
 
         response = client.get("/api/v1/books/mathanalysis-b05/pages/1/image")
         assert response.status_code == 200
@@ -423,7 +445,7 @@ class TestPagesAndManifest:
         assert response.content.startswith(b"\x89PNG")
 
     def test_missing_page_returns_404(self, client):
-        self._parsed_book(client)
+        _parsed_book(client)
         assert client.get("/api/v1/books/mathanalysis-b05/pages/99").status_code == 404
         assert client.get("/api/v1/books/mathanalysis-b05/pages/99/image").status_code == 404
 
@@ -443,7 +465,7 @@ class TestPagesAndManifest:
         assert not (tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05" / "manifest.json").exists()
 
     def test_manifest_lists_artifacts_with_hashes(self, client):
-        self._parsed_book(client)
+        _parsed_book(client)
 
         response = client.get("/api/v1/books/mathanalysis-b05/manifest")
         assert response.status_code == 200
@@ -457,7 +479,7 @@ class TestPagesAndManifest:
         assert all(len(entry["sha256"]) == 64 for entry in entries)
 
     def test_edit_upsert_and_merge(self, client):
-        self._parsed_book(client)
+        _parsed_book(client)
 
         response = client.put(
             "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
@@ -482,7 +504,7 @@ class TestPagesAndManifest:
         assert edits[0]["verdict"] == "ok"
 
     def test_edit_out_of_range_returns_400(self, client):
-        self._parsed_book(client)
+        _parsed_book(client)
 
         response = client.put(
             "/api/v1/books/mathanalysis-b05/pages/1/blocks/99/edit",
@@ -491,16 +513,238 @@ class TestPagesAndManifest:
         assert response.status_code == 400
 
 
+PAGE1_BLOCK_URL = "/api/v1/books/mathanalysis-b05/pages/1"
+STRUCTURE_URL = "/api/v1/books/mathanalysis-b05/pages/1/structure"
+STRUCTURE_URL2 = "/api/v1/books/mathanalysis-b05/pages/2/structure"
+
+
+class TestStructureEndpoint:
+    """`PUT /api/v1/books/{id}/pages/{no}/structure`（PLAN-018 W2 / ADR 0010）：全量声明与几何锚换算。
+
+    W2 交付面是**落库意图行**（`RegionRecord[]`）；带 `state` 的投影视图 `RegionView` 与读取面
+    `regions` 字段归 W3（前置 3 要求先改 `api.md` 读取面契约）。本类同时守住验收锚点的中间换算：
+    根侧只给块下标，服务端换算成受理时生效版本产物里的几何快照，落库值必须与 `GET …/pages/{no}`
+    读到的 `bbox` 逐字相同——转译错一次就是在污染人工核对现场。
+    """
+
+    def test_add_declares_manual_box(self, client):
+        _parsed_book(client)
+
+        response = client.put(STRUCTURE_URL, json={"adds": [[72, 900, 600, 1010]]})
+
+        assert response.status_code == 200, response.text
+        rows = response.json()
+        assert len(rows) == 1
+        assert rows[0]["op"] == "add"
+        assert rows[0]["bbox"] == [72, 900, 600, 1010]
+        assert rows[0]["anchor_bbox"] is None and rows[0]["members"] is None
+        assert rows[0]["kind"] == "" and rows[0]["note"] == ""
+        assert rows[0]["region_id"].startswith("rgn_"), "身份由服务端派生并回给根侧长期持有"
+        assert rows[0]["created_at"] and rows[0]["updated_at"]
+
+    def test_repeated_declaration_reuses_region_id(self, tmp_path, monkeypatch):
+        """同一意图重复提交 ⇒ 同一 `region_id` 且只有一行（幂等，无需 undo 端点）。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _parsed_book(client)
+            first = client.put(
+                STRUCTURE_URL, json={"adds": [[72, 900, 600, 1010]], "deletes": [{"block_index": 1}]}
+            ).json()
+
+            second = client.put(
+                STRUCTURE_URL, json={"adds": [[72, 900, 600, 1010]], "deletes": [{"block_index": 1}]}
+            )
+
+            assert second.status_code == 200, second.text
+            assert sorted(row["region_id"] for row in second.json()) == sorted(
+                row["region_id"] for row in first
+            )
+            with session_factory() as session:
+                assert len(session.scalars(select(AfPageRegion)).all()) == 2
+
+    def test_declaration_is_scoped_to_one_page(self, tmp_path, monkeypatch):
+        """缺席即撤销只作用于**本页**：他页人工框不受本次声明影响。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _parsed_book(client)
+            client.put(STRUCTURE_URL, json={"adds": [[10, 10, 20, 20], [30, 30, 40, 40]]})
+            kept = client.put(STRUCTURE_URL2, json={"adds": [[72, 900, 600, 1010]]}).json()
+
+            after = client.put(STRUCTURE_URL, json={"adds": [[30, 30, 40, 40]]}).json()
+
+            assert [row["bbox"] for row in after] == [[30, 30, 40, 40]]
+            with session_factory() as session:
+                rows = session.scalars(
+                    select(AfPageRegion).order_by(AfPageRegion.page_no)
+                ).all()
+                assert [(row.page_no, row.bbox) for row in rows] == [
+                    (1, [30, 30, 40, 40]),
+                    (2, [72, 900, 600, 1010]),
+                ]
+                assert rows[1].region_id == kept[0]["region_id"]
+
+    def test_delete_by_block_index_anchors_to_artifact_geometry(self, client):
+        """下标 → 几何的中间换算：`anchor_bbox` 必须等于生效版本产物里该块的 bbox。"""
+        _parsed_book(client)
+        blocks = client.get(PAGE1_BLOCK_URL).json()["blocks"]["blocks"]
+
+        response = client.put(STRUCTURE_URL, json={"deletes": [{"block_index": 1}]})
+
+        assert response.status_code == 200, response.text
+        rows = response.json()
+        assert rows[0]["op"] == "delete"
+        assert rows[0]["anchor_bbox"] == blocks[1]["bbox"]
+        assert rows[0]["bbox"] is None, "delete 不声明新框，只留受理时的几何快照"
+
+    def test_delete_by_bbox_keeps_geometry_as_is(self, client):
+        _parsed_book(client)
+
+        rows = client.put(STRUCTURE_URL, json={"deletes": [{"bbox": [600, 96, 1100, 210]}]}).json()
+
+        assert rows[0]["anchor_bbox"] == [600, 96, 1100, 210]
+
+    def test_region_id_locator_reuses_stored_anchor(self, client):
+        """根侧用上一次响应里的 `region_id` 重声明 ⇒ 落回同一行、同一锚（跨请求定位）。"""
+        _parsed_book(client)
+        blocks = client.get(PAGE1_BLOCK_URL).json()["blocks"]["blocks"]
+        rows = client.put(STRUCTURE_URL, json={"deletes": [{"block_index": 1}]}).json()
+
+        again = client.put(
+            STRUCTURE_URL, json={"deletes": [{"region_id": rows[0]["region_id"]}]}
+        ).json()
+
+        assert [row["region_id"] for row in again] == [row["region_id"] for row in rows]
+        assert again[0]["anchor_bbox"] == blocks[1]["bbox"]
+
+    def test_unknown_region_id_is_400(self, client):
+        """`region_id` 只在本页已落库行内可解：解不出就报错，不按几何猜一个块（ADR 0004 无兜底）。"""
+        _parsed_book(client)
+
+        response = client.put(STRUCTURE_URL, json={"deletes": [{"region_id": "rgn_deadbeef0000"}]})
+
+        assert response.status_code == 400, response.text
+
+    def test_merge_keeps_member_order_and_single_fact_source(self, client):
+        """合并：`members` 数组序即阅读序；成员快照**唯一**落在 `members`（不另存并集，避免两处漂移）。"""
+        _parsed_book(client)
+        blocks = client.get(PAGE1_BLOCK_URL).json()["blocks"]["blocks"]
+
+        first = client.put(
+            STRUCTURE_URL,
+            json={"merges": [{"targets": [{"block_index": 0}, {"block_index": 2}]}]},
+        ).json()
+
+        assert first[0]["op"] == "merge"
+        assert first[0]["members"] == [blocks[0]["bbox"], blocks[2]["bbox"]]
+        assert first[0]["anchor_bbox"] is None
+
+        again = client.put(
+            STRUCTURE_URL,
+            json={"merges": [{"targets": [{"block_index": 2}, {"block_index": 0}]}]},
+        ).json()
+
+        assert [row["region_id"] for row in again] == [row["region_id"] for row in first]
+        assert again[0]["members"] == [blocks[2]["bbox"], blocks[0]["bbox"]], "同组改判阅读序不换身份"
+
+    def test_locator_shape_and_range_violations_are_400(self, client):
+        """定位三项全缺 / 合并成员少于 2 / bbox 形状非法（x1≤x0）/ 下标越界 ⇒ 一律 400 且零落库。"""
+        _parsed_book(client)
+        cases = [
+            {"deletes": [{}]},
+            {"deletes": [{"block_index": 99}]},
+            {"merges": [{"targets": [{"block_index": 0}]}]},
+            {"adds": [[72, 96, 72, 132]]},
+            {"adds": [[-1, 96, 540, 132]]},
+        ]
+
+        for body in cases:
+            response = client.put(STRUCTURE_URL, json=body)
+            assert response.status_code == 400, (body, response.text)
+        with_assert_empty = client.put(STRUCTURE_URL, json={"adds": [[0, 0, 10, 10]]})
+        assert with_assert_empty.status_code == 200
+        assert len(with_assert_empty.json()) == 1, "前面的 400 批次没有半途写入"
+
+    def test_field_shape_violations_are_422(self, client):
+        """未知字段与越出字段约束（`block_index ≥ 0`）由 schema 挡在门外，不进端点语义判断。"""
+        _parsed_book(client)
+
+        for body in (
+            {"adds": [[0, 0, 10, 10]], "undo": True},
+            {"deletes": [{"block_index": -1}]},
+        ):
+            response = client.put(STRUCTURE_URL, json=body)
+            assert response.status_code == 422, (body, response.text)
+
+    def test_legacy_page_rejects_every_structure_op(self, client):
+        """Q3 定判（2026-09-29）：无生效版本时 add/delete/merge **一律** 404，不回落根视图。"""
+        _sync_book(client)
+        _ingest(client)
+
+        for body in (
+            {"adds": [[0, 0, 10, 10]]},
+            {"deletes": [{"bbox": [0, 0, 10, 10]}]},
+            {"merges": [{"targets": [{"bbox": [0, 0, 10, 10]}, {"bbox": [20, 20, 30, 30]}]}]},
+        ):
+            response = client.put(STRUCTURE_URL, json=body)
+            assert response.status_code == 404, (body, response.text)
+            # 判据要指到原因：404 也可能是路由没挂、书不存在或页产物缺失（三者恢复动作不同）
+            assert "无生效解析版本" in response.json()["detail"], response.text
+
+    def test_unknown_book_is_404(self, client):
+        _parsed_book(client)
+
+        response = client.put(
+            "/api/v1/books/no-such-book/pages/1/structure", json={"adds": [[0, 0, 10, 10]]}
+        )
+
+        assert response.status_code == 404, response.text
+        assert "书目" in response.json()["detail"], response.text
+
+    def test_declaration_over_limit_is_400_before_write(self, tmp_path, monkeypatch):
+        """每框一次单页提交 ⇒ 成本必须可见：超 `AXIOM_MAX_REGIONS_PER_PAGE` 受理前判 400。
+
+        上限本身是**结构意图的取值违规**（归 400，同定位三项全缺/合并少于 2）；422 那一档属于
+        提交面（`POST /parse-jobs` 的框数上限），那里才涉及「不让请求打到模型」。
+        """
+        test_client, session_factory = _build(tmp_path, monkeypatch, max_regions_per_page=2)
+        with test_client as client:
+            _parsed_book(client)
+
+            response = client.put(
+                STRUCTURE_URL,
+                json={"adds": [[0, 0, 10, 10], [20, 20, 30, 30], [40, 40, 50, 50]]},
+            )
+
+            assert response.status_code == 400, response.text
+            assert "每页上限" in response.json()["detail"], response.text
+            with session_factory() as session:
+                assert session.scalars(select(AfPageRegion)).all() == []
+
+    def test_page_beyond_book_is_404_before_write(self, tmp_path, monkeypatch):
+        """页码域按 `af_books.page_count` 在受理前判：只有两页的书不能声明第 3 页的人工框。
+
+        页不存在归 404（与书目/产物缺失同码，草案口径）；不查页图是否在位是因为「先画框后解析」
+        是页级输入的正常次序。
+        """
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _parsed_book(client)
+
+            response = client.put(
+                "/api/v1/books/mathanalysis-b05/pages/3/structure", json={"adds": [[0, 0, 10, 10]]}
+            )
+
+            assert response.status_code == 404, response.text
+            assert "页不存在" in response.json()["detail"], response.text
+            with session_factory() as session:
+                assert session.scalars(select(AfPageRegion)).all() == []
+
+
 class TestChunksEndpoint:
     """分块预览：落盘产物 + 参数重算。"""
 
-    def _parsed_book(self, client: TestClient) -> None:
-        _sync_book(client)
-        _ingest(client)
-        assert client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).status_code == 202
-
     def test_chunks_from_artifact(self, client):
-        self._parsed_book(client)
+        _parsed_book(client)
 
         response = client.get("/api/v1/books/mathanalysis-b05/chunks")
         assert response.status_code == 200, response.text
@@ -513,7 +757,7 @@ class TestChunksEndpoint:
         assert chunk["page_start"] >= 1
 
     def test_chunks_with_params_recomputes(self, client):
-        self._parsed_book(client)
+        _parsed_book(client)
 
         response = client.get(
             "/api/v1/books/mathanalysis-b05/chunks",
@@ -1367,7 +1611,10 @@ class TestIngestIdempotency:
             assert created.json()["status"] == "completed"
             assert client.get("/api/v1/books/mathanalysis-b05/pages/1").status_code == 200
 
-            _ingest(client)  # 重复 ingest：只原子替换根视图
+            _add_region(session_factory, "mathanalysis-b05", page_no=2)
+            _ingest(client)  # 重复 ingest：只原子替换根视图，人工框跨版本存活（ADR 0010 决定 1）
+            with session_factory() as session:
+                assert len(session.scalars(select(AfPageRegion)).all()) == 1
 
             book = client.get("/api/v1/books/mathanalysis-b05").json()
             assert book["parse_status"] == "pending"
@@ -1392,11 +1639,14 @@ class TestIngestIdempotency:
         with test_client as client:
             _sync_book(client)
             _ingest(client)
+            _add_region(session_factory, "mathanalysis-b05")
             assert client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}).status_code == 202
             assert client.delete("/api/v1/books/mathanalysis-b05?purge=true").status_code == 200
             with session_factory() as session:
                 assert session.scalars(select(AfPage)).all() == []
                 assert len(session.scalars(select(AfParseJob)).all()) == 1
+                # 删书带走人工框：书行没了区域就是无主行，留着会在重建同 id 书时凭空复活旧框
+                assert session.scalars(select(AfPageRegion)).all() == []
 
 
 PURGE_URL = "/api/v1/admin/purge"
@@ -1461,15 +1711,11 @@ class TestAdminPurgeEndpoint:
         return job_id
 
     def _counts(self, session_factory) -> dict[str, int]:
+        """表族行数快照：表集合由 `AF_TABLES` 派生（加表不必改本方法，PLAN-020 S2）。"""
         with session_factory() as session:
             return {
-                table: int(session.scalar(select(func.count()).select_from(model)))
-                for table, model in (
-                    ("af_books", AfBook),
-                    ("af_parse_jobs", AfParseJob),
-                    ("af_pages", AfPage),
-                    ("af_block_edits", AfBlockEdit),
-                )
+                table.name: int(session.scalar(select(func.count()).select_from(table)))
+                for table in AF_TABLES
             }
 
     def _add_job(self, session_factory, book_id: str, job_id: str, status: str) -> None:
@@ -1542,14 +1788,20 @@ class TestAdminPurgeEndpoint:
             assert self._counts(session_factory) == before
             assert self._book_root(tmp_path, "mathanalysis-b05").is_dir()
 
-    def test_book_scope_purge_deletes_four_tables_and_dir(self, tmp_path, monkeypatch):
-        """按书目清除：表族行含 `af_parse_jobs` 一起走（`PM-17`），他书完好。"""
+    def test_book_scope_purge_deletes_table_family_and_dir(self, tmp_path, monkeypatch):
+        """按书目清除：表族每一张表的行一起走（含 `af_parse_jobs` 与 `af_page_regions`），他书完好。
+
+        `af_page_regions` 是 S5 删除面同构的判据行：区域按 `(book_id, page_no)` 作用域、不绑版本，
+        因此删书必须显式带走它，否则人工框会变成无主行永久残留。
+        """
         test_client, session_factory = _admin_build(tmp_path, monkeypatch)
         with test_client as client:
             self._seed(client, "mathanalysis-b05")
             self._seed(client, "linearalgebra-b01")
             # 他书有在飞任务：按本清除只守自己作用域，不被别书阻塞
             self._add_job(session_factory, "linearalgebra-b01", "job-other-queued", "queued")
+            _add_region(session_factory, "mathanalysis-b05")
+            _add_region(session_factory, "linearalgebra-b01")
 
             response = client.post(
                 PURGE_URL,
@@ -1567,6 +1819,7 @@ class TestAdminPurgeEndpoint:
                 "af_parse_jobs": 1,
                 "af_pages": 2,
                 "af_block_edits": 1,
+                "af_page_regions": 1,
                 "directories": 1,
             }
             assert not self._book_root(tmp_path, "mathanalysis-b05").exists()
@@ -1583,6 +1836,12 @@ class TestAdminPurgeEndpoint:
                     == []
                 )
                 assert len(session.scalars(select(AfParseJob)).all()) == 2
+                b05_regions = session.scalars(
+                    select(AfPageRegion).where(AfPageRegion.book_id == "mathanalysis-b05")
+                ).all()
+                assert b05_regions == []
+                # 他书人工框不随本清除消失：区域按 book_id 作用域，与解析版本无关
+                assert len(session.scalars(select(AfPageRegion)).all()) == 1
 
     def test_in_flight_in_scope_returns_409(self, tmp_path, monkeypatch):
         """S5：自己作用域内有 `queued`/`running` ⇒ 409 且零删除（不留半删状态）。"""
@@ -1612,6 +1871,7 @@ class TestAdminPurgeEndpoint:
         with test_client as client:
             self._seed(client, "mathanalysis-b05")
             self._seed(client, "linearalgebra-b01")
+            _add_region(session_factory, "mathanalysis-b05", page_no=2)
 
             first = client.post(
                 PURGE_URL,
@@ -1626,12 +1886,8 @@ class TestAdminPurgeEndpoint:
 
             assert first.status_code == 200, first.text
             assert first.json()["deleted"]["af_books"] == 2
-            assert self._counts(session_factory) == {
-                "af_books": 0,
-                "af_parse_jobs": 0,
-                "af_pages": 0,
-                "af_block_edits": 0,
-            }
+            assert first.json()["deleted"]["af_page_regions"] == 1
+            assert self._counts(session_factory) == {table.name: 0 for table in AF_TABLES}
             # 磁盘作用域 = 书目目录；空的 domain/course 父级不裁剪（operations.md 同一口径）
             assert not self._book_root(tmp_path, "mathanalysis-b05").exists()
             assert not self._book_root(tmp_path, "linearalgebra-b01").exists()
@@ -1644,6 +1900,7 @@ class TestAdminPurgeEndpoint:
                 "af_parse_jobs": 0,
                 "af_pages": 0,
                 "af_block_edits": 0,
+                "af_page_regions": 0,
                 "directories": 0,
             }
 
@@ -1784,9 +2041,7 @@ class TestAdminPurgeEndpoint:
             assert response.status_code == 200, response.text
             assert response.json()["failures"] == []
             assert not book_dir.exists(), f"书目录残留：{[p.name for p in book_dir.iterdir()]}"
-            assert self._counts(session_factory) == dict.fromkeys(
-                ("af_books", "af_parse_jobs", "af_pages", "af_block_edits"), 0
-            )
+            assert self._counts(session_factory) == {table.name: 0 for table in AF_TABLES}
 
             again = client.post(
                 PURGE_URL,

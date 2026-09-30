@@ -1,7 +1,7 @@
 # ADR 0006：任务台账与计划承载契约（一任务一承载、进度单源、并发上限）
 
 状态：Accepted
-最后更新：2026-09-21
+最后更新：2026-10-01
 关联代码：无（流程治理，不映射具体模块）
 关联测试：`tests/contract/test_tracker_governance.py`、`tests/contract/test_plan_governance.py`
 
@@ -66,4 +66,8 @@ DEFECT 前缀为历史遗留，不再新增，存量保留至自然关闭。
 
 取代：无（修订 [任务生命周期](../standards/task-lifecycle.md) 与
 [文档治理规范](../standards/doc-governance.md) 的台账与进度规则条文，不改其分类框架）。
-被取代：无。
+被取代：决定 2/3/4 的台账**列名与列语义**（「关闭条件」列、「证据/下一条件」列及其列界）被
+[ADR 0013](0013-ledger-row-three-elements.md) 取代（2026-09-30，七列三要素形态）；其余决定
+（一任务一承载、进度单源、并发上限、DEFECT 退役、收口顺序）继续生效。现行台账口径的唯一正文是
+[task-lifecycle「任务台账与承载」](../standards/task-lifecycle.md)，本 ADR 保留为决定记录；
+正文中的旧列名按当时形态读。

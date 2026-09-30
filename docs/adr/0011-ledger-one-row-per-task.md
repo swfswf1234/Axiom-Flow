@@ -1,7 +1,7 @@
 # ADR 0011：台账一任务一行（入站请求与其专属承接计划合并为单行）
 
-状态：Draft
-最后更新：2026-09-26
+状态：Accepted
+最后更新：2026-10-01
 关联代码：无（台账治理，不映射具体模块）
 关联测试：`tests/contract/test_tracker_governance.py`（计划镜像唯一性与承载引用守护）
 
@@ -48,6 +48,10 @@
 
 取代：无（细化 [ADR 0006](0006-ledger-plan-carrier-contract.md) 决定 2 的推论，不改其承载契约框架，
 也不推翻「不强制一 todo 行 = 一计划文件」的既有裁决）。
-被取代：无。
+被取代：决定 1/3 里的「证据/下一条件」列与列界措辞被 [ADR 0013](0013-ledger-row-three-elements.md)
+的七列台账取代（2026-09-30）——请求接收标记现落在「任务」列句首，「一任务一行」的现行口径以
+[task-lifecycle「任务台账与承载」](../standards/task-lifecycle.md) 为唯一正文，本 ADR 保留为决定记录。
+状态流转：Draft（2026-09-26）→ Accepted（2026-10-01，用户裁决转正；规则已于 2026-09-26 起在
+`task-lifecycle.md` 与守护测试中生效执行）。
 关联：[ADR 0008](0008-fixed-doc-form-and-metadata-genres.md)（固定文档骨架与元数据）；
 实施载体为 2026-09-26 的两处合并（REQ-099→PLAN-018、REQ-097→PLAN-017）。

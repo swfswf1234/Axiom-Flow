@@ -58,11 +58,12 @@ def test_every_registered_table_uses_af_namespace():
 def test_purge_models_are_exactly_af_tables():
     """管理面清除的模型元组必须与 `AF_TABLES` 同集合（S5 删除面同构的静态半边）。
 
-    `_FOUR_TABLES` 存的是 ORM 类名引用，AST 取字面量后经类 → `__table__.name` 映射回表名，
-    与 `AF_TABLES` 对账；加表时漏改 admin.py 即红。
+    `_AF_TABLE_MODELS` 存的是 ORM 类名引用，AST 取字面量后经类 → `__table__.name` 映射回表名，
+    与 `AF_TABLES` 对账；加表时漏改 admin.py 即红。元组名不带张数（PLAN-020 S1：张数只在权威
+    口径出现，标识符携带张数同样是漂移源）。
     """
     source = (REPO_ROOT / "src/axiom_flow/api/admin.py").read_text(encoding="utf-8")
-    class_names = _literal_assignment(source, "_FOUR_TABLES")
+    class_names = _literal_assignment(source, "_AF_TABLE_MODELS")
     table_names = set()
     for name in class_names:
         model = getattr(models, name)
@@ -78,6 +79,17 @@ def test_admin_purge_counts_fields_cover_af_tables():
         name for name in AdminPurgeCounts.model_fields if name.startswith(PREFIX)
     }
     assert fields == {tbl.name for tbl in AF_TABLES}
+
+
+def test_admin_surface_hardcodes_no_table_name():
+    """admin 侧不得逐字写表名：计数与删除都按 `__table__.name` 派生，加表才是真的一处改动。
+
+    PLAN-020 S5「删除面自动覆盖」的可执行形式：表名字面量一旦回到 admin.py，同批就得改元组 +
+    字段清单两处，判据退化成人肉记忆。
+    """
+    source = (REPO_ROOT / "src/axiom_flow/api/admin.py").read_text(encoding="utf-8")
+    hardcoded = [tbl.name for tbl in AF_TABLES if f'"{tbl.name}"' in source]
+    assert not hardcoded, f"admin.py 逐字硬编码了表名：{hardcoded}"
 
 
 def sweep_ok(owned: tuple[str, ...]) -> bool:

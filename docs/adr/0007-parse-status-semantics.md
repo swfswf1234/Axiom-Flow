@@ -1,7 +1,7 @@
 # ADR 0007：解析状态语义三分（结局三态、进度/结局分列、启动期归一）
 
 状态：Accepted
-最后更新：2026-09-22
+最后更新：2026-10-01
 关联代码：`src/axiom_flow/schemas.py`（`JobStatus`/`ParseStatus`）、`src/axiom_flow/orchestrator/pipeline.py`（终态判定）、`src/axiom_flow/orchestrator/jobs.py`（执行器）、`src/axiom_flow/db/models.py`（af_books/af_parse_jobs）、`src/axiom_flow/api/main.py`（lifespan）
 关联测试：`tests/unit/test_schemas.py`、`tests/unit/test_orchestrator.py`、`tests/unit/test_db_migrations.py`、`tests/contract/test_api_v1_contract.py`、`tests/integration/test_parse_persistence.py`
 
@@ -28,7 +28,7 @@ DEFECT-006/007 的取证（[PLAN-003](../history/plans/2026-09/2026-09-20-parse-
 
 1. **任务结局三态**：`JobStatus` 扩为 `queued`/`running`/**`completed`**/**`partial`**/**`failed`**/
    **`interrupted`**（后四个为终态）。终态判据唯一定义在「本次任务目标页集合」上：
-   - `completed` ⟺ 目标页全部 `parsed` 且产物在位（与 V3 激活门槛**同一判据、同一函数**，不再分叉）；
+   - `completed` ⟺ 目标页全部 `parsed` 且产物在位（与 V3 激活门槛**同一判据、同一函数**，不再分叉）；「产物在位」子句自 2026-10-01 起被 [ADR 0015](0015-db-single-source-for-readiness.md) 取代，现判据只取 DB 页行，同一函数与同一判据的骨架不变；
    - `partial` ⟺ 至少 1 页 `parsed` 且不满足 `completed`；
    - `failed` ⟺ 0 页 `parsed`，或引擎异常导致执行提前终止；
    - `interrupted` ⟺ 终态由启动期归一写入（见决定 4），管线自身不写。
@@ -69,7 +69,7 @@ DEFECT-006/007 的取证（[PLAN-003](../history/plans/2026-09/2026-09-20-parse-
 ## 取代
 
 取代：无。
-被取代：无。
+被取代：决定 1 的「且产物在位」子句被 [ADR 0015](0015-db-single-source-for-readiness.md) 取代（2026-10-01，就绪与激活判据改以 DB 为唯一事实源）；本 ADR 其余决定与「`completed` 与激活同一判据、同一函数」的不变式继续生效。
 关联：承接 DEFECT-006（部分成功语义）与 DEFECT-007（假 `running`）的关闭条件成文；解除 ARCH-003
 的裁决阻塞；为 REQ-087 提供成文数据来源但不含其端点范围。实施载体 PLAN-006 已于 2026-09-21 关闭
 并按 Delete 删除计划壳（正文见锚点 `9034a19`），结论落 `design/parsing-management.md` 的 `PM-8`~`PM-14`

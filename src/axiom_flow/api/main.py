@@ -23,7 +23,7 @@ from axiom_flow import __version__ as VERSION
 from axiom_flow.api.admin import mount_admin
 from axiom_flow.config import Settings, load_settings
 from axiom_flow.db.engine import create_engine_for
-from axiom_flow.db.models import AfBlockEdit, AfBook
+from axiom_flow.db.models import AfBlockEdit, AfBook, AfPageRegion
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
@@ -32,6 +32,8 @@ from axiom_flow.db.repositories import (
     PageRepository,
     ParseJobRepository,
     ParseJobRow,
+    RegionIntent,
+    RegionRepository,
 )
 from axiom_flow.engines.base import ParseEngine
 from axiom_flow.engines.factory import EngineSelectionError, build_engine, resolve_engine_name
@@ -40,7 +42,9 @@ from axiom_flow.normalize.chunking import build_chunks, read_chunk_set
 from axiom_flow.orchestrator import MODEL_UNAVAILABLE, JobRunner, rebuild_chunks
 from axiom_flow.schemas import (
     SAFE_SEGMENT_PATTERN,
+    BBox,
     Block,
+    BlockLocator,
     BlocksPage,
     BookOut,
     BookSyncItem,
@@ -63,6 +67,8 @@ from axiom_flow.schemas import (
     ParseJobListOut,
     ParseStatus,
     ParseVersionOut,
+    RegionRecord,
+    StructureRequest,
     SyncResponse,
 )
 
@@ -107,6 +113,35 @@ def _edit_record(edit: AfBlockEdit) -> EditRecord:
         corrected_bbox=tuple(edit.corrected_bbox) if edit.corrected_bbox else None,
         edited_at=edit.edited_at,
         updated_at=edit.updated_at,
+    )
+
+
+def _checked_bbox(bbox: BBox, label: str) -> list[int]:
+    """几何形状合法性（非负且右下严格大于左上）：非法框无法裁剪，落库前先拒。
+
+    页像素上界不在此校验——`adds` 可以在产物之前声明（画框先于解析），那时没有页尺寸可比；
+    越界框由解析侧按图裁剪自然收敛，不在此处造第二套「尺寸事实源」。
+    """
+    x0, y0, x1, y1 = bbox
+    if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
+        raise HTTPException(
+            status_code=400, detail=f"{label} 形状非法：[{x0}, {y0}, {x1}, {y1}]（需非负且 x1>x0、y1>y0）"
+        )
+    return [x0, y0, x1, y1]
+
+
+def _region_record(row: AfPageRegion) -> RegionRecord:
+    """`af_page_regions` 行 → 响应记录（几何以数组回给根侧，与 `Block.bbox` 同一形状）。"""
+    return RegionRecord(
+        region_id=row.region_id,
+        op=row.op,
+        bbox=tuple(row.bbox) if row.bbox else None,
+        anchor_bbox=tuple(row.anchor_bbox) if row.anchor_bbox else None,
+        members=[tuple(member) for member in row.members] if row.members else None,
+        kind=row.kind,
+        note=row.note,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )
 
 
@@ -262,11 +297,12 @@ def create_app(
 
     @app.delete("/api/v1/books/{book_id}")
     def delete_book(book_id: SafeBookId, session: SessionDep, purge: bool = False) -> dict:
-        """删除 af_books 行与该书**所有解析版本**的 af_pages / af_block_edits 行；
-        `?purge=true` 同时删除整本产物目录（含 `versions/` 历史版本）。
+        """删除 af_books 行与该书**所有解析版本**的 af_pages / af_block_edits 行，以及该书全部
+        人工结构意图（af_page_regions）；`?purge=true` 同时删除整本产物目录（含 `versions/` 历史版本）。
 
         af_parse_jobs 历史行保留为审计线索（不随书目删除；`architecture/database-design.md`「删除保留
-        审计」，其管理面 purge 例外见 `PM-17`）。
+        审计」，其管理面 purge 例外见 `PM-17`）。人工框**不保留**：它是这本书某一页的解析输入，书行没了
+        就是无主行，留着只会在重建同 id 书时凭空复活旧框。
         """
         repo = BookRepository(session)
         book = repo.get(book_id)
@@ -275,6 +311,7 @@ def create_app(
         book_dir = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
         PageRepository(session).delete_for_book(book_id)
         EditRepository(session).delete_for_book(book_id)
+        RegionRepository(session).delete_for_book(book_id)
         repo.delete(book_id)
         if purge and book_dir.is_dir():
             shutil.rmtree(book_dir)
@@ -449,6 +486,99 @@ def create_app(
             corrected_bbox=list(payload.corrected_bbox) if payload.corrected_bbox else None,
         )
         return _edit_record(edit)
+
+    @app.put(
+        "/api/v1/books/{book_id}/pages/{page_no}/structure",
+        response_model=list[RegionRecord],
+    )
+    def put_structure(
+        book_id: SafeBookId, page_no: int, payload: StructureRequest, session: SessionDep
+    ) -> list[RegionRecord]:
+        """页结构意图**全量声明**（落 `af_page_regions`，页级、不绑生效版本，ADR 0010 决定 1）。
+
+        缺席即撤销：本次未列出的人工意图被删除，所以重复提交同一组意图结果不变（幂等，无需
+        undo 端点）。定位三选一在受理时统一换算成**几何锚**再落库——块下标只在生效版本内有
+        意义，换版后重锚定用的就是这份快照（Q4 定判：下标↔`region_id` 的翻译归本仓库）。
+        本端点不调模型服务：画框先于解析，模型不可用时也必须能声明意图。
+        """
+        if page_no < 1:
+            raise HTTPException(status_code=404, detail=f"页不存在：第 {page_no} 页（页码 1 基）")
+        artifact_dir, job_id = _read_scope(session, book_id)
+        if job_id == LEGACY_JOB_ID:
+            raise HTTPException(
+                status_code=404,
+                detail=f"无生效解析版本，拒绝结构操作：{book_id}（legacy 根视图无从锚定块，先激活版本）",
+            )
+        page_count = BookRepository(session).get(book_id).page_count
+        if page_count is not None and page_no > page_count:
+            raise HTTPException(
+                status_code=404,
+                detail=f"页不存在：{book_id} 共 {page_count} 页，请求第 {page_no} 页",
+            )
+        total = len(payload.adds) + len(payload.deletes) + len(payload.merges)
+        if total > settings.max_regions_per_page:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"第 {page_no} 页结构意图 {total} 条，超出每页上限 "
+                    f"{settings.max_regions_per_page}（每框一次单页提交，成本必须可见）"
+                ),
+            )
+        merge_targets = [locator for group in payload.merges for locator in group.targets]
+        for group in payload.merges:
+            if len(group.targets) < 2:
+                raise HTTPException(
+                    status_code=400, detail=f"合并至少需要 2 个成员块，实际 {len(group.targets)}"
+                )
+        blocks = (
+            _load_page(artifact_dir, page_no).blocks
+            if any(loc.block_index is not None for loc in [*payload.deletes, *merge_targets])
+            else []
+        )
+        existing = {
+            row.region_id: row
+            for row in RegionRepository(session).list_for_page(book_id, page_no)
+        }
+
+        def anchor_of(locator: BlockLocator) -> list[int]:
+            """三选一定位 → 几何锚；给多或给少都判 400（猜一个等于替人做结构决定）。"""
+            given = [
+                locator.block_index is not None,
+                bool(locator.region_id),
+                locator.bbox is not None,
+            ]
+            if sum(given) != 1:
+                raise HTTPException(
+                    status_code=400, detail="定位必须恰好给出 block_index / region_id / bbox 之一"
+                )
+            if locator.block_index is not None:
+                if not 0 <= locator.block_index < len(blocks):
+                    raise HTTPException(status_code=400, detail=f"块下标越界：{locator.block_index}")
+                return list(blocks[locator.block_index].bbox)
+            if locator.region_id:
+                row = existing.get(locator.region_id)
+                if row is None:
+                    raise HTTPException(
+                        status_code=400, detail=f"region_id 不存在于本页：{locator.region_id}"
+                    )
+                geometry = row.anchor_bbox or row.bbox or (row.members or [[]])[0]
+                return list(geometry)
+            assert locator.bbox is not None
+            return _checked_bbox(locator.bbox, "定位框")
+
+        intents: list[RegionIntent] = [
+            RegionIntent(op="add", bbox=_checked_bbox(bbox, "人工框")) for bbox in payload.adds
+        ]
+        intents += [
+            RegionIntent(op="delete", anchor_bbox=anchor_of(locator))
+            for locator in payload.deletes
+        ]
+        intents += [
+            RegionIntent(op="merge", members=[anchor_of(locator) for locator in group.targets])
+            for group in payload.merges
+        ]
+        rows = RegionRepository(session).replace_page(book_id, page_no, intents)
+        return [_region_record(row) for row in rows]
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}/edits", response_model=list[EditRecord])
     def list_edits(book_id: SafeBookId, page_no: int, session: SessionDep) -> list[EditRecord]:

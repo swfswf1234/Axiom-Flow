@@ -1,8 +1,8 @@
 # 解析页区域驱动重解析与块结构编辑承接实施（parsing-region-edit）
 
-状态：Accepted
+状态：In Progress
 任务类型：B
-最后更新：2026-09-29
+最后更新：2026-10-01
 关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、解析管线归本仓库；R1/R5 改动均在管线与归一化面，不触碰引擎选型）、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)（**Accepted 2026-09-29**：页框图是页级解析输入、不是版本内覆盖层——决定 R2/R3 的落库作用域与 R1 的调用形态；同批裁决 legacy 拒绝结构操作、合并归 8902）
 关联设计：`docs/design/parsing-pipeline.md`（页解析单元与 normalize 块类型）、`docs/design/parsing-management.md`（af_* 块编辑覆盖层，R1/R2/R3 落点）；根仓库权威上下文（只读）：`QED-Engine/docs/plans/2026-09-26-req098-parsing-region-edit-typography-axiom-flow-request.md`（请求原文）、`QED-Engine/docs/design/parsing-ui.md`（消费界面现状）
 关联 Tracker：docs/trackers/todo.md（PLAN-018 行；本任务唯一台账行，根侧请求号 REQ-099 只作来源标注，不单独立行）
@@ -71,7 +71,8 @@
    产物上判定是引擎空回（`QualityMetrics.empty_block_ratio` 可见）还是我方丢字（本仓 `order` 恒等于
    `index`、全仓无分栏排序逻辑）。取证只用临时/探针数据根，不占真机批量窗口。
 6. **排期与根侧依赖**：2026-09-29 ADR 0010 已确认 ⇒ 本壳转主攻实施位（原挂 PLAN-017 已关闭）；R4/R5 的产物面修正
-   需重解析才见效 ⇒ 与 **ARCH-011 产物重建批量窗口同批出效**，避免多解析一轮。根侧消费端
+   需重解析才见效；原「与 ARCH-011 产物重建批量窗口同批出效」的约束随该行 2026-09-30 关闭而
+   失效（改判正文＝[PLAN-009](2026-09-22-v1-parsing-knowledge-optimization.md) 承载 ARCH-011 节的「真机取证改挂」表），见效随用户按需解析逐本自然发生。根侧消费端
    （REQ-098 W4/W5）就绪与否不阻塞本壳；R1~R3 承接前根侧按降级口径执行。
 ## 勘察与裁决登记（2026-09-26）
 
@@ -330,13 +331,68 @@ class RegionView(BaseModel):
 | W0.5 | 源码勘察（K1~K5 入壳）+ [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 立稿：区域=页级解析输入、每框一次单页提交、R4 不新增枚举 | 完成 2026-09-26（ADR 待用户确认） |
 | W0.6 | 对接面梳理与契约草案入壳（本节：两侧对账 + 草案 A~F + 晋升守护 + Q1~Q5 待定口径 + 表族同步面） | 完成 2026-09-26（草案待用户审；**未晋升** architecture/ 与 design/） |
 | W1（R1） | 区域驱动页解析：按前置 1 逐框裁剪提交 `parse_page`，一框一块；含单页框数上限与受理前 422、无框时的默认检测退化路径；调和策略（空隙归属、框内多检测块归一）写入 `parsing-pipeline.md` | ADR 0010 已确认 ⇒ 待开工（依赖 W2 表） |
-| W2（R2） | `af_page_regions`（页级、不绑 `job_id`）+ 删除/合并/新增区域 API；`af_block_edits` 语义不动；迁移 `20260926_0002` 接现 head 之后 | 前置已解除（PLAN-020 于 2026-09-29 关闭放行，建表以其「新表结构与表族关联」节为准） |
+| W2（R2） | `af_page_regions`（页级、不绑 `job_id`）+ 删除/合并/新增区域 API；`af_block_edits` 语义不动；迁移 `20260926_0002` 接现 head 之后 | 完成 2026-10-01（前置：PLAN-020 于 2026-09-29 关闭放行建表，以其「新表结构与表族关联」节为准。交付面、守护、状态码定判与偏差登记见「W2 落地结论与偏差登记」节；业务库迁移待 D 类窗口） |
 | W3（R3） | 页数据返回服务端投影的区域集合（几何/来源/pending/已删除标记）；先改 `api.md` 条文再实施 | 待开始 |
 | W4（R4） | 目录以**可消费属性/分诊标记**承接（不新增 `BlockType`），归 ARCH-025 与 PLAN-009 P3 长线 | 长线（移出本壳实施） |
 | W5（R5） | 节题判定启发式修正（归一化侧，index 安全）＋双栏取字完整性：先取证定位根因再定层面 | 待取证 |
 | W7（R6） | 未完成页能力（根侧 2026-09-28 增补）：`skip_parsed` 参数或页状态清单视图二择一，形态本仓定；与 W1 任务面同批裁决（`ParseJobCreate` 现仅 book_id/pages/engine） | 待开始 |
 | W8（确认门） | 每页人工确认门（2026-09-29 裁决自 PLAN-019 P3 移入本壳，单侧登记）：确认态落 `af_pages`（DB 单源）、chunk 重建只聚合已确认页、三形态齐备（单页/页区间/按页重解析回未确认）、写入走管理面 token 口径（判例同 PLAN-010）、系统不得自动整本背书 | 待开始（契约草案随 W3 轮） |
 | W6 | 回执根仓库 REQ-099：逐条接受/改造/拒绝 + 排期成文；实施后同步锚点（commit sha）、门禁读数与 S 判据逐条判定 | 待开始 |
+
+## W2 落地结论与偏差登记（2026-10-01）
+
+结论：**W2 已实施并通过本地门禁**——第五张表 `af_page_regions`（页级、PK 不含 `job_id`）+ 迁移
+`20260926_0002_page_regions.py` + `PUT /api/v1/books/{book_id}/pages/{page_no}/structure` 结构意图
+全量声明端点。W2 只交付**写入面**（意图落库与三选一 → 几何锚换算），区域投影读语义（`regions`）与
+区域驱动提交分别留给 W3、W1。业务库 `qed` 的 `20260926_0002` 属 D 类窗口，本批**未执行**。
+
+### 交付面与守护
+
+| 交付 | 位置 | 守护（会红的判据） |
+| --- | --- | --- |
+| 页级区域表与 ORM | `src/axiom_flow/db/models.py`（`AfPageRegion`、`AF_TABLES`） | `tests/unit/test_db_page_regions.py`（无 `job_id` 不变式、全量声明的缺席即撤销、`region_id` 确定性派生的幂等、按书/整表清除）、`tests/unit/test_db_table_family_governance.py` |
+| 迁移 | `src/axiom_flow/migrations/versions/20260926_0002_page_regions.py` | `tests/integration/test_parse_persistence.py`（真 MySQL 升级到当前 head + 表族逐名对账） |
+| 区域仓储 | `src/axiom_flow/db/repositories.py`（`RegionRepository`/`RegionIntent`/`region_id_for`） | 同上单测；意图行由 api 侧换算后一次 `replace_page` |
+| 结构声明端点 | `src/axiom_flow/api/main.py`（`put_structure`） | `tests/contract/test_api_v1_contract.py::TestStructureEndpoint`（14 例） |
+| 删除面跟随 | `src/axiom_flow/api/admin.py`（purge 逐表） | 表族治理契约测试 + `TestStructureEndpoint` 的删书带走用例 |
+| 文档同步 | `database-design.md`（列清单 + 迁移行 + 表清单第 5 行）、`api.md`（③ 类小节 + 端点总表 + 状态码总表）、`design/parsing-management.md`（PM-18 守则 + 端点语义 + 生命周期图 + 判据 6）、ADR 0005 白名单、ADR 0010 落地事实、`code-map.md`、`overview.md` 能力矩阵 | `test_fixed_document_form.py`（表↔路由↔小节、列清单↔ORM）、`test_architecture_documents.py`、`test_design_documents.py`（守则编号连续＋承载列非空）、`test_code_document_mapping.py` |
+
+门禁读数（本批收口时复跑）：`pytest tests -q` 591 passed / 10 skipped；`ruff check src tests` 全过；
+`QED_TEST_MYSQL=1 pytest tests/integration -q` 8 passed（含新迁移在真 MySQL 的升级）。
+
+### 状态码归属定判
+
+采**草案 C/F 原文**（用户已确认的晋升文案）：
+
+- 意图条数超 `AXIOM_MAX_REGIONS_PER_PAGE` ⇒ **400**，判在落库前、零落库；
+- `page_no` 小于 1 或越出 `af_books.page_count` ⇒ **404 页不存在**（与书目/产物缺失同码），受理前判；
+- 定位违规（三选一给多或给少、`region_id` 不在本页、`bbox` 形状非法、块下标越界、合并成员少于 2）⇒ 400；
+- legacy 无生效版本 ⇒ 404 一律拒绝（ADR 0010 决定 7）。
+
+[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 4 的「受理前判 422」作用域是**提交面**
+（`POST /api/v1/parse-jobs` 的框数上限，防请求打到模型），随 W1 落；本端点不调模型服务，不占该档。
+实施中一度把上述两项误判成 422（把决定 4 当成了全链路口径），已回退并同步 `api.md` 端点小节、
+状态码总表两行与两条契约用例。
+
+### 偏差登记（与草案 / PLAN-020 壳的差异）
+
+| # | 差异 | 定判理由与落点 |
+| --- | --- | --- |
+| D1 | 响应形状为 `RegionRecord[]`（意图行原样），草案 C 写 `RegionView[]` | `RegionView` 是「人工意图 + 生效版本块」的投影合并视图，Q1 已裁归读语义（W3 / 8902 消费）；W2 只交付写入面，`api.md` 明写「另一条**读语义**」 |
+| D2 | `merge` 不落 `anchor_bbox`，成员几何唯一落 `members`，不存并集列 | 单一事实源：并集是 `members` 的派生值，双写在成员改判时必漂移（PLAN-020 壳「merge 填并集」不采纳）。成文于 `database-design.md` 区域表语义段与 `api.md` |
+| D3 | `MergeGroup.targets` 不加 pydantic `min_length=2`（草案 B 写法），少于 2 由端点判 400 | 「成员少于 2」是跨资源语义违规而非请求体形状违规，与其余定位违规同档，detail 指到原因 |
+| D4 | 状态码归属采草案 C/F（400 超上限 / 404 页不存在），非 422 | 见上一小节；`api.md` 端点小节与状态码总表、`TestStructureEndpoint` 两条用例同批 |
+| D5 | admin 删除面常量改名 `_AF_TABLE_MODELS`（原 `_FOUR_TABLES`） | PLAN-020 晋升守则「表张数不是散文事实」：名称随表族派生，并有禁逐字表名守护 |
+| D6 | 集成层把迁移 head 断言由写死 `20260926_0001` 改为 `_head_revision()` 派生 | 写死序号在加迁移时假红/假绿；派生后「夹具漏跑最新迁移」才是它抓的漂移 |
+| D7 | 业务库 `20260926_0002` 未执行，head 停在 `20260926_0001` | D 类窗口按用户排期执行；`database-design.md` 迁移现状段、`api.md`/ADR 0010 元数据、`overview.md` 能力矩阵四处一致标注「待真机窗口」 |
+
+### 遗留（不在 W2 面）
+
+- W3：`GET …/pages/{page_no}` 的 `regions` 投影、重解析后的 IoU 重锚定与框内多块归属规则（写
+  `design/parsing-pipeline.md`，ADR 0010 决定 5 要求本仓自决成文）。
+- W1：区域驱动提交 + 每框一次单页提交 + 提交面 422 + 无框退化路径；W7 未完成页能力与之同批裁决。
+- W8/S7：每页人工确认门（验收锚点的「确认好后固定版本」环节）。
+
 ## 验证与验收
 
 

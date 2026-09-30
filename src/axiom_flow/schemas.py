@@ -10,7 +10,8 @@
 生效版本由 `af_books.active_job_id` 单点指认（NULL = 根视图 legacy）；读取端点与 URL 不因
 版本化改变（PLAN-004 / REQ-080）。
 
-API 契约模型：BookOut / BookSyncItem / IngestResponse / PageData / EditRecord / ParseVersionOut / ParseJob。
+API 契约模型：BookOut / BookSyncItem / IngestResponse / PageData / EditRecord / StructureRequest /
+RegionRecord / ParseVersionOut / ParseJob。
 块类型 10 种；解析来源 source ∈ {mineru, paddleocr-vl, qwen-vl}（后两者预留）。
 """
 
@@ -94,6 +95,14 @@ class Verdict(StrEnum):
     NONE = ""
     OK = "ok"
     BAD = "bad"
+
+
+class RegionOp(StrEnum):
+    """页级人工结构意图三态（`af_page_regions.op`）。"""
+
+    ADD = "add"
+    DELETE = "delete"
+    MERGE = "merge"
 
 
 class IngestStatus(StrEnum):
@@ -427,6 +436,66 @@ class EditRequest(BaseModel):
     corrected_bbox: BBox | None = None
 
 
+# ---------- 页级结构意图（af_page_regions / PUT …/structure，ADR 0010） ----------
+
+
+class BlockLocator(BaseModel):
+    """结构意图的定位入参：三选一，服务端受理时统一换算为几何锚。
+
+    全部字段可选是**有意**的——「三项全缺」要判 400（语义错误、告诉调用方怎么改），而不是
+    422（形状错误）；由端点统一裁决，避免 pydantic 的聚合报错把定位问题说成字段缺失。
+    `block_index` 只在当前生效版本内有意义，换版后同下标指向别的块。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    block_index: int | None = Field(default=None, ge=0)
+    region_id: str | None = None
+    bbox: BBox | None = None
+
+
+class MergeGroup(BaseModel):
+    """一组待合并块：`targets` 的数组序即合并后的阅读序。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    targets: list[BlockLocator] = Field(default_factory=list)
+
+
+class StructureRequest(BaseModel):
+    """`PUT …/pages/{page_no}/structure` 请求体：该页结构意图的**全量声明**。
+
+    缺席即撤销——本次未列出的既有人工意图会被删除，因此重复提交同一组意图结果不变（幂等）。
+    几何与数量约束（负坐标、`x1≤x0`、合并成员少于 2、意图总数超上限）由端点判 400，不放在这里：
+    这些是业务口径而非字段形状，需要与页块几何一起判。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    adds: list[BBox] = Field(default_factory=list)
+    deletes: list[BlockLocator] = Field(default_factory=list)
+    merges: list[MergeGroup] = Field(default_factory=list)
+
+
+class RegionRecord(BaseModel):
+    """`af_page_regions` 落库行（页级人工结构意图，不绑解析版本）。
+
+    `region_id` 由服务端按 `op` + 几何身份确定性派生：同一意图重复提交得到同一 id，跨版本不变，
+    根侧可长期持有。`anchor_bbox` / `members` 是受理时从生效版本产物抓的**几何快照**，
+    版本切换后按 IoU 重锚定用它作参照。
+    """
+
+    region_id: str
+    op: RegionOp
+    bbox: BBox | None = None
+    anchor_bbox: BBox | None = None
+    members: list[BBox] | None = None
+    kind: str = ""
+    note: str = ""
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class PageStateOut(BaseModel):
     """`GET /books/{id}/pages` 的清单行：**轻量**，不含 blocks / markdown / 质量信号。
 
@@ -538,12 +607,16 @@ class AdminPurgeScope(BaseModel):
 
 
 class AdminPurgeCounts(BaseModel):
-    """清除计数：`dry_run` 下是**将删**计数，真删下是**已删**计数（两态形状相同）。"""
+    """清除计数：字段名 = `af_*` 表名，由 `AF_TABLES` 派生守护（加表必须同批加字段）。
+
+    `dry_run` 下是**将删**计数，真删下是**已删**计数（两态形状相同）。
+    """
 
     af_books: int = 0
     af_parse_jobs: int = 0
     af_pages: int = 0
     af_block_edits: int = 0
+    af_page_regions: int = 0
     directories: int = 0
 
 

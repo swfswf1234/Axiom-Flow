@@ -2,7 +2,7 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-30
+最后更新：2026-10-01
 治理对象：文档分类与事实边界、确认状态、文档生命周期、代码与文档追溯、写作命名与体裁化元数据、固定文档骨架与可对账契约、版本末期整理、归档与删除
 依据：QED-Tracker `docs/standards/doc-governance.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)），
 元数据体裁、骨架与对账规则由 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 立法；上游参照 QED-Engine 根仓库标准
@@ -175,7 +175,7 @@ flowchart LR
 ### 版本末期文档整理
 
 本节固化每次版本确认前的文档整理轮，长期执行由 [ARCH-010](../trackers/todo.md) 承载。
-子项目版本纪元与根仓库一致：当前为 v0.1；`docs/adr/index.md` 声明当前版本。版本切换由用户
+子项目版本纪元与根仓库一致：当前为 v1.0；`docs/adr/index.md` 声明当前版本。版本切换由用户
 确认，agent 不自行判定。
 
 **触发条件**：每次版本确认前（开发分支 `develop` 合入 `main`，[ADR 0014](../adr/0014-develop-branch-rename.md)；

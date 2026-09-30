@@ -3,10 +3,10 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（全链路已实现并真机取证；日期化过程见 trackers/completed.md）
-最后更新：2026-09-26
+最后更新：2026-10-01
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_engines.py`、`tests/unit/test_normalize.py`、`tests/unit/test_chunking.py`、`tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`、`tests/smoke/test_live_mineru_chain.py`
-关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)
+关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)
 
 > **本篇回答的唯一问题**：一份 PDF 怎样变成可消费的产物，以及**什么算合格**。
 > 状态流转与职责分段归 [parsing-management.md](parsing-management.md)；如何与模型服务对话归
