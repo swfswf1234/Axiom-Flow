@@ -28,5 +28,6 @@
 | [0011](0011-ledger-one-row-per-task.md) | 台账一任务一行（专属承接计划只保留 `PLAN-*` 镜像行、请求号降为来源标注；共享计划承接仍登记 `REQ-*` 支线行） | Draft |
 | [0012](0012-workspace-directory-hygiene.md) | 工作区目录卫生（仓库根 `tmp/` 唯一临时区且不入库、仓内留档区退役并取代 ADR 0009 决定 2、`scripts/` 只放长期受管脚本、`logs/` 只写本项目日志且 ≤3 文件、本仓库不含前端） | Accepted |
 | [0013](0013-ledger-row-three-elements.md) | 台账行的三要素（`任务`＝任务描述含来源标记、`成功标准`＝完成时的具体终态且禁验收流程措辞、`承载`＝唯一承载文档指针（恰好 1 个链接，`design/`/`architecture/` 引用退回承载文档的关联设计）；日期、现状与细节只活在 `plans/`，取代 ADR 0006 的台账列名与列语义表述） | Accepted |
+| [0014](0014-develop-branch-rename.md) | 开发分支改名 `develop`、`release` 名称退役（分支职责与合并纪律不变；`AGENTS.md`＋testing＋doc-governance 三处正文同步；历史与当时记录的 `release` 措辞不回改） | Accepted |
 
-下一个可用编号：0014
+下一个可用编号：0015

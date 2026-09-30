@@ -1,7 +1,7 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-09-29
+最后更新：2026-09-30
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
@@ -167,3 +167,14 @@
   [history/plans/2026-09](../history/plans/2026-09/2026-09-29-af-table-family-governance.md)（保留「新表结构与表族关联」评审节、表数演进对账与两条准入守则、W1 口径位置定判表、W2 先红与变异复验记录、W4 放行结论）；运行时事实源为 [database-design.md](../architecture/database-design.md)（表清单节＋准入守则）与守护
   `tests/unit/test_db_table_family_governance.py`；关闭证据见 [completed.md](../trackers/completed.md) PLAN-020 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-29-af-table-family-governance.md` 处须改指上述归档位置（本批已同步 PLAN-018 壳与 `docs/trackers/*`）。
+- PLAN-022 台账行三要素改造（Axiom-Flow，B 类，治理轮）已完成（2026-09-30，用户三轮裁决逐轮落地、
+  S1~S6 逐条判定后关闭），计划按立项判定 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-30-ledger-row-three-elements.md)（保留三轮
+  立项裁决原文、三轮先红读数、两批各五条守护变异复验、两轮「补前删」零丢失核对表，以及 W16 的
+  **口径去重结论**——三列语义的唯一正文落在何处）；运行时事实源不在壳内，而以
+  [ADR 0013](../adr/0013-ledger-row-three-elements.md)（决定记录）与
+  [task-lifecycle.md「任务台账与承载」](../standards/task-lifecycle.md)（列契约唯一正文）＋守护
+  `tests/contract/test_tracker_governance.py` 为准；关闭证据见
+  [completed.md](../trackers/completed.md) PLAN-022 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-30-ledger-row-three-elements.md` 处须改指上述归档位置
+  （本批已同步 `docs/adr/0013` 与 `docs/trackers/*`）。

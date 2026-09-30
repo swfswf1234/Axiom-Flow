@@ -96,9 +96,10 @@ flowchart LR
 - `design/` 文档只有 plans/ 下评审确认完毕才晋升；迁入时设计状态标 `Accepted`，确认状态初始
   为 `暂定`，随转正评审变为 `已确认`。
 - 任务完成时**同时清理 todo 条目与对应 plans/ 文档**（见「归档与删除」的关闭计划两态判定）；
-  收口顺序与「进度单源」（日期与现状只写承载文档，todo 的「承载」列只放那一篇承载文档的指针、
-  成功标准列不随进度改写；三列语义与列界见 [ADR 0013](../adr/0013-ledger-row-three-elements.md)）按
-  [任务生命周期](task-lifecycle.md)「任务台账与承载」执行。
+  台账列契约、「进度单源」（含「承载」列唯一指针）与收口顺序一律按
+  [任务生命周期](task-lifecycle.md)执行：列口径见其「任务台账与承载」，收口六步见其「计划生命周期」第 5 步。本文档不复制其口径；立法见
+  [ADR 0006](../adr/0006-ledger-plan-carrier-contract.md) 与
+  [ADR 0013](../adr/0013-ledger-row-three-elements.md)。
 - 每次主线任务完成后梳理文档一致性：① 检查涉及模块的 `architecture/`、`design/` 文档是否需
   增改删；② 检查 todo 行三列（任务／成功标准／承载）是否完整；③ 完成任务从 todo 移入 `completed.md`；④ 主线完成或
   长期任务重大变化在 `project-status.md` 记录。
@@ -177,7 +178,8 @@ flowchart LR
 子项目版本纪元与根仓库一致：当前为 v0.1；`docs/adr/index.md` 声明当前版本。版本切换由用户
 确认，agent 不自行判定。
 
-**触发条件**：每次版本确认前（`release` 合入 `main`、用户确认升版本时）执行一轮；版本之间
+**触发条件**：每次版本确认前（开发分支 `develop` 合入 `main`，[ADR 0014](../adr/0014-develop-branch-rename.md)；
+用户确认升版本时）执行一轮；版本之间
 文档变化未达整理规模时，由 ARCH-010 todo 条目记录待整理项，版本末期统一处理。
 
 **检查清单**：
@@ -209,7 +211,7 @@ flowchart LR
     端点与列清单对账），确认没有把过程叙述写回固定文档、也没有靠措辞虚报实现状态。
 
 **执行流程**：读取 `code-map.md` 与 `project-status.md` 掌握当前状态 → 按检查清单逐项整理 →
-每轮执行记录写入该轮承载计划（todo 行不跟现状，「承载」列仍只放那一篇承载文档的指针）→ 运行 `tests/contract/` 定向门禁，再运行完整门禁
+每轮执行记录写入该轮承载计划（进度单源，口径见[任务生命周期](task-lifecycle.md)）→ 运行 `tests/contract/` 定向门禁，再运行完整门禁
 （见[开发指南](../guides/development.md)）。
 
 ### 归档与删除

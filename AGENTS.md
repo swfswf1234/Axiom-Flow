@@ -140,11 +140,13 @@ todo 并请求用户协助回滚。
 
 ## 分支与完成门禁
 
-- `main` 保存已经确认的稳定基线，`release` 承接后续开发；开始实现前先确认当前位于 `release`。
-- 普通开发提交和推送进入 `release`。只有用户明确要求并完成适用门禁后，才把 `release` 合并回
+- `main` 保存已经确认的稳定基线，`develop` 承接后续开发（[ADR 0014](docs/adr/0014-develop-branch-rename.md)：
+  `release` 为旧名，2026-09-30 起改为此名，分支职责与门禁纪律不变）；开始实现前先确认当前位于
+  `develop`。历史资料与已关闭台账里的 `release` 分支字样按当时记录保留，不改写。
+- 普通开发提交和推送进入 `develop`。只有用户明确要求并完成适用门禁后，才把 `develop` 合并回
   `main`；不得隐式创建标签或 GitHub Release。
 - 本仓库无远端 CI，本地门禁是唯一门禁（`pytest tests -q` + `ruff check src tests`）；直接推送
-  `release` 或合并回 `main` 前必须完成本地门禁。
+  `develop` 或合并回 `main` 前必须完成本地门禁。
 
 ### 完成检查
 

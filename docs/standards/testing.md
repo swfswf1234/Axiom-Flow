@@ -2,7 +2,7 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-21
+最后更新：2026-09-30
 治理对象：测试分层、门禁组成、测试编写约定
 依据：QED-Tracker `docs/standards/testing.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)）
 关联测试：`tests/contract/test_test_suite_governance.py`
@@ -30,7 +30,8 @@ pytest tests -q
 ruff check src tests
 ```
 
-- 推送到 `release` 或合并回 `main` 前必须完成本地门禁，不能把分支已推送等同于已验证。
+- 推送到开发分支 `develop`（[ADR 0014](../adr/0014-develop-branch-rename.md)；旧名 `release`）或合并回
+  `main` 前必须完成本地门禁，不能把分支已推送等同于已验证。
 - 不引入远端 CI（GitHub Actions 等）；CI 相关配置不得新增。
 
 ## 测试编写约定

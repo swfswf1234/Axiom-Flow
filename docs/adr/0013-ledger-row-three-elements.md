@@ -2,8 +2,8 @@
 
 状态：Accepted
 最后更新：2026-09-30
-关联代码：`docs/trackers/todo.md`（表列与「规则」节）、`docs/standards/task-lifecycle.md`（列契约）、
-`docs/trackers/project-status.md`（引用台账列名处）
+关联代码：`docs/trackers/todo.md`（表列；其「规则」节只留指针）、`docs/standards/task-lifecycle.md`
+（列契约的**唯一正文**）、`docs/trackers/project-status.md`（引用台账列名处）
 关联测试：`tests/contract/test_tracker_governance.py`（新列名、纯指针断言、成功标准禁词与禁日期断言）
 
 ## 背景
@@ -87,6 +87,9 @@
   不回改（当时记录）。
 - **缓解**：承载计划的「工作项」表与「用户裁决登记」节本就是细节唯一事实源（ADR 0006）；
   `completed.md` 继续承载关闭后的全部判据与读数，信息不丢只搬家；「状态」列三态＋指针足以定位下一步。
+  三列口径的**唯一正文**是[任务生命周期](../standards/task-lifecycle.md)「任务台账与承载」——`todo.md`
+  「规则」节、`doc-governance.md` 与本地技能只链接该节、不复制列界数值与禁词清单；本 ADR 只作决定记录，
+  后续改口径动那一处正文即可（ADR 正文按 ADR 治理保留当时文本，不随标准回写）。
 
 ## 取代
 
@@ -98,5 +101,6 @@
 由「证据/下一条件」改到「任务」列。
 被取代：无。
 关联：[ADR 0008](0008-fixed-doc-form-and-metadata-genres.md)（固定文档正文去日期化——本决定把同一
-纪律延伸到台账行）、[ADR 0006](0006-ledger-plan-carrier-contract.md)、实施载体
-[PLAN-022](../plans/2026-09-30-ledger-row-three-elements.md)。
+纪律延伸到台账行）、[ADR 0006](0006-ledger-plan-carrier-contract.md)、实施载体（已收口并 Retain
+归档）[PLAN-022](../history/plans/2026-09/2026-09-30-ledger-row-three-elements.md)、口径唯一正文
+[任务生命周期](../standards/task-lifecycle.md)「任务台账与承载」。

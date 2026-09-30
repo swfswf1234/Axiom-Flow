@@ -1,6 +1,6 @@
 # 台账行三要素改造（ledger-row-three-elements）
 
-状态：In Progress
+状态：Completed
 任务类型：B
 最后更新：2026-09-30
 关联 ADR：[ADR 0013](../adr/0013-ledger-row-three-elements.md)（本壳的实施依据：成功标准＝完成时的具体终态、承载列＝唯一承载文档指针、行内禁日期）、[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载与进度单源——本壳只收紧其列名与列语义表述）、[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)（固定文档正文去日期化，同一纪律延伸到台账行）、[ADR 0011](../adr/0011-ledger-one-row-per-task.md)（一任务一行不变，请求接收标记改写入「任务」列）
@@ -87,6 +87,8 @@
 | W13 | `test_tracker_governance.py` 第三轮：`POINTER_LINKS_EXACT = 1`、新增「任务／成功标准」列禁链接断言、镜像与聚合判定改 ID 前缀、承载引用只查「承载」列；先取红读数 | 完成 2026-09-30（红读数见下节） |
 | W14 | `todo.md` 第三轮：9 行「承载」改单指针、4 个镜像行的壳链接挪入「承载」列（链接文本＝壳 H1）、「任务」列去链接、节首段与「规则」节同步 | 完成 2026-09-30（`11 passed`） |
 | W15 | 第三轮五条变异复验 ＋ 指针退回壳的零丢失核对 ＋ 全量门禁 ＋ 状态快照/技能/提交稿措辞同步 | 完成 2026-09-30（**560 passed / 10 skipped** + ruff clean） |
+| W16 | 第四批（用户收口指令附带）：把三列口径的**重复说辞**收进单一正文——`task-lifecycle.md`「任务台账与承载」声明为唯一正文；`todo.md` 节首段与「规则」节改指针、删去列界数值/禁词清单/唯一指针判据的复写；`doc-governance.md` 两处（生命周期 bullet、版本末期执行流程）去掉对「承载列唯一指针」的复写 | 完成 2026-09-30 |
+| W17 | 收口六步执行：结论入本壳 → todo 治理轮节整行原子迁移 → `completed.md` 入册 → `plans/index.md` 登记 Retain 去处 → `project-status.md` 刷新 → 全量门禁 | 完成 2026-09-30（读数见「关闭与归档」） |
 
 ## 验证与验收
 
@@ -180,10 +182,46 @@
 第一轮三条（指引列撑过 100 字／任务列注入日期／支线行删 `../plans/` 承载引用）各 `1 failed, 8 passed`，
 还原后 `9 passed`。
 
+**W16 去重「补前删」核对（`todo.md` 与 `doc-governance.md` 删掉的复写，逐条已在唯一正文安家）**
+
+| 从 `todo.md`「规则」节／`doc-governance.md` 删除的复写 | 唯一正文位置 | 核对 |
+| --- | --- | --- |
+| 三列语义（任务＝范围不放链接、成功标准＝具体终态、承载＝唯一承载文档指针）、列界 80 字、禁词四条、`S\d+~S\d+` 区间禁令、指针数恰好 1 与残余为空、行内禁 ISO 日期 | `task-lifecycle.md`「列契约」三条 bullet ＋「守护判据 ①~④」 | 命中（本轮只删复写，未改任何数值） |
+| 一任务一承载（支线指针＋承载节四要素＋聚合行列全支线 ID） | `task-lifecycle.md`「一任务一承载」条 | 命中 |
+| 一任务一行（入站请求与专属计划不拆两行） | `task-lifecycle.md`「一任务一行」条（ADR 0011） | 命中 |
+| 进度单源（日期化进度只写承载文档、收口整行原子迁移） | `task-lifecycle.md`「进度单源」条 | 命中 |
+| 并发上限 `In Progress` ≤3 与显式豁免 | `task-lifecycle.md`「并发与规模」条 | 命中 |
+| 收口顺序六步 | `task-lifecycle.md`「计划生命周期」第 5 步 | 命中 |
+| `**请求接收（来源仓库 REQ-xxx）**` 标记写在「任务」列句首 | `task-lifecycle.md`「列契约」任务条 | 命中 |
+| Blocked 证据/恢复条件写承载计划 | `task-lifecycle.md`「计划生命周期」与 ADR 0006；todo 保留一句读表提示 | 命中 |
+
+**保留在 `todo.md` 的本地事实**（唯一正文未覆盖、读表必需）：ID 前缀四类的含义、类别三值、状态取值与
+`PLAN-*` 行镜像 `状态：` 的约定、跨项目粗体标记形状、子项目请求登记口径。
+
 ## 关闭与归档
 
-- 关闭条件：S1~S6 逐条判定成文，W11~W15 完成且全量门禁绿（S4 现按「恰好 1 个链接」判定）。
-- 收口按 ADR 0006 六步：结论入本壳 → todo 行关闭并原子迁移 → `completed.md`（判据与读数安家）→
-  `plans/index.md` 登记 Retain 去处 → `project-status.md` 刷新 → 门禁全绿。
-- 归档判定 Retain：本壳的三轮列界/禁词/指针数读数与两轮零丢失核对是列契约的判例来源，供后续
-  规范化整理轮复用。
+**S1~S6 逐条判定（判据原文见「目标与成功标准」表）**
+
+| # | 判定 | 证据 |
+| --- | --- | --- |
+| S1 | 达成 | `todo.md` 表头七列 `ID / 类别 / 优先级 / 状态 / 任务 / 成功标准 / 承载`，`TODO_COLUMNS` 与之逐字一致；`test_tracker_governance.py` 11 例全绿 |
+| S2 | 达成 | 9 个活跃行「任务」列以 `做什么＝…→…` 列范围、无进度与裁决史；`test_pointer_column_is_a_single_document_link` 对「任务／成功标准」两列断言零链接（变异 M2 挪回链接即红）；PLAN-018 行句首保留 `**请求接收（QED-Engine 根仓库 REQ-099）**` |
+| S3 | 达成 | 全部行「成功标准」≤80 字且写终态；禁词与 `S\d+~S\d+` 由 `test_success_criteria_are_concrete_and_bounded` 挡住（变异 M2/M3 各转红一次） |
+| S4 | 达成 | 每行「承载」列＝恰好 1 个链接、剥链接与分隔符后残余为空；4 个镜像行指向自身壳且链接文本＝壳 H1（M4 改指非 `plans/` 文档即红），支线行指向承载壳，长期行指向 `doc-governance.md`/`roadmap.md` |
+| S5 | 达成 | 三列剥链接目标后零 `YYYY-MM-DD`；`test_rows_are_date_free_and_carrier_reference_registered` 有效（M5 注入日期即红） |
+| S6 | 达成 | 两轮「补前删」零丢失核对表在「台账历史归档」节，逐条命中 PLAN-009/018/019 壳、`completed.md`、`roadmap.md`、`project-status.md` |
+
+**W16 去重结论（本轮口径的最终形状）**：三列语义、列界数值、禁词清单与四条守护判据的**唯一正文**在
+`docs/standards/task-lifecycle.md`「任务台账与承载」；`todo.md` 只保留读表必需的本地事实（ID 前缀、
+类别与状态取值、排版标记）并以指针承接其余，`doc-governance.md` 两处复写改为链接。立法记录留在
+[ADR 0013](../adr/0013-ledger-row-three-elements.md)（决定体裁，不随标准正文改写）。此后改列契约只动
+task-lifecycle 一处，`test_tracker_governance.py` 的断言与文档措辞随动，不再出现「同一规则三套说法」。
+
+**收口执行**（ADR 0006 六步）：结论入本壳 → todo「治理轮」节整节原子迁移（PLAN-022 行随节移除）→
+`completed.md` PLAN-022 行（判据与读数安家）→ `plans/index.md` 登记 Retain 去处并同步 ADR 0013 的
+活链接 → `project-status.md` 当前主线转「已关闭」→ 全量门禁。
+
+**归档判定 Retain**：本壳的三轮列界/禁词/指针数先红读数、两批各五条变异复验、两轮零丢失核对表与
+W16 的去重结论共同构成列契约的**判例来源**（后续规范化整理轮据此判定，不再重跑变异），属不可再生
+证据。壳已迁至 `docs/history/plans/2026-09/`（本文件即归档位置；登记处＝`docs/plans/index.md` 关闭
+登记与本目录 `index.md`）。
