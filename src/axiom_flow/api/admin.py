@@ -1,5 +1,5 @@
 """
-模块职责：非公开管理面路由——af_* 四表行与 `QED_DATA_ROOT/parsed/` 产物的一键清除（先清后建）。
+模块职责：非公开管理面路由——af_* 表族行与 `QED_DATA_ROOT/parsed/` 产物的一键清除（先清后建）。
 设计关联（DesignRef）：docs/architecture/api.md（「非公开管理面」节）、docs/design/parsing-management.md
 实现状态：Current（PLAN-010 / ARCH-024）
 关联测试：tests/contract/test_api_v1_contract.py（TestAdminPurgeEndpoint）

@@ -155,7 +155,7 @@ ARCH-010 证据列刷新，`确认状态` 处置结果记入 `completed.md`。
      长期行既登遗留与 PLAN-013 W4-② 范围，本轮不代改。
    - `scripts/axiom_flow_service.py` 文件头仍写日期化过程（「配置简化（2026-09-17，PLAN-002）」），
      同上归 ARCH-010。
-   - `scripts/tmp/` 临时脚本目录未清理（另一条线在飞，本轮不碰）。
+   - `tmp/` 临时脚本目录未清理（另一条线在飞，本轮不碰）。
 9. **关闭与归档执行**：归档判定 **Retain** 成立（推导依据、逐条判定与变异证据不可再生），本壳迁
    `docs/history/plans/2026-09/`，`plans/index.md` 与 `history/plans/2026-09/index.md` 登记去处；
    todo 的 PLAN-014 行移除、ARCH-010 长期行证据刷新，结果迁 `completed.md`。

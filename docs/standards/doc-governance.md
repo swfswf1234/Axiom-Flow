@@ -2,7 +2,7 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-23
+最后更新：2026-09-30
 治理对象：文档分类与事实边界、确认状态、文档生命周期、代码与文档追溯、写作命名与体裁化元数据、固定文档骨架与可对账契约、版本末期整理、归档与删除
 依据：QED-Tracker `docs/standards/doc-governance.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)），
 元数据体裁、骨架与对账规则由 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 立法；上游参照 QED-Engine 根仓库标准
@@ -96,10 +96,11 @@ flowchart LR
 - `design/` 文档只有 plans/ 下评审确认完毕才晋升；迁入时设计状态标 `Accepted`，确认状态初始
   为 `暂定`，随转正评审变为 `已确认`。
 - 任务完成时**同时清理 todo 条目与对应 plans/ 文档**（见「归档与删除」的关闭计划两态判定）；
-  收口顺序与「进度单源」（日期进度只写承载文档，todo 证据列只留最新结论）按
+  收口顺序与「进度单源」（日期与现状只写承载文档，todo 的「承载」列只放那一篇承载文档的指针、
+  成功标准列不随进度改写；三列语义与列界见 [ADR 0013](../adr/0013-ledger-row-three-elements.md)）按
   [任务生命周期](task-lifecycle.md)「任务台账与承载」执行。
 - 每次主线任务完成后梳理文档一致性：① 检查涉及模块的 `architecture/`、`design/` 文档是否需
-  增改删；② 检查 todo 证据列是否完整；③ 完成任务从 todo 移入 `completed.md`；④ 主线完成或
+  增改删；② 检查 todo 行三列（任务／成功标准／承载）是否完整；③ 完成任务从 todo 移入 `completed.md`；④ 主线完成或
   长期任务重大变化在 `project-status.md` 记录。
 
 ### 代码与文档追溯
@@ -208,7 +209,7 @@ flowchart LR
     端点与列清单对账），确认没有把过程叙述写回固定文档、也没有靠措辞虚报实现状态。
 
 **执行流程**：读取 `code-map.md` 与 `project-status.md` 掌握当前状态 → 按检查清单逐项整理 →
-每轮执行记录在 ARCH-010 todo 证据列登记 → 运行 `tests/contract/` 定向门禁，再运行完整门禁
+每轮执行记录写入该轮承载计划（todo 行不跟现状，「承载」列仍只放那一篇承载文档的指针）→ 运行 `tests/contract/` 定向门禁，再运行完整门禁
 （见[开发指南](../guides/development.md)）。
 
 ### 归档与删除

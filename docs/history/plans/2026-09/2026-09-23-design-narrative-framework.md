@@ -220,7 +220,7 @@
   `cells[0]` 并非「—」），修正变异后转红。
 - **门禁**：`pytest tests -q` → 485 passed / 10 skipped；`ruff check src tests scripts` → All checks
   passed。本计划无 MySQL 面变更，未跑 `QED_TEST_MYSQL=1` 层（该层判据不覆盖文档改动）。
-- **移交 ARCH-010 的残余**（不在本壳范围，`src/` 与 `scripts/tmp/` 的文件头 docstring 仍写旧壳编号
+- **移交 ARCH-010 的残余**（不在本壳范围，`src/` 与 `tmp/` 的文件头 docstring 仍写旧壳编号
   「条文 3/7/9」「V1/V3/V8」；以及 `qed_llm_calls` 的归属矛盾）：见 [todo.md](../../../trackers/todo.md)
   ARCH-010 证据列。
 
@@ -262,5 +262,5 @@
 - **门禁**：`pytest tests -q` → 485 passed / 10 skipped；`ruff check src tests scripts` → All checks
   passed。A 类计划无 MySQL 面变更，未跑 `QED_TEST_MYSQL=1` 层。
 - **`确认状态` 保持「暂定」**：三篇待你逐篇确认后才改「已确认」（可分批），本壳关闭不依赖该动作。
-- **移交 ARCH-010 的残余**（长期行保持 `In Progress`）：`src/` 与 `scripts/tmp/` 文件头 docstring 的旧壳
+- **移交 ARCH-010 的残余**（长期行保持 `In Progress`）：`src/` 与 `tmp/` 文件头 docstring 的旧壳
   编号（「条文 3/7/9」「V1/V3/V8」）与 `qed_llm_calls` 归属矛盾，属 design/ 之外的叙述面清扫，不在本壳范围。

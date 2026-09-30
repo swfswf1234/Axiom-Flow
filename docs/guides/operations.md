@@ -16,7 +16,10 @@
 ```
 
 - 就绪判据：`GET /api/v1/health` 返回 200（8900 控制中心与 `start-all.ps1` 探测路径一致）。
-- PID 文件 `logs/qed-axiom.pid`，子进程日志 `logs/qed-axiom-serve.log`。
+- PID 文件 `logs/qed-axiom.pid`，子进程日志 `logs/qed-axiom-serve.log`（`"ab"` 追加、无轮转）。
+- `logs/` 守则（[ADR 0012](../adr/0012-workspace-directory-hygiene.md) 决定 4，人工执行、无代码轮转）：
+  只写本项目日志与运行时文件、名字一律以 `qed-axiom` 开头（含 `qed-axiom.pid`）、**区内文件数固定不超过 3 个**，
+  超出即删最旧者；外部组件（8900/8903/MinerU 容器）的日志不得写进本目录。
 - 端口来源：`QED_AXIOM_URL` 解析 > `AXIOM_PORT` > 8902。
 - 配置语境：脚本不再传 `--mode`（2026-09-17 配置简化，PLAN-002）——解析始终直连模型服务
   （[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)），配置由 `config.py`
@@ -53,14 +56,16 @@
 | `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/` | **根视图**：`book.json`、`pages/p<NNNN>.png`（150 DPI 页图正本，ingest 产物）、`manifest.json`；重新 ingest 只原子替换这三者 |
 | `…/<book_id>/versions/<job_id>/` | **一次解析任务 = 一个版本**（PLAN-004 / REQ-080）：`book.json`、`pages/p<NNNN>.{png,md,blocks.json}`、`chunks.json`、`manifest.json`；生效版本由 `af_books.active_job_id` 指认，页图为根视图页图的**硬链接**（同一页图在 N 个版本不重复占盘） |
 | `<QED_DATA_ROOT>/raw/<domain_id>/<course_id>/*.pdf` | 源书库（只读，QED-Tracker 写入；如 `math-advanced/math_analysis/`） |
-| `<QED_DATA_ROOT>/backups/` | D 类数据操作的备份留痕例外区（根仓库 ADR 0018）：命名 `YYYY-MM-DD-<任务标识>`，对应操作必须在本仓 todo/收口记录登记；本仓当前备份落**仓内** `data/backups/`（不在数据根内），沿用同一命名式；未来若把备份写进数据根必须改用本行路径 |
+| `<QED_DATA_ROOT>/backups/` | D 类数据操作的备份留痕例外区（根仓库 ADR 0018）：命名 `YYYY-MM-DD-<任务标识>`，对应操作必须在本仓 todo/收口记录登记；本仓一次性窗口的备份件落**仓库根** `tmp/backups/`（不在数据根内、`.gitignore` 排除、可随手清理，[ADR 0012](../adr/0012-workspace-directory-hygiene.md)）；需长期保值的回滚锚点必须写进本行数据根路径 |
 | `<QED_DATA_ROOT>/tmp/` | **本服务不写**：引擎中间产物只在内存（[PP-6](../design/parsing-pipeline.md)），`tmp/axiom-flow/<job_id>/` 一旦存在即缺陷 |
-| `data/` | 仓库内**留档与备份区**（`data/probes/` 真机窗口证据、`data/backups/` D 类备份留痕；`.gitignore` 内不入版本库）；**不是数据根候选**——缺 `QED_DATA_ROOT` 时服务启动期直接报错，无仓内静默回退（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）；区内不得出现 `book.json`/`pages/`/`versions/` 产物形状（v1 扁平布局残骸属野生区，见下方「留档区与瞬态核对步」）。**唯一例外**：`data/probes/<窗口>/root/` 是窗口脚本显式声明的**探针数据根**，其内 `parsed/` 正当 |
+| `<仓库工作区根>/tmp/` | **仓库内唯一临时与留档区**（[ADR 0012](../adr/0012-workspace-directory-hygiene.md)）：一次性窗口驱动与探针脚本、真机取证留档（`tmp/probes/<窗口>/`）、备份件（`tmp/backups/`）；`.gitignore` 排除 ⇒ **不入库、不作为事实源、可随手清理**，需长期保存的结论一律写进 `docs/`。其内 `tmp/probes/<窗口>/root/` 是窗口脚本显式声明的**探针数据根**，与真实数据根同受「只写 `parsed/`」约束。**与上一行的数据根 `tmp/` 是两个不同位置**，本仓凡指仓内者一律写「仓库根 `tmp/`」 |
 
 **留档区与瞬态核对步**（发现即登记处置，勿随手删）：
 
-1. `data/` 不得出现产物形状（`book.json`/`pages/`/`versions/`），唯一例外 `data/probes/<窗口>/root/`
-   探针数据根——由 `tests/contract/test_storage_conventions_governance.py` 在默认门禁断言。
+1. 仓内**不得存在 `data/`**（留档区已按 [ADR 0012](../adr/0012-workspace-directory-hygiene.md) 决定 2 退役，
+   2026-09-29 清空且不备份）；仓库根 `tmp/` 内的留档件不受产物形状约束（非数据根、内容可弃），
+   但探针数据根 `tmp/probes/<窗口>/root/` 内的布局仍须与真实数据根同构——由
+   `tests/contract/test_storage_conventions_governance.py` 在默认门禁断言。
 2. 数据根 `tmp/axiom-flow/<job_id>/` 一旦存在即缺陷（PP-6 字面判据；治理条文里该目录只允许以
    「禁止它」的语境出现，同守护文件按行断言）。
 3. 瞬态残留（名字含 `.tmp-`/`.old-`）：服务**启动期**与**管理面清除**都会计数告警（只告警不清理，
@@ -89,7 +94,7 @@
 #   窗口期间不得经 8900 重启/换起 vision 槽位（2026-09-21 R1 实证：重启令排队与在飞任务同时判死）
 # C-1 停服（避免运行中写库）
 & D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py stop
-# C-2 备份 af_* 四表（含 alembic_version），例：导出到带日期的 .sql 后核对行数
+# C-2 备份 af_* 表族（含 alembic_version），例：导出到带日期的 .sql 后核对行数
 & mysqldump --single-transaction qed af_books af_parse_jobs af_pages af_block_edits alembic_version > af_backup_YYYYMMDD.sql
 # C-3 迁移（仓库根目录，读 .env 的 QED_DB_*）
 & D:\software\anaconda3\envs\QED_env\python.exe -m alembic upgrade 20260920_0002
@@ -101,13 +106,13 @@
 # C-6 起服并只读冒烟
 & D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py start --wait
 # C-7 窗口前置取证（不写不解析：就绪轮询 + 部署自证 + 越界 422 门槛复验）
-& D:\software\anaconda3/envs\QED_env\python.exe scripts/tmp/live_reparse_b01_pages.py --check-only
+& D:\software\anaconda3/envs\QED_env\python.exe tmp/live_reparse_b01_pages.py --check-only
 ```
 
 - **窗口工具一律直连本机端口（`trust_env=False`）**：Windows 注册表代理开启后**不豁免** `127.0.0.1`，
   `httpx` 默认跟随环境代理会让 5002/8902 的探活全部变 **502**（同刻 `curl` 直连仍 200），窗口可因此
   空转到截止。适配器侧的同一条不变式见 [model-integration](../design/model-integration.md) 的
-  「直连，不经系统代理」条；`scripts/tmp/` 下的
+  「直连，不经系统代理」条；`tmp/` 下的
   窗口脚本与人工 `curl` 之外的一切自动化都必须显式关闭 `trust_env`。
 
 - **模型就绪不以 8900 的一次提示为准**：5002 的 vLLM 权重加载是分钟级，而根侧前端 `operateModel`
@@ -117,7 +122,7 @@
 - **回滚**：`python -m alembic downgrade 20260917_0001` 是**有损**操作（旧结构无法表达多版本，按
   `(书, 页)`/`(书, 页, 块)` 只保留 `job_id` 最小的一行），因此回滚优先用 C-2 的备份还原；产物文件
   不随迁移删除，DB 与文件解耦。
-- **D 步（单次重解析）**：`python scripts/tmp/live_reparse_b01_pages.py 1 20` —— 脚本**只经 8902 API**
+- **D 步（单次重解析）**：`python tmp/live_reparse_b01_pages.py 1 20` —— 脚本**只经 8902 API**
   驱动（提交期门槛、生效指针、只读端点一并取证），先按需 re-ingest 补齐根视图页图（**根仓库
   2026-09-21 已清空 `dataset/parsed/` 的 4 本旧代际产物，故页图必须重渲染；`af_pages` 里的旧
   `parsed` 行描述的文件已不存在**），再提交一次解析任务；产物落 `versions/<job_id>/`，成功后
@@ -125,8 +130,8 @@
 - **补证据不得再解析一次**：解析成功但取证段失败时，用 `--evidence-only <job_id>` 只读重取
   （跳过 ingest/门槛探针/C-0/提交）。单次重解析是用户裁决的窗口约束，重新解析会制造新版本目录并
   让已激活指针被移动。首次窗口（2026-09-21）即以此方式补齐 `S2_after.json`。
-- **探针窗口（`qed_test` + 隔离数据根，PLAN-007 W6 起可用）**：`python scripts/tmp/live_wholebook_req086.py`
-  用**真实环境变量**把库换成 `qed_test`、数据根换成 `data/probes/<窗口目录>/root`（不改 `.env`，退出即回
+- **探针窗口（`qed_test` + 隔离数据根，PLAN-007 W6 起可用）**：`python tmp/live_wholebook_req086.py`
+  用**真实环境变量**把库换成 `qed_test`、数据根换成 `tmp/probes/<窗口目录>/root`（不改 `.env`，退出即回
   业务口径），并在解析前硬闸门断言二者到位；探针服务起在独立端口（默认 8912，**不写 `logs/qed-axiom.pid`**，
   与业务 8902 并存）。脚本自带「业务侧零写入」前后比对（业务库行 + 真实 `dataset/parsed/` 目录指纹），
   不一致即判 FAIL。**失败重跑不算「为补证据再解析一次」**——那条约束的是成功之后。
@@ -149,7 +154,7 @@
   「Stopping docker.service」与新的内核开机行即确诊；触发条件是**最后一个 Linux 进程退出**
   （`[boot] systemd=true` + mirrored networking 下发行版约 15 秒后停机）。`.wslconfig` 的
   `vmIdleTimeout=2147483647` 在该环境下**不生效**，别指望配置项。处置＝解析窗口全程让一个常驻 Linux
-  进程存活：`scripts/tmp/live_wholebook_req086.py` 自带该前置（`--wsl-holder 300` 默认开，滚动重拉
+  进程存活：`tmp/live_wholebook_req086.py` 自带该前置（`--wsl-holder 300` 默认开，滚动重拉
   `wsl bash -c "sleep 300"`，退出时收掉；`--wsl-holder 0` 显式关闭并只留 WARN），手工驱动容器时可用
   `nohup bash -c 'for i in $(seq 1 40); do wsl bash -c "sleep 600"; done' &` 顶同样的位置。
   该处置属机器侧配合，**不改任何业务参数**（窗口/deadline 原样）；脚本里的 `--wsl-holder` 只是本仓库
@@ -172,7 +177,7 @@
   只想确认现状不必起服：`SELECT job_id, status FROM af_parse_jobs WHERE status IN ('queued','running')`。
 - **`interrupted` 的续跑语义 = 同一 `job_id` 重放**，不新建版本：版本作用域是 `(book_id, job_id)`，
   已 `parsed` 且产物在位的页跳过引擎调用，只补剩余页；重放前**不需要**手工清行、也不需要删版本目录。
-  **但重放入口目前只有代码路径**（`orchestrator.run_parse_job(job_id=…)`，`scripts/tmp/` 窗口脚本按此
+  **但重放入口目前只有代码路径**（`orchestrator.run_parse_job(job_id=…)`，`tmp/` 窗口脚本按此
   用法）：`POST /parse-jobs` 每次生成新 `job_id`，按既有 `job_id` 续跑的端点**至今没有承载行**——原挂
   本方 `REQ-087`，2026-09-22 该号让给根侧「空白页合法化 + 跨版本续跑语义」后（本方端点行改号
   `REQ-088`），续跑端点本身不再归属任何在办计划，PLAN-006/007 都未开放它。因此真机上被打断的版本
@@ -184,7 +189,7 @@
   `SELECT book_id, parse_status, last_parse_result FROM af_books`（预期进度全 `pending`、
   存量终态值平移进 `last_parse_result`）→ 起服。**降级有损**：`partial` 在旧结构无对应值，
   回滚时按旧语义归 `completed`。**已于 2026-09-22 R2 窗口在真机 `qed` 执行完毕**（备份
-  `data/backups/window-20260922/af_backup_20260922.sql`，起服后启动期归一把孤儿行
+  `tmp/backups/window-20260922/af_backup_20260922.sql`，起服后启动期归一把孤儿行
   `5f43593a12cc` 改判 `interrupted`，见 PLAN-003 R2 W-A）。
 
 ## 书目删除的落库与磁盘口径（2026-09-22 D3 真机演练测定）
@@ -198,7 +203,7 @@
 - **不裁剪空父级目录**：如 `parsed/probe/d3-20260922/` 删除后其父 `parsed/probe/` 留在盘上。
   契约只承诺书目录，空目录不算残留缺陷；若要裁剪须先改 `design/parsing-management.md` 的删除契约。
 - **回滚**：无「撤销删除」路径，只能按备份还原 `af_*` + 重新 ingest/解析重建产物；执行前必须先
-  导出 `af_books/af_pages/af_block_edits/af_parse_jobs` 四表并核对行数。
+  导出 `af_*` 表族（`af_books`、`af_parse_jobs`、`af_pages`、`af_block_edits`，与 `AF_TABLES` 同源）并核对行数。
 
 ## 管理面一键清除 runbook（`POST /api/v1/admin/purge`）
 
@@ -214,7 +219,7 @@
    每条都应是**书目录本身**，而不是它下面的 `pages/` 或 `versions/…`——出现后者说明目录识别被误判
    （`domain_id`/`course_id` 为空时书目录只有两层，判例 ARCH-026 / PLAN-011），此时真删会留下
    `book.json`/`manifest.json` 与空目录，必须停手。
-3. **备份**：导出 `af_books`/`af_parse_jobs`/`af_pages`/`af_block_edits` 四表并核对行数——本端点
+3. **备份**：导出 `af_*` 表族全部表（与 `AF_TABLES` 同源）并核对行数——本端点
    **没有 undo**，产物目录只能靠重新 ingest + 解析重建。
 4. **真删**：`{"dry_run": false, "confirm": "PURGE", "scope": …}`。书目行落点越出 `parsed/` 返回
    400（零删除）；作用域内有 `queued`/`running` 任务返回 409（零删除）——**落点判定在先**，收到 409

@@ -70,7 +70,7 @@ CLI 只提交并轮询生产 Job，必须另行启动独立 Worker。完成后�
 python -m axiom_flow.tools.reset_dev_database --database axiom_flow_test
 ```
 
-工具写入 `data/backups/reset-*.json` 的只是数据库 revision、表名和行数清单，不包含业务数据，
+工具写入 `tmp/backups/reset-*.json` 的只是数据库 revision、表名和行数清单，不包含业务数据，
 不能作为恢复备份。`--allow-runtime` 只是代码级危险操作开关，不代表运行库已经备份；没有独立的
 MySQL 数据备份、产物备份和恢复演练时禁止对运行库执行重建。
 

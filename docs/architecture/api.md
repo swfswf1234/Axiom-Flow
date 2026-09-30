@@ -213,7 +213,7 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 ### ③ 解析结果与 PDF 对照
 
 本节端点以**生效解析版本**为读取作用域（`af_books.active_job_id` → `versions/<job_id>/`；
-NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/{index}/edit`）为 af_* 四表契约，
+NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/{index}/edit`）为 af_* 表族契约，
 **取代** 8900 现用的 `/review`（ok/bad）；8900 侧适配（`/review`→`/edit`、补 ingest/chunks 透传）
 归根仓库的请求承载（见「验证与追溯」的来源条）。
 
@@ -420,7 +420,7 @@ NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/
 
 ### 非公开管理面（af_* 与产物一键清除）
 
-这一类**不属于上面四类公共契约**：它是「先清后建」的运维通路，一次调用把 `af_*` 四表的解析侧数据与
+这一类**不属于上面四类公共契约**：它是「先清后建」的运维通路，一次调用把 `af_*` 表族的解析侧数据与
 `QED_DATA_ROOT/parsed/` 产物目录一起清掉，作用域可以是指定书目或全项目。**8900 网关与 8903 前端
 不得透传、不得消费**，因此它不进「端点总表」（总表只覆盖公共契约面）。
 
@@ -445,8 +445,8 @@ NULL → 书目录根 = 根视图 legacy）。块编辑端点（`PUT .../blocks/
 
 | 字段 | 类型 | 默认 | 语义 |
 | --- | --- | --- | --- |
-| `scope.all` | bool | `false` | `true` = 全项目：`af_*` 四表**全部行** + `parsed/` 下所有书目录（含每个版本子树） |
-| `scope.book_ids` | str[] | — | 按书目：清这些书在四表的行（**含全部解析版本**，也含 `af_parse_jobs` 审计行）与其磁盘目录；每项须为安全路径段（违规 422） |
+| `scope.all` | bool | `false` | `true` = 全项目：`af_*` 表族**全部行** + `parsed/` 下所有书目录（含每个版本子树） |
+| `scope.book_ids` | str[] | — | 按书目：清这些书在 af_* 表族的行（**含全部解析版本**，也含 `af_parse_jobs` 审计行）与其磁盘目录；每项须为安全路径段（违规 422） |
 | `dry_run` | bool | **`true`** | 缺省即演练：响应给清单与计数，磁盘与库**零改动** |
 | `confirm` | str | `""` | 仅 `dry_run:false` 时校验，须逐字为 `"PURGE"` |
 
@@ -479,7 +479,7 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
 
 **六条不变式**：
 
-- **库侧只碰 `af_*` 四表的行**：只用 DML，无 DDL、无 `DROP DATABASE`（与 ADR 0005 的同源纪律）；
+- **库侧只碰 `af_*` 表族的行**：只用 DML，无 DDL、无 `DROP DATABASE`（与 ADR 0005 的同源纪律）；
   共享库中其他项目的 `qt_*` 表不受影响。`af_books` 行同样清除——书目可经
   `POST /api/v1/books/sync` 从根库重建，它不是本仓库的持久资产。
 - **作用域守卫**：磁盘目标经 `resolve()` 后必须落在 `QED_DATA_ROOT/parsed/` 之内，否则 **400 整请求
@@ -492,7 +492,7 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
   **不回滚**，但残行必被下一次清除幂等收掉，且 `failures` 明写。**不做「假装成功」**（ADR 0004）。
 - **幂等**：重复清除（无匹配行/目录）返回 200 且 `deleted` 全 0、`failures` 空——「没什么可删」不是
   失败。按书目形态**不判书目存在性**（与 `GET /api/v1/parse-jobs?book_id=` 同一口径）。
-- **不可回滚**：本端点没有 undo。执行纪律＝先 `dry_run` 留清单，再备份 `af_*` 四表，最后真删
+- **不可回滚**：本端点没有 undo。执行纪律＝先 `dry_run` 留清单，再备份 `af_*` 表族，最后真删
   （见 [operations.md](../guides/operations.md)）；真实数据根上的全项目清除属**另一次 D 类批准**。
 
 错误次序固定：`confirm` → 作用域（形状 + 落点）→ 在飞判定 → 删除，故脏落点必判 400 而非 409；
@@ -586,6 +586,6 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
 - 单一占用闸门与越界页幽灵行修复：`PLAN-003`（DEFECT-003/006，已归档）。
 - 逐页清单与作业列表两条只读端点：`PLAN-008`（REQ-087/088，已归档）。
 - 非公开管理面一键清除及其目录识别缺陷修正：`PLAN-010` / `PLAN-011`（ARCH-024 / ARCH-026，已归档）；
-  真机两形态演练留档 `data/probes/purge-20260923/`、`data/probes/purge-business-20260923/`。
+  真机两形态演练留档 `tmp/probes/purge-20260923/`、`tmp/probes/purge-business-20260923/`。
 - 8900 侧透传适配（`/review`→`/edit`、ingest/chunks 透传）：入站请求 REQ-001，状态与回执见
   `docs/trackers/todo.md` 跨项目节。

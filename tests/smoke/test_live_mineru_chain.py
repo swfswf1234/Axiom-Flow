@@ -1,6 +1,6 @@
 """真机冒烟：MinerU 3.4.4 两条提交形状（逐页 PNG + 整本 PDF）可重复验证。
 
-守护面：PLAN-003 W8 8.1——把一次性取证脚本（`scripts/tmp/live_probe_*.py`）固化为可重跑用例；
+守护面：PLAN-003 W8 8.1——把一次性取证脚本（`tmp/live_probe_*.py`）固化为可重跑用例；
 逐页路径覆盖 `parse_page` 的 PNG 提交形状与归一化产出，整本路径覆盖 `run_parse_job` 的
 `pages=None` 分支、页级持久化与**版本目录落盘 + 终态激活**（PLAN-004：产物只写
 `versions/<job_id>/`，根视图不得被解析写回）。

@@ -1,7 +1,7 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-09-26
+最后更新：2026-09-29
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
@@ -50,7 +50,7 @@
   与 PLAN-008（页级失败清单与 jobs 列表端点，承载 REQ-088、ARCH-005/006）；关闭证据见
   [completed.md](../trackers/completed.md) PLAN-003 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-20-parse-live-bringup.md` 处须改指上述归档位置
-  （本批已同步 `docs/adr/0007`、`docs/trackers/*`、`scripts/tmp/probe_mineru_api.py`）。
+  （本批已同步 `docs/adr/0007`、`docs/trackers/*`、`tmp/probe_mineru_api.py`）。
 - PLAN-010 非公开管理端点一键清除（Axiom-Flow）已完成（2026-09-23，W1~W7 全绿后关闭），计划按 **`Retain`** 归档至
   [history/plans/2026-09](../history/plans/2026-09/2026-09-23-admin-purge-endpoint.md)（保留真机演练的
   dry-run 清单、`af_*` 整表备份锚点与首轮 K6 缺陷的归因链，以及「不对外开放」如何被拆成可测三件事的
@@ -152,4 +152,18 @@
   [api.md](../architecture/api.md)、[database-design.md](../architecture/database-design.md) 与迁移
   `20260926_0001` 为准；关闭证据见 [completed.md](../trackers/completed.md) PLAN-017 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-26-parsing-root-view-cleanup-request.md` 处须改指上述
-  归档位置（本批已同步 `docs/trackers/*`；REQ-097 真机两项移交 todo「后续待做」节 ARCH-011 行）。
+  归档位置（本批已同步 `docs/trackers/*`；REQ-097 真机两项移交 ARCH-011 行；该行已于 2026-09-30 关闭，项①于 2026-09-28 执行、项②改挂 PLAN-018 真机面）。
+- PLAN-021 工作区目录卫生清理轮（Axiom-Flow，B 类，零 `src` 行为改动）已完成（2026-09-29，S1~S6 逐条判定＋D 类前后指纹留档后关闭），计划按立项判定 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-29-workspace-directory-hygiene.md)（保留 Q1~Q4 裁决落地表、W3 清空 `data/` 的前后指纹与 3 份备份 sql 的 sha256 前缀（**已执行的 D 类数据操作，不可再生**）、S1~S6 判定表、变异复验 M1~M5 与「语义损失注记」——Q2 全量改指后历史面路径不再解析到证据，该代价的唯一留档处）；运行时事实源不在壳内，而以
+  [ADR 0012](../adr/0012-workspace-directory-hygiene.md)、
+  [overview.md「仓库工作区目录卫生」](../architecture/overview.md)、
+  [code-map.md](../architecture/code-map.md) 的 `tmp/`/`logs/`/`scripts/` 行、
+  [operations.md 数据目录表与日志守则](../guides/operations.md)、
+  [local-dev.md](../standards/local-dev.md) 与守护 `tests/contract/test_storage_conventions_governance.py` 为准；关闭证据见 [completed.md](../trackers/completed.md) PLAN-021 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-29-workspace-directory-hygiene.md` 处须改指上述
+  归档位置（本批已同步 `docs/adr/0012` 与 `docs/trackers/*`）。
+
+- PLAN-020 `af_*` 表族措辞收口与守护断言（Axiom-Flow，B 类，PLAN-018 W2 加表前置评审轮）已完成（2026-09-29，S1~S6 逐条判定后关闭），计划按关闭时改判 **`Retain`**（原立项判 Delete；改判理由＝加表评审判据唯一落点＋不可再生变异复验）归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-29-af-table-family-governance.md)（保留「新表结构与表族关联」评审节、表数演进对账与两条准入守则、W1 口径位置定判表、W2 先红与变异复验记录、W4 放行结论）；运行时事实源为 [database-design.md](../architecture/database-design.md)（表清单节＋准入守则）与守护
+  `tests/unit/test_db_table_family_governance.py`；关闭证据见 [completed.md](../trackers/completed.md) PLAN-020 行。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-09-29-af-table-family-governance.md` 处须改指上述归档位置（本批已同步 PLAN-018 壳与 `docs/trackers/*`）。

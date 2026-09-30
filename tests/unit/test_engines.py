@@ -433,7 +433,7 @@ class TestParsePage:
 class TestWindowSubmission:
     """PLAN-007 W1：窗口协议（W0 真机冻结）。
 
-    冻结事实（`data/probes/window-req086-20260922/`，合成标记 PDF 两窗留档）：
+    冻结事实（`tmp/probes/window-req086-20260922/`，合成标记 PDF 两窗留档）：
 
     - `start_page_id`/`end_page_id` 为 **0 基且含两端**（`start=2,end=4` → 真机返回 1 基第 3/4/5 页，
       `middle_json.pdf_info` 长度 3）；

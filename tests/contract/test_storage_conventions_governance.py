@@ -1,4 +1,4 @@
-"""存储治理守护：白名单哨兵、虚构约定字样、写入面收口与仓内留档区形状（ADR 0009 决定 5）。
+"""存储治理守护：白名单哨兵、虚构约定字样、写入面收口与工作区目录卫生（ADR 0009 决定 5、ADR 0012）。
 
 模块职责：把「我们往哪里写、能写什么」从约定升级为可断言规则——
 
@@ -8,19 +8,24 @@
    运维核对步必须点名该目录才能禁止它。历史、台账与计划壳是叙事/临时载体，不入扫描；
 3. 数据根缺配即报错、仓内 `data/` 永久不作数据根（决定 1/2，`config.py` 落地）；
 4. 写入面锁 `parsed/`：构造器前缀 + `ensure_within` 越界必抛（决定 4）；
-5. 仓内 `data/` 递归不含产物形状（`book.json`/`pages/`/`versions/`），
-   唯一例外 `data/probes/*/root/` 探针数据根（决定 2/5；「顶层」按递归口径判，
-   探针根豁免的存在本身要求递归，否则守不住嵌套残骸）。
+5. 工作区目录卫生（ADR 0012 决定 1~4）：`data/`、`scripts/tmp/`、`web/`、`app/` 不得复活；
+   根 `tmp/` 是唯一临时区，`.gitignore` 收它且区内一律不入库；`logs/` 只放本项目日志，
+   文件数 ≤3 且前缀 `qed-axiom`。原「留档区递归不含产物形状」断言已被「`data/` 不存在」
+   取代——目录本身被禁止后形状判据失去作用面（ADR 0012 决定 2 取代 ADR 0009 决定 2 的
+   留档定性，数据根守卫继续有效）。
 
 被测代码：docs/architecture/overview.md、docs/{standards,architecture,design,guides,adr}/**、
-src/axiom_flow/config.py、src/axiom_flow/ingest/artifacts.py、仓内 data/（只读列举）。
+src/axiom_flow/config.py、src/axiom_flow/ingest/artifacts.py、.gitignore 与仓内工作区目录。
 关联设计：docs/adr/0009-data-root-must-be-explicit.md 决定 1~5、
-docs/architecture/overview.md「数据边界与产物布局」、docs/design/parsing-pipeline.md PP-5/PP-6。
-失效后果：白名单漂移、缺配静默回退复活、越界写入或留档区产物形状重新堆积时无人发现。
+docs/adr/0012-workspace-directory-hygiene.md 决定 1~4、
+docs/architecture/overview.md「数据边界与产物布局」与「仓库工作区目录卫生」、
+docs/design/parsing-pipeline.md PP-5/PP-6、docs/guides/operations.md 数据目录表。
+失效后果：白名单漂移、缺配静默回退复活、越界写入、退役目录复活或临时区重新入库时无人发现。
 """
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -33,6 +38,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 OVERVIEW = DOCS / "architecture" / "overview.md"
 REPO_DATA = ROOT / "data"
+GITIGNORE = ROOT / ".gitignore"
+SCRATCH = ROOT / "tmp"
+REPO_LOGS = ROOT / "logs"
 
 #: 数据根顶层白名单（ADR 0009 决定 3，沿用根仓库 ADR 0018，本仓不自行增删）。
 WHITELIST = ("raw", "tmp", "parsed", "backups")
@@ -56,8 +64,12 @@ NEGATION_TOKENS = (
 FIXED_SCOPE = (DOCS / "standards", DOCS / "architecture")
 #: 条文域：必须点名目录才能立判据，故按行否定门控。
 NEGATED_SCOPE = (DOCS / "design", DOCS / "guides", DOCS / "adr")
-#: 产物目录形状（ADR 0009 决定 2：留档区顶层不得出现）。
-PRODUCT_MARKERS = ("book.json", "pages", "versions")
+#: 已退役的仓内目录（ADR 0012 决定 1/2/3/5）：不得复活，其下也不得再有入库内容。
+RETIRED_DIRS = ("data", "scripts/tmp", "web", "app")
+#: 本项目日志口径（ADR 0012 决定 4）：只写本项目日志，文件数有上限。
+#: 前缀取 `qed-axiom` 而非 `qed-axiom-`：PID 文件名 `qed-axiom.pid` 由服务脚本固定。
+LOG_PREFIX = "qed-axiom"
+LOG_MAX_FILES = 3
 
 
 def _iter_lines(directories: tuple[Path, ...]) -> Iterator[tuple[Path, int, str]]:
@@ -132,27 +144,64 @@ def test_missing_data_root_fails_closed(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 def test_repo_data_dir_rejected_as_data_root() -> None:
-    """决定 2：仓内 `data/` 是留档与备份区，配置成数据根同样拒绝（永久不是数据根）。"""
+    """决定 2：仓内 `data/`（定性已被 ADR 0012 决定 2 取代）配置成数据根一律拒绝。"""
     with pytest.raises(DataRootError, match="QED_DATA_ROOT"):
         load_settings(data_dir=REPO_DATA)
 
 
-def test_repo_archive_dir_has_no_product_shape() -> None:
-    """决定 2/5：仓内留档区递归不含产物形状；探针数据根 `probes/<窗口>/root/` 豁免。"""
-    if not REPO_DATA.is_dir():
-        pytest.skip("仓内留档区不存在（干净检出）")
+def _tracked_paths(directory: Path) -> tuple[str, ...]:
+    """git 索引内属于该目录的路径；git 不可用即抛（本地门禁以 git 为前置）。"""
+    relative = directory.relative_to(ROOT).as_posix()
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "--", relative],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:  # pragma: no cover - 门禁前置缺失
+        raise RuntimeError("契约守护需要 git：无法核对索引内容") from exc
+    if proc.returncode != 0:
+        raise RuntimeError(f"git ls-files 失败：{proc.stderr.strip()}")
+    return tuple(line for line in proc.stdout.splitlines() if line.strip())
 
-    offenders: list[str] = []
-    for path in sorted(REPO_DATA.rglob("*")):
-        relative = path.relative_to(REPO_DATA)
-        parts = relative.parts
-        # 豁免：探针数据根内的产物形状是窗口脚本显式声明的数据根，其内布局正当。
-        if len(parts) >= 3 and parts[0] == "probes" and parts[2] == "root":
-            continue
-        if path.name in PRODUCT_MARKERS:
-            offenders.append(relative.as_posix())
 
-    assert not offenders, (
-        "仓内留档区出现产物形状（野生区残骸，按 Q2 清理并核对 operations.md runbook）：\n"
-        + "\n".join(offenders[:20])
+def test_retired_repo_dirs_absent() -> None:
+    """决定 1/2/3/5：`data/`、`scripts/tmp/`、`web/`、`app/` 已退役，目录不得复活。"""
+    offenders = [relative for relative in RETIRED_DIRS if (ROOT / relative).exists()]
+    assert not offenders, "已退役的仓内目录重新出现（ADR 0012）：\n" + "\n".join(offenders)
+
+
+def test_scratch_area_ignored_and_untracked() -> None:
+    """决定 1：根 `tmp/` 是唯一临时区——`.gitignore` 必须收它，且区内一律不入库。"""
+    rules = {
+        line.strip()
+        for line in GITIGNORE.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    assert "/tmp/" in rules, ".gitignore 缺少 `/tmp/`：根临时区重新成为入库载体（ADR 0012 决定 1）"
+    tracked = _tracked_paths(SCRATCH)
+    assert not tracked, f"根 tmp/ 出现入库内容（临时区不作为事实源）：{tracked[:20]}"
+
+
+def test_retired_dirs_have_no_tracked_content() -> None:
+    """决定 1/2/3/5：退役目录即便被重新创建，也不得以入库形式回流（索引面守卫）。"""
+    offenders = {
+        relative: _tracked_paths(ROOT / relative)
+        for relative in RETIRED_DIRS
+        if _tracked_paths(ROOT / relative)
+    }
+    assert not offenders, f"退役目录存在入库内容：{offenders}"
+
+
+def test_repo_logs_bounded_and_project_only() -> None:
+    """决定 4：`logs/` 只放本项目日志——文件数 ≤3 且一律 `qed-axiom` 前缀。"""
+    if not REPO_LOGS.is_dir():
+        return
+    files = sorted(p.name for p in REPO_LOGS.iterdir() if p.is_file())
+    assert len(files) <= LOG_MAX_FILES, (
+        f"logs/ 文件数 {len(files)} 超过上限 {LOG_MAX_FILES}（ADR 0012 决定 4）：{files}"
     )
+    offenders = [name for name in files if not name.startswith(LOG_PREFIX)]
+    assert not offenders, f"logs/ 出现非本项目日志（前缀须为 {LOG_PREFIX}）：{offenders}"

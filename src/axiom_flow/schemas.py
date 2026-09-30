@@ -523,7 +523,7 @@ class AdminPurgeScope(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    all: bool | None = Field(default=None, description="true = 全项目（af_* 四表全部行 + parsed/ 所有书目录）")
+    all: bool | None = Field(default=None, description="true = 全项目（af_* 表族全部行 + parsed/ 所有书目录）")
     book_ids: list[str] | None = Field(
         default=None, description="按书目清除（含其全部解析版本与任务行）；每项须为安全路径段"
     )

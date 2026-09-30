@@ -1,6 +1,6 @@
 """af_* 表模型与仓储层单测（SQLite 内存，不依赖 MySQL，符合测试隔离铁律）。
 
-守护面：四表结构与设计一致（表名/主键/唯一键）、同步幂等与快照语义、任务/页/编辑状态回写。
+守护面：表族结构与设计一致（表名/主键/唯一键）、同步幂等与快照语义、任务/页/编辑状态回写。
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _row(book_id: str = "mathanalysis-b05", **overrides) -> BookSyncRow:
 
 
 class TestTableStructure:
-    """四表结构：表名与设计（database-design.md）一致。"""
+    """表族结构：表名与设计（database-design.md）一致。"""
 
     def test_four_tables_created(self, engine):
         assert set(inspect(engine).get_table_names()) == {

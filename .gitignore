@@ -22,6 +22,11 @@ venv/
 data/
 logs/
 
+# Scratch：仓库根 tmp/ 是唯一临时区（临时脚本、真机窗口证据与留档、D 类备份）
+# 区内内容不重要、可随手清理，故一律不入库（ADR 0012）。
+/tmp/
+/tmp-*/
+
 # Config (contains secrets)
 setting.ini
 
@@ -37,6 +42,3 @@ Thumbs.db
 .coverage
 coverage-*.xml
 htmlcov/
-
-# Runtime
-scripts/.keepalive.pid

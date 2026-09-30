@@ -128,7 +128,7 @@ class TestBBox:
 class TestBBoxCoordinateSpace:
     """DEFECT-004 / 根仓库 REQ-081：MinerU 3.4.4 `content_list[].bbox` 是逐轴 0–1000 归一化坐标。
 
-    锚点输入取自真机实验 `data/probes/live-bringup-20260920/L3d_coord_space.json`：A4（595x842pt）
+    锚点输入取自真机实验 `tmp/probes/live-bringup-20260920/L3d_coord_space.json`：A4（595x842pt）
     PDF 内把文本钉在已知点坐标，150 DPI 页图为 1240x1755 像素。
     """
 
@@ -427,7 +427,7 @@ class TestVisibleDrop:
 class TestBlankPageSignal:
     """PLAN-007 W2 / REQ-087：空白页是合法产物，必须与「解析失败」「映射缺口」可区分（判据 S5）。
 
-    真机形状（`data/probes/window-req086-20260922` 的 `real-blank-only`）：任务 `completed`、
+    真机形状（`tmp/probes/window-req086-20260922` 的 `real-blank-only`）：任务 `completed`、
     `pdf_info` 有该页、`content_list` 与 `md_content` 皆空 ⇒ 归一化为零块页并带空白标记。
     """
 

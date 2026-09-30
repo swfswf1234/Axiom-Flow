@@ -64,7 +64,7 @@ $env:QED_TEST_MYSQL = "1"
 > 晋升 `standards/testing.md`。
 >
 > `QED_TEST_MYSQL=1` 的隔离边界同见 ADR 0005：只连回环 MySQL、只用 `qed_test` 库内本方自有的
-> `af_*` 四表与 `alembic_version`（夹具 DROP 前逐名断言，绝不 `DROP DATABASE`），数据根用 `tmp_path`。
+> `af_*` 表族与 `alembic_version`（夹具 DROP 前逐名断言，绝不 `DROP DATABASE`），数据根用 `tmp_path`。
 > **执行时机**：改动 `orchestrator/` 或 `db/` 的提交/持久化语义后必须跑一次该层，默认门禁的 skip
 > 不等于这条路径已验证。
 >

@@ -8,7 +8,7 @@
 3. `GET /tasks/{task_id}/result` → **202＝未就绪继续等**，200 → `{backend, version,
    results:{"<file_stem>":{md_content, content_list, middle_json}}}`。
 
-窗口协议（PLAN-007 W0 真机冻结，留档 `data/probes/window-req086-20260922/`）：`/tasks` 表单的
+窗口协议（PLAN-007 W0 真机冻结，留档 `tmp/probes/window-req086-20260922/`）：`/tasks` 表单的
 `start_page_id`/`end_page_id` 是 **0 基且含两端**；结果里 `content_list[].page_idx` 与
 `middle_json.pdf_info[].page_idx` 都是**窗口内相对**索引，故本适配层负责加窗口起点还原为全书
 绝对页号。空白页只在 `pdf_info` 可见、`content_list` 与 `md_content` 完全省略该页，因此页枚举以

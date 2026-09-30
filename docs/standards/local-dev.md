@@ -2,7 +2,7 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-17
+最后更新：2026-09-29
 治理对象：本地机器标识、环境依赖、构建命令与开发约定（仅机器绑定事实）
 依据：QED-Tracker `docs/standards/local-dev.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)）
 关联测试：无
@@ -67,14 +67,17 @@ Windows 文件系统大小写不敏感，历史文档曾写作 `qed_env`，与�
   mineru-api 容器（5002）后重试；首次请求含 vLLM warmup（约 1 分钟）。
 - **配置语境（2026-09-17 简化）**：Axiom-Flow 只做「模型 API 调用 + 预处理/后处理」，配置
   三段式（服务 / 数据与库 / 解析引擎）；服务脚本无 `--mode`，配置由 `config.py` 向上走查
-  `.env` 自读（`AXIOM_PORT`、`QED_DATA_ROOT`【**必填**：缺配、指向仓内 `data/` 或目录不存在
-  即启动期报错，ADR 0009】、`QED_DB_*`、`AXIOM_OCR_ENGINE`、
+  `.env` 自读（`AXIOM_PORT`、`QED_DATA_ROOT`【**必填**：缺配、指向仓内已退役的 `data/`、
+  或目录不存在即启动期报错，ADR 0009 决定 2／ADR 0012 决定 2】、`QED_DB_*`、`AXIOM_OCR_ENGINE`、
   `QED_OCR_MODEL_URL`、`AXIOM_OCR_TIMEOUT`、`AXIOM_PARSE_WINDOW_SIZE`）。
 - **解析超时**：全本按 `AXIOM_PARSE_WINDOW_SIZE`（默认 56 页/块）**串行分块**提交，超时读
   `AXIOM_OCR_TIMEOUT`（默认 600s）且**每次调用独立计**，故整本挂钟上限 = 块数 × 600s、单块失败只损失
   该块页；模型调参仍在 QED-Engine 侧（模型服务配置），本仓库不暴露调参入口。
 - **`.env` 值内联注释**：值中 ` #`（空白+井号）会被视为注释并剥离；带 `#` 的真实值请确保
   `#` 前不留空格。
+- **工作区目录卫生（ADR 0012）**：临时脚本、探针与窗口留档一律落仓库根 `tmp/`（不入库、
+  不作事实源），`scripts/` 只放长期受管脚本，`logs/` 只写本项目日志且文件数 ≤3；根 `tmp/`
+  与 `<QED_DATA_ROOT>/tmp/` 是两个位置，后者服务永不写入（PP-6）。
 - **停止脚本回显**：`stop` 回显 `stopped (forced)` 表示 taskkill 强杀兜底成功（conda run 等
   跨 console 语境常见），属正常现象；`stop failed` 需按提示手动 `taskkill /PID <pid> /T /F`。
 

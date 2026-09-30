@@ -97,7 +97,7 @@ Body:   { "scope": {"all": true} | {"book_ids": ["mathanalysis-b05", ...]},
 | W3 | 仓储清除方法（四表按本与全表两形态）＋ `orchestrator/` 或 `application/` 侧 purge 服务函数（磁盘清单枚举 + 守卫） | `repositories.py`、purge 模块 | 单元（SQLite + `tmp_path`） | **Done（2026-09-23，位置改了，理由如下）**：仓储侧四表 `delete_for_book()`/`delete_all()` + `count_active()`；**purge 逻辑落在 `api/admin.py` 而非 `application/`**——`test_architecture_dependencies.py` 明令 `application/` 不得 import sqlalchemy，`orchestrator/` 的职责是解析推进，放清除等于污染两个层的语义 |
 | W4 | 管理路由与挂载开关（`QED_ADMIN_ENABLED`）＋ `AdminPurgeIn/Out` schemas ＋ token fail-closed 启动校验 | `api/main.py`、`schemas.py`、`config.py` | 契约 | **Done（2026-09-23）**：`mount_admin()` 在 `create_app()` 内装配（未启用即 `return` ⇒ 404；启用无 token ⇒ `AdminConfigError` 拒绝启动） |
 | W5 | 文档与映射收口：`code-map.md` 行、`operations.md` runbook（备份先行、D 类口径、与 `--wsl-holder` 无关） | 文档改动 | 契约 | **Done（2026-09-23）**：code-map 新增 `api/admin.py` 行 + `db/`、`config.py` 行补清除原语与 `QED_ADMIN_*`；`operations.md` 新增「管理面一键清除 runbook」（与 `DELETE /books` 的分工、五步执行纪律、真实根全项目清除＝另一次 D 类批准） |
-| W6 | 真机演练：`qed_test` ＋ 探针数据根上跑「按书目」与「全项目」两形态（先 dry-run 留清单）；~~按本形态另在业务库对合成探针书各演练一次~~ | 留档 JSON 清单 + 备份锚点 | `QED_TEST_MYSQL=1` 层 | **Done（2026-09-23）**：`scripts/tmp/live_admin_purge_plan010.py` K1~K9 **全 PASS**（`all_pass=True`、`业务零写入=True`、退出码 0），留档 `data/probes/purge-20260923/`（`S0_preflight`/`S1_seed`/`backup_af_tables`/`S2_scope_before`/`K1`~`K9`/`S2_verdicts`/`summary.md`）；清除前 `qed_test` 四表整表备份 {af_books:3, af_parse_jobs:4, af_pages:4, af_block_edits:2}；业务库 `qed`（af_books 17 / jobs 24 / pages 1015 / edits 2）与真实 `dataset/parsed`（7379 文件、3.90 GB）前后指纹逐字段相同。**首轮 K6 FAIL 暴露守卫次序缺陷**：真删路径上 409 判定抢在落点守卫之前，脏 `domain_id` 被误报成「解析在飞」；SQLite 契约测试从未把脏行与在飞行放在同一作用域，故只在真机暴露 ⇒ 补回归用例 `test_unsafe_segment_beats_in_flight_conflict` 并固定次序 `confirm` → 作用域（形状＋落点）→ 在飞 → 删除。**作用域已收窄（按 2026-09-22 真机裁决「探针写入只落 `qed_test`」）——业务侧清除是「清理一轮」那一步的独立 D 类批准，不在本工作项内** |
+| W6 | 真机演练：`qed_test` ＋ 探针数据根上跑「按书目」与「全项目」两形态（先 dry-run 留清单）；~~按本形态另在业务库对合成探针书各演练一次~~ | 留档 JSON 清单 + 备份锚点 | `QED_TEST_MYSQL=1` 层 | **Done（2026-09-23）**：`tmp/live_admin_purge_plan010.py` K1~K9 **全 PASS**（`all_pass=True`、`业务零写入=True`、退出码 0），留档 `tmp/probes/purge-20260923/`（`S0_preflight`/`S1_seed`/`backup_af_tables`/`S2_scope_before`/`K1`~`K9`/`S2_verdicts`/`summary.md`）；清除前 `qed_test` 四表整表备份 {af_books:3, af_parse_jobs:4, af_pages:4, af_block_edits:2}；业务库 `qed`（af_books 17 / jobs 24 / pages 1015 / edits 2）与真实 `dataset/parsed`（7379 文件、3.90 GB）前后指纹逐字段相同。**首轮 K6 FAIL 暴露守卫次序缺陷**：真删路径上 409 判定抢在落点守卫之前，脏 `domain_id` 被误报成「解析在飞」；SQLite 契约测试从未把脏行与在飞行放在同一作用域，故只在真机暴露 ⇒ 补回归用例 `test_unsafe_segment_beats_in_flight_conflict` 并固定次序 `confirm` → 作用域（形状＋落点）→ 在飞 → 删除。**作用域已收窄（按 2026-09-22 真机裁决「探针写入只落 `qed_test`」）——业务侧清除是「清理一轮」那一步的独立 D 类批准，不在本工作项内** |
 | W7 | 收口（六步，ADR 0006） | 本计划关闭与 Retain 归档 | 全量门禁 | **Done（2026-09-23）**：六步收口，门禁 478 passed / 10 skipped + ruff clean + `QED_TEST_MYSQL=1` 层 8 passed |
 
 ## 验证与验收
@@ -113,7 +113,7 @@ Body:   { "scope": {"all": true} | {"book_ids": ["mathanalysis-b05", ...]},
 
 - 代码面：管理路由不注册即等于该端点不存在（默认态），删两条路由 + purge 模块即完全回滚；无迁移、无 DDL。
 - 数据面：**清除本身不可回滚** ⇒ 执行纪律＝① `dry_run` 清单先留档；② 真机先 `af_*` 备份
-  （`data/backups/`，判例 R1/R2 窗口）；③ 真实数据根的全项目清除必须单独获用户 D 类批准，探针根演练不代替。
+  （`tmp/backups/`，判例 R1/R2 窗口）；③ 真实数据根的全项目清除必须单独获用户 D 类批准，探针根演练不代替。
 
 ## 关闭与归档
 
@@ -129,7 +129,7 @@ Body:   { "scope": {"all": true} | {"book_ids": ["mathanalysis-b05", ...]},
 **工作项**：W1~W7。
 ### 台账历史归档（关闭时点）
 
-- 2026-09-23：立项当日完成 W1~W7。真机窗口 `qed_test` + `data/probes/purge-20260923/root`（驱动脚本 `scripts/tmp/live_admin_purge_plan010.py`，K1~K9 全 PASS、退出码 0，`summary.md` 自证 `all_pass=True` / `业务零写入=True`）；清除前 `af_*` 四表整表备份 `backup_af_tables.json`；业务侧（库 `qed` 与真实 `dataset/parsed`）前后指纹逐字段相同。
+- 2026-09-23：立项当日完成 W1~W7。真机窗口 `qed_test` + `tmp/probes/purge-20260923/root`（驱动脚本 `tmp/live_admin_purge_plan010.py`，K1~K9 全 PASS、退出码 0，`summary.md` 自证 `all_pass=True` / `业务零写入=True`）；清除前 `af_*` 四表整表备份 `backup_af_tables.json`；业务侧（库 `qed` 与真实 `dataset/parsed`）前后指纹逐字段相同。
 - 首轮 K6 FAIL（脏落点被 409 抢先）与修正后的守卫次序、回归用例名见 W6 行——该缺陷只在真机暴露，SQLite 组合不出「脏行 + 在飞行」并存。
 
 **状态**：**Closed（2026-09-23）**。判据达成：`POST /api/v1/admin/purge` 带 13 例契约测试（默认门禁内），真机 `qed_test`＋独立探针数据根上按书目与全项目两形态 K1~K9 全 PASS 并留档，业务库与真实数据根零写入自证通过。

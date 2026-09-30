@@ -2,7 +2,7 @@
 
 设计状态：Accepted
 确认状态：已确认
-实现状态：Verified（af_* 四表 + 8902 管理与对照端点已实现并真机取证）
+实现状态：Verified（af_* 表族 + 8902 管理与对照端点已实现并真机取证）
 最后更新：2026-09-26
 关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`（含 `api/admin.py` 管理面）、`src/axiom_flow/orchestrator/`
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`
@@ -37,7 +37,7 @@
 
 | 事项 | 本篇管 | 不管（事实源） |
 | --- | --- | --- |
-| af_* 四表 | 谁写哪一列、写入时机、可见性后果 | 列与约束：[database-design.md](../architecture/database-design.md) |
+| af_* 表族 | 谁写哪一列、写入时机、可见性后果 | 列与约束：[database-design.md](../architecture/database-design.md) |
 | 8902 端点 | 每条端点在闭环里的职责与不变式 | 参数与响应：[api.md](../architecture/api.md) |
 | 任务/书目状态 | 六态判据、进度与结局分列、启动期归一 | 状态机的产物侧条件：[parsing-pipeline.md](parsing-pipeline.md) |
 | 人工编辑 | 幂等键、覆盖层语义、版本绑定 | 版面块结构与 `index` 含义：[parsing-pipeline.md](parsing-pipeline.md) |

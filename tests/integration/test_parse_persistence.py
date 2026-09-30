@@ -5,7 +5,7 @@
 与 writer 共享同一条 SQLite 连接，未提交数据照样可见，这类缺陷在 SQLite 层结构性不可见。
 
 隔离边界（ADR 0005）：只在 `QED_TEST_MYSQL=1` 时连本机 MySQL，且只使用 `qed_test` 库里本仓库自有的
-`af_*` 四表（+ `alembic_version`）；数据根指向 `tmp_path`。缺 opt-in 时整体 skip，默认门禁零外部依赖。
+`af_*` 表族（+ `alembic_version`）；数据根指向 `tmp_path`。缺 opt-in 时整体 skip，默认门禁零外部依赖。
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ class _ProbeEngine:
 
 
 class TestIsolationBoundary:
-    """夹具边界本身：库名硬校验 + 只拥有 af_* 四表。"""
+    """夹具边界本身：库名硬校验 + 只拥有 af_* 表族。"""
 
     def test_store_targets_the_test_schema_not_the_business_db(self, store: Engine) -> None:
         assert store.url.database == "qed_test"
@@ -175,7 +175,7 @@ class TestIsolationBoundary:
                     )
                 )
             }
-        assert owned <= found, "af_* 四表必须由 Alembic 建齐"
+        assert owned <= found, "af_* 表族必须由 Alembic 建齐"
         assert "alembic_version" in found
         with store.connect() as conn:
             revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()

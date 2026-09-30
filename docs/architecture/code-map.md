@@ -2,8 +2,8 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-09-26
-覆盖范围：`src/axiom_flow/` 全部受管包与模块、`scripts/` 与仓库级数据/评估目录；映射目标为
+最后更新：2026-09-29
+覆盖范围：`src/axiom_flow/` 全部受管包与模块、`scripts/` 与仓库级临时/日志/评估目录；映射目标为
 `docs/architecture/` 契约正文与 `docs/design/` 三篇的守则条文
 
 ## 目的与边界
@@ -46,14 +46,14 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | --- | --- | --- | --- | --- |
 | `src/axiom_flow/api/` | 接口层 | 对外 `/api/v1` 路由，只做协议适配与读取作用域解析 | [api.md](api.md) 全文；`_read_scope` 唯一入口见 api.md「兼容与不可变规则」；PM-6、PM-10、PM-16 | `tests/contract/test_api_v1_contract.py` |
 | `src/axiom_flow/api/main.py` | 接口层 | 公共契约端点 + lifespan 启动期归一与瞬态残留告警 | [api.md](api.md)「① 生命周期与健康」「② 数据查询」「③ 解析结果与 PDF 对照」；PM-12；PP-4 | `tests/contract/test_api_v1_contract.py`、`tests/unit/test_orchestrator.py` |
-| `src/axiom_flow/api/admin.py` | 运维接口层 | 非公开管理面：`af_*` 四表行 + `parsed/` 产物一键清除 | [api.md](api.md)「非公开管理面」节（挂载/token/双确认/守卫次序/六条不变式）；PM-17；PP-4 | `tests/contract/test_api_v1_contract.py`（`TestAdminPurgeEndpoint`） |
+| `src/axiom_flow/api/admin.py` | 运维接口层 | 非公开管理面：`af_*` 表族行 + `parsed/` 产物一键清除 | [api.md](api.md)「非公开管理面」节（挂载/token/双确认/守卫次序/六条不变式）；PM-17；PP-4 | `tests/contract/test_api_v1_contract.py`（`TestAdminPurgeEndpoint`） |
 | `src/axiom_flow/ingest/` | 预处理 | PDF 导入、页图渲染（根视图唯一产物 `pages/`）、原子落盘与版本目录播种 | PP-2、PP-3、PP-4、PP-5、PP-15、PP-16；[api.md](api.md) ingest 端点节 | `tests/unit/test_ingest.py`、`tests/contract/test_storage_conventions_governance.py` |
 | `src/axiom_flow/orchestrator/` | 编排层 | 全本按窗口串行提交、逐页解析、失败语义、分块重建、af_* 回写、版本激活 | PP-11、PP-13、PP-14、PP-16、PP-17、PP-18；PM-8、PM-11、PM-12、PM-15；MI-12 | `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py`、`tests/smoke/test_live_mineru_chain.py` |
 | `src/axiom_flow/orchestrator/jobs.py` | 编排层 | 后台单 worker 队列与任务生命周期转发 | PM-8、PM-13；[api.md](api.md)「单占用与排队」 | `tests/unit/test_orchestrator.py` |
 | `src/axiom_flow/orchestrator/pipeline.py` | 编排层 | 一次解析版本的执行主体（窗口循环、页级持久化、终态判定、激活轮换删旧版本、版本 book.json 生成） | PP-11、PP-13、PP-14、PP-18；PM-11、PM-15；MI-9 | `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py` |
 | `src/axiom_flow/engines/` | 适配层 | 引擎适配器（MinerU 落地，paddleocr-vl / qwen-vl 预留）与显式分派工厂 | MI-2、MI-3、MI-4、MI-5、MI-6、MI-7、MI-8、MI-10、MI-11、MI-12、MI-13、PP-12 | `tests/unit/test_engines.py`、`tests/unit/test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py` |
 | `src/axiom_flow/normalize/` | 后处理 | 统一 blocks 归一化、坐标换算、可见丢弃、公式定界符剥离、知识块切分与质量信号 | PP-7、PP-8、PP-9、PP-10、PP-19、PP-20；MI-8 | `tests/unit/test_normalize.py`、`tests/unit/test_chunking.py` |
-| `src/axiom_flow/db/` | 持久层 | `af_*` 四表 ORM 与仓储（版本作用域读写、进度/结局分列、清除原语） | [database-design.md](database-design.md) 列清单与条文语义节；PM-1、PM-2、PM-3、PM-4、PM-5、PM-6、PM-9、PM-10、PM-17 | `tests/unit/test_db.py` |
+| `src/axiom_flow/db/` | 持久层 | `af_*` 表族 ORM 与仓储（版本作用域读写、进度/结局分列、清除原语） | [database-design.md](database-design.md) 列清单与条文语义节；PM-1、PM-2、PM-3、PM-4、PM-5、PM-6、PM-9、PM-10、PM-17 | `tests/unit/test_db.py` |
 | `src/axiom_flow/db/engine.py` | 持久层 | 双 Session 工厂（业务库 / 测试库）与连接参数装配 | [database-design.md](database-design.md)「边界」；ADR 0005 | `tests/integration/test_parse_persistence.py` |
 | `src/axiom_flow/migrations/` | 持久层 | Alembic 迁移（建表、解析版本布局、状态语义分列、ingest 元数据补列） | [database-design.md](database-design.md)「迁移序列」表 + 「边界」的无自动迁移约定 | `tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py` |
 | `src/axiom_flow/schemas.py` | 契约模型 | 统一格式与请求/响应的 Pydantic 单一事实源 | [api.md](api.md)「兼容承诺」；PP-7、PP-20；PM-8、PM-10 | `tests/unit/test_schemas.py` |
@@ -64,11 +64,10 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | 路径 | 一句话职责 | 事实源 |
 | --- | --- | --- |
 | `scripts/axiom_flow_service.py` | 8902 服务唯一启停脚本 | [api.md](api.md)「服务生命周期脚本」 |
-| `scripts/`（其余） | 数据与运维辅助脚本（重解析、备份、探针驱动） | [operations.md](../guides/operations.md) |
-| `scripts/tmp/` | 真机窗口驱动与只读取证脚本（**已入库**，被运维手册按路径引用）
- | [operations.md](../guides/operations.md) runbook |
+| `scripts/`（其余） | 无其他受管脚本：一次性窗口驱动与探针脚本一律落仓库根 `tmp/`（ADR 0012 决定 3） | [operations.md](../guides/operations.md)「临时与留档区」 |
+| `tmp/`（仓库根） | 仓内**唯一**临时与留档区：真机窗口驱动、只读取证脚本、探针留档与备份件；`.gitignore` 排除 ⇒ **不入库、不作为事实源、可随手清理**（运维手册按路径引用其历史位置） | [ADR 0012](../adr/0012-workspace-directory-hygiene.md)；[operations.md](../guides/operations.md)「数据目录」与 runbook |
 | `alembic.ini` | Alembic CLI 入口（URL 解析见 `migrations/env.py`） | [database-design.md](database-design.md)「迁移序列」 |
-| `data/` | 仓库内留档与备份区（`probes/` 窗口证据、`backups/` D 类留痕；**非数据根候选**，ignore、可再生） | [operations.md](../guides/operations.md)「数据目录」；[local-dev.md](../standards/local-dev.md) |
+| `logs/` | 本项目运行日志与运行时文件（`qed-axiom*`）；**文件数固定 ≤3**、不写外部组件日志，人工守则无代码轮转（ADR 0012 决定 4） | [operations.md](../guides/operations.md)「服务生命周期」；[ADR 0012](../adr/0012-workspace-directory-hygiene.md) |
 | `evaluation/` | 评估专区（样本与报告，与主链路隔离） | [testing.md](../standards/testing.md) |
 | `model/`（根仓库） | 模型文件槽位，由根仓库 8900 管理，本仓库只读引用 | [model-integration.md](../design/model-integration.md) |
 
@@ -88,7 +87,7 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | `src/axiom_flow/llm_client.py` | 退役（无取代：直连模型服务由 `engines/` 承接，见 MI-3） |
 | `src/axiom_flow/fallback/` | `src/axiom_flow/engines/`（无自动兜底，ADR 0004 / MI-13） |
 | `src/axiom_flow/database.py` | `src/axiom_flow/db/engine.py` |
-| `web/` | 移交根仓库 QED-Engine（本仓库不再维护） |
+| `web/` | 移交根仓库 QED-Engine；本仓库 `web/` 目录已删除（ADR 0012 决定 5：本仓库不含前端） |
 
 ## 验证与追溯
 

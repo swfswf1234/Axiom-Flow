@@ -14,9 +14,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parents[2] / "scripts" / "tmp" / "live_wholebook_req086.py"
-)
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "tmp" / "live_wholebook_req086.py"
 
 
 @pytest.fixture

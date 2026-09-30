@@ -217,13 +217,13 @@ D3 真机删除演练（需用户批准）与 DEFECT-006/007 语义裁决而长�
 | 1~3 配置三段式 / `config.py` / 服务脚本 | 达成（2026-09-20 已判） | `test_config.py`（含 DEFECT-008 行内注释 4 例）+ `test_service_scripts.py`；G5 三段走查证明生效层恒为本仓库 `.env` |
 | 4 API 契约 + 契约测试 | 达成（2026-09-20 已判），此后随版本布局扩到 15 条路由 | `architecture/api.md` + `tests/contract/test_api_v1_contract.py` |
 | 5 af_* 四表一次迁移 + 仓储幂等/upsert | 达成（2026-09-20 真机） | `qed` 库迁移至 `20260920_0002`；ARCH-013/014/015/003 侧证据入 completed.md |
-| 6 基本解析闭环（sync→ingest→解析→归一化→落盘+回写） | **达成（改判）**：原「未达成」的两项成因均已消除 | DEFECT-002（3.4.4 三段端点）与 DEFECT-001（页级提交边界）关闭；R1 窗口 job `86ab56ae2b6c` 20/20 页 52 秒完成并**首次激活** `active_job_id`，产物落 `versions/<job_id>/`（`data/probes/live-window-20260921/S2_after.json`）；`tests/smoke/test_live_mineru_chain.py`（`QED_SMOKE_LIVE=1`）常驻复跑 |
+| 6 基本解析闭环（sync→ingest→解析→归一化→落盘+回写） | **达成（改判）**：原「未达成」的两项成因均已消除 | DEFECT-002（3.4.4 三段端点）与 DEFECT-001（页级提交边界）关闭；R1 窗口 job `86ab56ae2b6c` 20/20 页 52 秒完成并**首次激活** `active_job_id`，产物落 `versions/<job_id>/`（`tmp/probes/live-window-20260921/S2_after.json`）；`tests/smoke/test_live_mineru_chain.py`（`QED_SMOKE_LIVE=1`）常驻复跑 |
 | 7 分块：`chunks.json` + `GET /chunks` + 抽样 20 页无公式腰斩、溯源可回跳 | **达成（本轮就地补做真机取证）** | 见下「标准 7 真机取证」 |
 | 8 门禁全绿 + REQ-001/REQ-075 回执 | **达成（本方侧发出）** | 门禁 `376 passed, 10 skipped` + `ruff check src tests scripts` 全绿 + 契约 96；REQ-075 已关闭（completed 行）；REQ-001 复核材料与延后项② 二次回执随 `95e1d37` 发出——根侧登记在其 `REQ-001` todo 行独立跟踪，不再作为本计划门槛 |
 
-**标准 7 真机取证（2026-09-21 就地补做，只读）**：脚本 `scripts/tmp/live_check_chunk_formula_integrity.py`
+**标准 7 真机取证（2026-09-21 就地补做，只读）**：脚本 `tmp/live_check_chunk_formula_integrity.py`
 对**生效版本** `86ab56ae2b6c`（20 页 / 原始块 159 / chunk 17）跑四项判据，结果 **PASS**，留档
-`data/probes/chunk-integrity-20260921/C1_chunks.json`：
+`tmp/probes/chunk-integrity-20260921/C1_chunks.json`：
 
 1. 公式整块不腰斩：18 个 `formula` 块按 `block_text` 规则（display → `$$…$$`，行内 → `$…$`）渲染后，
    **全部**作为完整子串出现在某个 chunk 文本中（缺失 0）；

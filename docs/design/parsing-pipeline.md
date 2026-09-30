@@ -185,7 +185,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | PP-3 | **页文件名只有一种格式**：`p<NNNN>.png` / `p<NNNN>.md` / `p<NNNN>.blocks.json`，`NNNN` = 页码 1 基四位零填充，由 ingest 首建，解析写入与 API 读取沿用同一格式 | 边界：版本内页图与根页图同名同内容 | `ingest/importer.py` 首建、`orchestrator/pipeline.py:_write_page_artifacts` 与 `api/main.py` 沿用 → `tests/unit/test_ingest.py` |
 | PP-4 | **原子落盘、无搬迁阶段**：任何产物写入都是「临时文件 → 校验 → 原子替换」，不留半成品；版本目录从**第一页产物写入起**就是目标目录；崩溃/被 kill 留下的瞬态残留（`.tmp-`/`.old-` 三式）由 `warn_transient_residue` 在**启动期与管理面清除路径计数告警**（只告警不清；重清归版本就绪判据） | 不存在「先写别处、成功末尾再搬」——那会与 PP-13 的页级持久化不变式冲突 | `ingest/artifacts.py` 原子写入 + `version_dir_for()` + `is_transient_name`/`warn_transient_residue` → `tests/unit/test_ingest.py`（三式识别与扫描）、`tests/contract/test_api_v1_contract.py`（两路径告警） |
-| PP-5 | **数据根双闸：单段名 + 根内路径**：`domain_id`、`course_id`、`book_id`、`job_id` 必须是安全单段（拒绝 `/`、`..`、前导点与空串；`domain_id`/`course_id` 允许空表示未归属），违规在 schema 层 422；源 PDF 与全部落盘路径必须位于 `QED_DATA_ROOT` 之内（`resolve_source_pdf` 对绝对路径同样受限） | 写盘前经 `ingest/artifacts.ensure_within()` 纵深防御（符号链接与 `..` 归一化后仍受限）；数据根唯一事实源是 `config.load_settings().data_dir`，且它**必须显式配置**——缺 `QED_DATA_ROOT` 即启动期报错，不静默回退到仓内目录（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)），仓内 `data/` 是留档区不是数据根候选 | `ingest/artifacts.py:ensure_safe_segment/ensure_within`、`schemas.py` → `tests/unit/test_schemas.py`、`tests/unit/test_ingest.py` |
+| PP-5 | **数据根双闸：单段名 + 根内路径**：`domain_id`、`course_id`、`book_id`、`job_id` 必须是安全单段（拒绝 `/`、`..`、前导点与空串；`domain_id`/`course_id` 允许空表示未归属），违规在 schema 层 422；源 PDF 与全部落盘路径必须位于 `QED_DATA_ROOT` 之内（`resolve_source_pdf` 对绝对路径同样受限） | 写盘前经 `ingest/artifacts.ensure_within()` 纵深防御（符号链接与 `..` 归一化后仍受限）；数据根唯一事实源是 `config.load_settings().data_dir`，且它**必须显式配置**——缺 `QED_DATA_ROOT` 即启动期报错，不静默回退到仓内目录（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)），仓内 `data/` 已退役、永不作数据根候选（[ADR 0012](../adr/0012-workspace-directory-hygiene.md) 决定 2） | `ingest/artifacts.py:ensure_safe_segment/ensure_within`、`schemas.py` → `tests/unit/test_schemas.py`、`tests/unit/test_ingest.py` |
 | PP-6 | **不写数据根 `tmp/`，瞬态只有两种形态且用完即清**：引擎提交/轮询/取结果的全部中间产物只存在于内存（HTTP 响应字节 → 解析后的结构），本服务落在磁盘上的瞬态文件仅①产物同目录隐藏临时文件（`.<name>.tmp-<hex>`、交换垃圾 `.<book>.old-<hex>`）②ingest 的兄弟隐藏暂存目录（`.<book_id>.tmp-<hex>`），两者在 `finally` 里清理；因此数据根顶层恒只出现白名单四区，`tmp/axiom-flow/<job_id>/` 永不出现 | 该目录一旦存在即视为缺陷（曾按 v1 习惯把它记作「未实现的暂存目录」，属设计表述错误，根仓库已按实况删除该虚构约定）。瞬态以点开头，`manifest` 与读取端天然排除，故**崩溃或被 kill 导致的残留不改变产物语义**，但可用 `.tmp-`/`.old-` 前缀机械识别（已实现启动期与管理面清除路径的计数告警，见 `PP-4`）；残留的清理语义归版本就绪判据（`PP-4`） | `ingest/artifacts.py:atomic_write_text/atomic_write_bytes`、`ingest/importer.py:ingest_book/_swap_root_view` → `tests/contract/test_api_v1_contract.py`（数据根顶层只有 `raw/`+`parsed/`） |
 
 #### 版面块归一
@@ -253,18 +253,18 @@ flowchart LR
    抽查），版面块类型标注无明显错乱。
 3. **坐标还原**：合成 A4 五行已知点坐标锚点、整本路径，逐版面块平均 IoU ≥ 0.9 且最大偏移 ≤ 10px。修复后
    实测 5/5 个版面块 IoU **0.93**、最大偏移 **7px**；旧实现同一判据下 IoU **0.01** 且有两个版面块被夹取到页边 →
-   `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`、`L3d_coord_space.json`（该缺陷的关闭记录见
+   `tmp/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`、`L3d_coord_space.json`（该缺陷的关闭记录见
    [completed.md](../trackers/completed.md)）。
 4. **对账不变式**：任意页 `原始条目数 = 存活版面块数 + dropped_block_count` → `tests/unit/test_normalize.py`
    （关闭记录见 [completed.md](../trackers/completed.md)）。
 5. **公式可解析率**：抽查页的公式段 LaTeX 可解析率 100%（修复前 91.95% / 87.79%，规模 b05 生效版本
    312 页 3838 处、b11 首版 20 页 126 处）→
-   `data/probes/window-20260922/C4_forensic_*.json`、`C6_forensic_*_postfix.json`。
+   `tmp/probes/window-20260922/C4_forensic_*.json`、`C6_forensic_*_postfix.json`。
 6. **知识块**：抽样 20 页无公式腰斩、无跨知识块语义断裂，溯源可回跳页/版面块 → `tests/unit/test_chunking.py`。
 7. **版本与恢复**：kill 编排进程后重启，未完成页在同一 `(book_id, job_id)` 内续跑成功，未激活版本不被
    端点读到 → `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py`
-   （真 MySQL 提交边界）；真机留档脚本 `scripts/tmp/live_wholebook_req086.py`、
-   `scripts/tmp/live_reparse_b01_pages.py`。
+   （真 MySQL 提交边界）；真机留档脚本 `tmp/live_wholebook_req086.py`、
+   `tmp/live_reparse_b01_pages.py`。
 8. **数据根不变式**：契约用例断言数据根只有 `raw/` 与 `parsed/`，`tmp/axiom-flow/` 恒不存在 →
    `tests/contract/test_api_v1_contract.py`。
 

@@ -35,8 +35,8 @@ REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
 | C1 | 顶层白名单登记制，白名单外即野生区 | 本仓文档只画两区：`overview.md:111` 的 `<QED_DATA_ROOT>/` 树只有 `raw/` 与 `parsed/`，`operations.md:48-55` 逐条列目录但**没有「顶层只允许什么」的边界规则**；无任何契约守护声明白名单（唯一近似断言散在 `tests/unit/test_orchestrator.py:260`，只覆盖 `raw`+`parsed` 且不叫这个名字） | **缺声明缺守护**（写入行为本身合规） |
 | C2 | 数据根唯一（`QED_DATA_ROOT`）；不把临时文件写入仓库工作区或数据根 | `config.py:47-49` 无 `QED_DATA_ROOT` 时**静默回退仓内 `data/`**（`config.py:74` 为该默认值），而 `operations.md:55` 明写 `data/`「**不作数据根候选**」；`tests/unit/test_config.py:73,190,196` 三处把该回退钉成契约 | **文档与代码互相打脸**，且回退目标正是野生区最密集处（见 C3） |
 | C3 | 白名单外目录发现即登记处置 | 仓内 `data/` 顶层实测：`books/`（v1 扁平布局残骸 `01-rudin-trial/`，**399 文件 / 1.2 GB**，`src`/`tests`/`scripts` 零引用，只在 `docs/history/design/*` 出现）、`probes/`（留档，含 542 个 JSON）、`backups/`、`api-8902.log`、`api-8902.err.log`（旧 runbook 落点，现服务写 `logs/`：`scripts/axiom_flow_service.py:36`）；`data/` 整目录 gitignore（`git ls-files data` = 0） | **三处野生**（`books/` 与两个 `.log` 为纯残骸；`probes/`/`backups/` 为有意留档） |
-| C4 | `backups/` 命名 `YYYY-MM-DD-<任务标识>` 且台账登记 | 本仓既有 D 类备份落**仓内** `data/backups/window-20260922/`（`operations.md:175`），命名式相反（任务在前、日期在后），且本仓无「备份目录命名」守则成文 | **命名式不合**（留痕与台账登记本身合规，PLAN-011 有判例） |
-| C5 | 元数据 JSON 岛禁止，例外①＝`parsed/**` 产物内部文件 | 本仓写入只在 `parsed/`（`artifacts.py:52-69` 两个路径构造器一律前缀 `parsed/`；`admin.py:51-52` 清除作用域限 `parsed/`），产物内 `book.json`/`manifest.json`/`blocks.json`/`chunks.json` 全属例外①；仓内 `data/probes/**` 的 JSON 是**证据留档**不在数据根内；`data/probes/<窗口>/root/parsed/**` 是显式声明的**探针数据根**（其内产物形状正当，守护必须放行） | **合规**，但「例外①清单」与「留档区不算岛」从未在本仓文档成文 ⇒ 日后易被误判或被新代码破坏 |
+| C4 | `backups/` 命名 `YYYY-MM-DD-<任务标识>` 且台账登记 | 本仓既有 D 类备份落**仓内** `tmp/backups/window-20260922/`（`operations.md:175`），命名式相反（任务在前、日期在后），且本仓无「备份目录命名」守则成文 | **命名式不合**（留痕与台账登记本身合规，PLAN-011 有判例） |
+| C5 | 元数据 JSON 岛禁止，例外①＝`parsed/**` 产物内部文件 | 本仓写入只在 `parsed/`（`artifacts.py:52-69` 两个路径构造器一律前缀 `parsed/`；`admin.py:51-52` 清除作用域限 `parsed/`），产物内 `book.json`/`manifest.json`/`blocks.json`/`chunks.json` 全属例外①；仓内 `tmp/probes/**` 的 JSON 是**证据留档**不在数据根内；`tmp/probes/<窗口>/root/parsed/**` 是显式声明的**探针数据根**（其内产物形状正当，守护必须放行） | **合规**，但「例外①清单」与「留档区不算岛」从未在本仓文档成文 ⇒ 日后易被误判或被新代码破坏 |
 | C6 | 解析中间产物不入 tmp；瞬态「用完即清」 | 同目录隐藏瞬态：`artifacts.py:148-167`（`.name.tmp-<hex>`，`finally` 清理✓）、`importer.py:106`（兄弟隐藏暂存目录，`finally` rmtree✓）、`importer.py:66-76`（`.book.old-<hex>` 交换垃圾——异常回滚分支只在 `not old_pages.exists()` 时换回，**可能留残骸**；进程被 kill 时三者都留残骸）；`manifest`/读取端按点开头文件天然排除（`artifacts.py:109,194`） | **正常路径合规，崩溃/失败路径无「清」的责任人与识别式** |
 | C7 | 目录骨架可枚举、盘↔库可对账 | 书目回退枚举仍用固定三层：`api/main.py:231` `data_root.glob("parsed/*/*/*/book.json")`、`api/main.py:183` `parsed/*/*/{book_id}`——PLAN-011/ARCH-026 已证明 `domain_id` 为空串时真实布局只有两层，`admin.py:70` 已改深度无关而此处未改；`_books_from_filesystem` 是活路径（`main.py:263,271`） | **同一缺陷类在读取侧未收口**（当前 `parsed/` 零文件所以未暴露） |
 
@@ -69,7 +69,7 @@ REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
 **非目标**：改数据根顶层白名单本身（那是根仓库 ADR 0018 的权限，新增条目须根侧立 ADR）；
 库↔盘对账 doctor 工具（根 REQ-096，落点在根侧 8900 或 CLI）；`dataset/` 内的存量清理
 （根 REQ-094，属根侧数据，本仓不写）；真实数据根的写入与解析（无 D 类批准）；`qed_test` 之外的库操作；
-页图/插图的跨版本去重实施（PLAN-015 A5 触发型观察，未触发）；`scripts/tmp/` 的历史窗口脚本清理
+页图/插图的跨版本去重实施（PLAN-015 A5 触发型观察，未触发）；`tmp/` 的历史窗口脚本清理
 （属 ARCH-010 文档规范化长尾，不在本壳）。**与 PLAN-009 P2（manifest-last 就绪 + 半写目录失败重清）
 重叠**：本轮只定 C6 的识别式与告警口径，重清的实施归 P2，避免两处各写一套。
 
@@ -87,7 +87,7 @@ REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
 | # | 问题 | 裁决 | 落地含义 |
 | --- | --- | --- | --- |
 | Q1（C2） | 未配置 `QED_DATA_ROOT` 时的行为 | **(A) 直接报错** | W3 去掉 `Settings.data_dir` 的仓内默认值，缺配置即启动期失败（同 `require_admin_configured` 纪律）；`test_config.py:73,190,196` 三处断言改写为「缺失即报错」 |
-| Q2（C3） | 仓内残骸是否清理 | **进行清理**（dry-run 实测：`data/books/` 399 文件 **1.2 GB**、两个 `.log` 各 0 MB） | W7 解锁：`data/books/01-rudin-trial/` 与 `data/api-8902*.log` 删除；`data/probes/`、`data/backups/` 保留并升格为声明过的留档区。执行前逐路径 dry-run 过目，前后指纹留档 |
+| Q2（C3） | 仓内残骸是否清理 | **进行清理**（dry-run 实测：`data/books/` 399 文件 **1.2 GB**、两个 `.log` 各 0 MB） | W7 解锁：`data/books/01-rudin-trial/` 与 `data/api-8902*.log` 删除；`tmp/probes/`、`tmp/backups/` 保留并升格为声明过的留档区。执行前逐路径 dry-run 过目，前后指纹留档 |
 | Q3（C6） | 崩溃残留的处置深度 | **本轮只做识别式＋告警**，重清归 PLAN-009 P2 | W5 范围收窄：`.tmp-`/`.old-`/暂存目录三式成文（已随 W1 写入 `PP-6`）+ 启动期与 purge 路径的告警计数；不做失败重清 |
 | Q4 | 是否升格为本仓 ADR | **立 ADR 0009** | 已成文 [ADR 0009](../../adr/0009-data-root-must-be-explicit.md)（状态 Accepted）并登记进 [ADR 索引](../../adr/index.md)（下一可用编号 0010） |
 
@@ -96,12 +96,12 @@ REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
 | # | 工作项 | 落点 | 状态 |
 | --- | --- | --- | --- |
 | W1 | 白名单成文：`overview.md` 数据边界节加「顶层只允许 `raw/`+`tmp/`+`parsed/`+`backups/`，本仓只写 `parsed/`」+ 哨兵区；`operations.md` 数据目录表补野生区判据；`parsing-pipeline.md` PP-6 收口根侧第③④条（虚构约定不复活 + 瞬态两形态与识别式） | 同上三篇 + `docs/adr/0009-data-root-must-be-explicit.md`、`docs/adr/index.md` | **已完成（文档批）**：哨兵区与「唯一写入 `parsed/`」入册，PP-5/PP-6 就地改写，ADR 0009 登记；守护待 W2 |
-| W2 | 新增本仓存储治理守护（先取红灯）：哨兵区一致性、`tmp/axiom-flow` 命中为 0、写入面只能落 `parsed/`（用假数据根探针断言越界写必抛）、留档区不入岛清单、`data/` 顶层无产物形状（放行 `data/probes/*/root/` 探针根） | `tests/contract/test_storage_conventions_governance.py` | **已完成**（8 例，先取 3 红）：哨兵区、字样双作用域、越界写、`parsed/` 前缀、缺配报错、仓内 `data/` 拒绝、递归产物形状。**判据解读**＝固定域（`standards/`+`architecture/`）字面为 0；条文域（`design/`/`guides/`/`adr/`）按行否定门控；历史/台账/计划壳不入扫描（2026-09-26 用户追认） |
+| W2 | 新增本仓存储治理守护（先取红灯）：哨兵区一致性、`tmp/axiom-flow` 命中为 0、写入面只能落 `parsed/`（用假数据根探针断言越界写必抛）、留档区不入岛清单、`data/` 顶层无产物形状（放行 `tmp/probes/*/root/` 探针根） | `tests/contract/test_storage_conventions_governance.py` | **已完成**（8 例，先取 3 红）：哨兵区、字样双作用域、越界写、`parsed/` 前缀、缺配报错、仓内 `data/` 拒绝、递归产物形状。**判据解读**＝固定域（`standards/`+`architecture/`）字面为 0；条文域（`design/`/`guides/`/`adr/`）按行否定门控；历史/台账/计划壳不入扫描（2026-09-26 用户追认） |
 | W3 | 数据根解析收口（Q1=A 已定）：去静默回退；同步 `test_config.py` 三处、`config.py` 文件头、`local-dev.md`/`operations.md` 配置表 | `src/axiom_flow/config.py`、`tests/unit/test_config.py` | **已完成**：`DataRootError` 三拒（缺配 / 指向仓内 `data/` / 目录不存在）且**不自动创建目录**（fail-closed 从严解读，2026-09-26 用户追认）；`test_config` 夹具注入临时根、`test_engine_factory` 两处改写；development/local-dev/operations 三文档同步 |
 | W4 | 书目枚举改深度无关（复用 `admin.py:70` 的产物标记判据，命中即剪枝），补两层/三层两形态回归；`api.md` 枚举口径同步 | `src/axiom_flow/api/main.py`、`tests/contract/test_api_v1_contract.py`、`docs/architecture/api.md` | **已完成**（4 例，先取 2 红）：`is_book_dir`/`iter_book_dirs` 升公有供 `main.py` 回退与全项目枚举复用，修两处固定三层 glob；`api.md` 枚举口径同步，契约文件 82 例全绿 |
 | W5 | 瞬态残留识别式与告警（Q3 已定：只告警不重清）：三式常量成文 + 启动期与 purge 路径计数告警；`PP-4`/`PP-6` 条文与 `operations.md` runbook 核对步骤 | `src/axiom_flow/ingest/artifacts.py`、`importer.py`、`api/admin.py`、`docs/design/parsing-pipeline.md` | **已完成**（6 例，先取 4 红）：`TRANSIENT_TMP_INFIX`/`TRANSIENT_OLD_INFIX` 两常量 + `is_transient_name`/`scan_transient_residue`/`warn_transient_residue`；lifespan 与 purge 两路径接线；`importer`/`artifacts` 生成式改常量；`PP-4`/`PP-6` 条文与 `operations.md`「留档区与瞬态核对步」同步 |
-| W6 | 备份与留档口径成文：`data/backups/YYYY-MM-DD-<任务标识>` 命名式 + 「仓内留档区不算 JSON 岛、不得出现产物形状」判定 | `docs/guides/operations.md`（数据目录表两行） | **已完成（文档批）**：新增 `<QED_DATA_ROOT>/backups/` 行与本仓备份落点说明；旧式判例 `window-20260922/` 保留为历史留痕不追改 |
-| W7 | C3 残骸清理（Q2 已批准；执行前逐路径 dry-run 过目）：dry-run 清单 → 你确认 → 删除 → 前后指纹留档 `data/probes/storage-align-<日期>/` | 仓内 `data/` | **已完成**（2026-09-24 清单过目获批后执行）：`data/books/` 399 文件 / 1,280,259,077 字节 + 两日志 7,416 字节删除；前后指纹入 `data/probes/storage-align-2026-09-24/`；`git status` 前后 22 项零差异；形状守护随之转绿 |
+| W6 | 备份与留档口径成文：`tmp/backups/YYYY-MM-DD-<任务标识>` 命名式 + 「仓内留档区不算 JSON 岛、不得出现产物形状」判定 | `docs/guides/operations.md`（数据目录表两行） | **已完成（文档批）**：新增 `<QED_DATA_ROOT>/backups/` 行与本仓备份落点说明；旧式判例 `window-20260922/` 保留为历史留痕不追改 |
+| W7 | C3 残骸清理（Q2 已批准；执行前逐路径 dry-run 过目）：dry-run 清单 → 你确认 → 删除 → 前后指纹留档 `tmp/probes/storage-align-<日期>/` | 仓内 `data/` | **已完成**（2026-09-24 清单过目获批后执行）：`data/books/` 399 文件 / 1,280,259,077 字节 + 两日志 7,416 字节删除；前后指纹入 `tmp/probes/storage-align-2026-09-24/`；`git status` 前后 22 项零差异；形状守护随之转绿 |
 | W8 | 回执与收口：C1~C7 判定写入 PLAN-015「登记与结论」并成文 REQ-095 回执正文；code-map 行同步；六步收口 | PLAN-015 壳（已按 `Delete` 删除，正文锚点 `a97ccc7`）、`docs/architecture/code-map.md` | **已完成**（2026-09-26 口径确认）：code-map 行同步与台账回写先行落地；A1~A4 判定与 REQ-095 回执正文已回填 PLAN-015 壳并随实现批入库（`a97ccc7`）；六步收口（todo 四行关闭 → completed 迁移 → plans/index 登记 → 本壳 Retain 迁移 → project-status 刷新 → 门禁复跑）随收口批执行 |
 
 ## 验证与验收
@@ -125,7 +125,7 @@ REQ-095 只出书面判定与回执，本壳是**本仓侧实施**）
   跑旧口径，显式设 `QED_DATA_ROOT` 即可，无需改码。
 - W4/W5（读取与告警）：不改产物格式、不迁库、不改 `af_*` 列，回滚＝还原代码，产物零影响。
 - W7（清理）：**不可逆**——执行前对每个待删路径出 `dry_run` 清单并给你过目；`01-rudin-trial` 与
-  日志若你要求可先移动到 `data/probes/legacy-v1/` 代替删除（可逆）。
+  日志若你要求可先移动到 `tmp/probes/legacy-v1/` 代替删除（可逆）。
 - 本壳全程不提交、不推送（按「暂不推送」）。
 
 ## 关闭与归档
@@ -144,9 +144,9 @@ ARCH-034 与 PLAN-016 两行压缩并关闭 → 迁移[关闭台账](../../track
 | W3 | 达成（S2） | `config.py` `DataRootError` 三拒、不自动创建（追认）；`test_config` 5 例改写 |
 | W4 | 达成（S4，两形态回归网） | 4 例先取 2 红；`api.md` 枚举口径同步；契约文件 82 例 |
 | W5 | 达成（S6 识别式与告警半边） | 6 例先取 4 红；lifespan + purge 两路径计数告警 |
-| W7 | 达成（S5） | 指纹 `data/probes/storage-align-2026-09-24/`（before/after 两文件）；`git status` 前后零差异 |
+| W7 | 达成（S5） | 指纹 `tmp/probes/storage-align-2026-09-24/`（before/after 两文件）；`git status` 前后零差异 |
 | 变异复验 | M1/M3 单红精确、M2 触发三层防线（36 红）、M4 0 红 | M4＝备份命名式无门禁（用户裁决不补，该面由 runbook 人工核对承担）；逐例字节级还原后回基线 |
-| 变异独立复验（第二窗口逐条重做） | 每条新断言各咬一次且只红对应用例，全部字节级还原（`restored=True`）：哨兵区插第五条目录→仅 `test_whitelist_sentinel_matches_constant`；`tmp/axiom-flow` 复活进 `standards/`→仅固定域守护、进 `guides/` 中性句→仅否定语境守护；`_resolve_data_dir` 缺配改回静默落仓内 `data/`→仅 `test_missing_data_root_fails_closed` + `test_missing_data_root_raises`；`data/` 造 `book.json`→仅形状守护；`_books_from_filesystem` 改回固定三层 glob→仅两层 listing 用例（另两处调用点未改，红点精确归位）；`TRANSIENT_TMP_INFIX`/`TRANSIENT_OLD_INFIX` 改名→识别式 2 红 + 清除路径告警接线 1 红。**首轮一条变异写法无效已重做**：把缺配分支改成 `if False:` 仍会走「目录不存在」报错，不构成静默回退，第二轮改为显式 `return _repo_archive_dir()` 才取证 | M4-archive 与 W7 指纹同轮复核：`data/probes/storage-align-2026-09-24/` 两文件在，before 记 `books/` 399 文件 / 1,280,259,077 字节 + 两日志，after 只剩 `backups/` 与 `probes/`，数字与本壳 W7 行逐字一致 |
+| 变异独立复验（第二窗口逐条重做） | 每条新断言各咬一次且只红对应用例，全部字节级还原（`restored=True`）：哨兵区插第五条目录→仅 `test_whitelist_sentinel_matches_constant`；`tmp/axiom-flow` 复活进 `standards/`→仅固定域守护、进 `guides/` 中性句→仅否定语境守护；`_resolve_data_dir` 缺配改回静默落仓内 `data/`→仅 `test_missing_data_root_fails_closed` + `test_missing_data_root_raises`；`data/` 造 `book.json`→仅形状守护；`_books_from_filesystem` 改回固定三层 glob→仅两层 listing 用例（另两处调用点未改，红点精确归位）；`TRANSIENT_TMP_INFIX`/`TRANSIENT_OLD_INFIX` 改名→识别式 2 红 + 清除路径告警接线 1 红。**首轮一条变异写法无效已重做**：把缺配分支改成 `if False:` 仍会走「目录不存在」报错，不构成静默回退，第二轮改为显式 `return _repo_archive_dir()` 才取证 | M4-archive 与 W7 指纹同轮复核：`tmp/probes/storage-align-2026-09-24/` 两文件在，before 记 `books/` 399 文件 / 1,280,259,077 字节 + 两日志，after 只剩 `backups/` 与 `probes/`，数字与本壳 W7 行逐字一致 |
 | ADR 0009 决定 5 措辞对齐 | 独立复验发现原文比实现宽：守护实际断言＝构造器一律前缀 `parsed/` + `ensure_within` 越出**数据根**必抛，而非任意 `parsed/` 越界写必抛（决定 4 的「向其他顶层区写入判为缺陷」仍是评审判据，M2 变异时 36 红为行为侧证据）。已按实况收窄措辞 | 未新增运行期闸门：`atomic_write_*` 不知数据根，加闸需改签名与全部调用点，超出本壳范围 |
 | 门禁 | 全绿（本壳实施时） | `537 passed / 10 skipped / 0 failed` + `ruff check src tests scripts` clean（起点 517 passed） |
 | 门禁（第二窗口复跑） | 本壳改动零红点，全量 `536 passed / 10 skipped / 1 failed` + ruff clean | 唯一红灯 `test_todo_plan_rows_exactly_mirror_active_plan_bodies` 属并行会话新落的 `docs/plans/2026-09-26-parsing-root-view-cleanup-request.md`（尚无 todo 镜像行），不入本壳归属；本壳收口第 6 步（门禁全绿）在该行登记前无法闭合 |

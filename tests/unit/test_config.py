@@ -210,7 +210,7 @@ class TestDataDir:
             load_settings()
 
     def test_repo_data_dir_is_rejected(self, isolated):
-        """仓内 `data/` 永久不是数据根：配置成它同样拒绝（决定 2，留档区单一身份）。"""
+        """仓内 `data/` 永久不是数据根：配置成它同样拒绝（ADR 0009 决定 2／ADR 0012 决定 2：该目录已退役）。"""
         with pytest.raises(DataRootError, match="QED_DATA_ROOT"):
             load_settings(data_dir=REPO_ROOT / "data")
 

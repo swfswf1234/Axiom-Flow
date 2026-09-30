@@ -47,7 +47,7 @@ def _strip_env_comment(value: str) -> str:
 
 
 def _repo_archive_dir() -> Path:
-    """仓内留档与备份区（`data/`）：ADR 0009 决定 2，永久不作数据根，只作拒绝比较用。"""
+    """已退役的仓内 `data/`（ADR 0012 决定 2）：永久不作数据根，只作拒绝比较用。"""
     return Path(__file__).resolve().parents[2] / "data"
 
 
@@ -58,7 +58,7 @@ class AdminConfigError(RuntimeError):
 class DataRootError(RuntimeError):
     """数据根未配置或不可用：拒绝启动（ADR 0009 决定 1/2）。
 
-    缺 `QED_DATA_ROOT`、指向仓内留档区 `data/`、或目录不存在均属配置错误；
+    缺 `QED_DATA_ROOT`、指向仓内退役目录 `data/`、或目录不存在均属配置错误；
     异常文本不含机密，必含变量名与推荐值（失败即可自助修复）。
     """
 
@@ -168,7 +168,7 @@ def _env_value(key: str) -> str:
 
 
 def _resolve_data_dir(raw: str | Path | None) -> Path:
-    """数据根解析（ADR 0009 决定 1/2）：显式配置、不落仓内留档区、必须是既有目录。
+    """数据根解析（ADR 0009 决定 1/2）：显式配置、不落仓内退役目录、必须是既有目录。
 
     不自动创建目录：创建会把 `.env` 手误路径变成真实目录、掩盖配置错误，与 fail-closed
     纪律相悖；错误文案必含变量名与推荐值（失败即可自助修复）。
@@ -182,8 +182,8 @@ def _resolve_data_dir(raw: str | Path | None) -> Path:
     path = path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
     if path == _repo_archive_dir().resolve():
         raise DataRootError(
-            f"{DATA_ROOT_ENV} 不得指向仓内 data/：那是留档与备份区，"
-            "永久不是数据根（ADR 0009 决定 2）"
+            f"{DATA_ROOT_ENV} 不得指向仓内 data/：该目录已退役，"
+            "永久不是数据根（ADR 0009 决定 2／ADR 0012 决定 2）"
         )
     if not path.is_dir():
         raise DataRootError(

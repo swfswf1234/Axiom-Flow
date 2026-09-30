@@ -18,7 +18,7 @@
 
 **目标**：书目录的识别不再依赖「`parsed/<domain>/<course>/<book>` 恒为三层」这一假设。
 
-**缺陷事实（2026-09-23 业务侧 dry-run 留档 `data/probes/purge-business-20260923/dry_run.json`）**：
+**缺陷事实（2026-09-23 业务侧 dry-run 留档 `tmp/probes/purge-business-20260923/dry_run.json`）**：
 `af_books` 17 本的 `domain_id` 全为空串，`book_dir_for` 拼接时**空段被 pathlib 折叠**，真实书目录只有
 两层（`parsed/linear_algebra/linearalgebra-b01/`）。原枚举用固定三层 glob（`*/*/*`、`*/*/{book_id}`），
 于是把 `pages/` 与 `versions/` 当成「书目录」：`targets` 回出 8 条子目录、`directories=8`，真删会留下
@@ -65,12 +65,12 @@
 $env:PYTHONIOENCODING = "utf-8"
 & D:\software\anaconda3\envs\QED_env\python.exe -m pytest tests -q
 & D:\software\anaconda3\envs\QED_env\python.exe -m ruff check src tests scripts
-& D:\software\anaconda3\envs\QED_env\python.exe scripts/tmp/live_admin_purge_plan010.py   # qed_test 探针根
+& D:\software\anaconda3\envs\QED_env\python.exe tmp/live_admin_purge_plan010.py   # qed_test 探针根
 ```
 
 业务侧（W5）判据：`purge_result.json` 的 `ok=true` 且 `targets` 与 `dry_run.json` 逐条相同、
 `rows_after` 四表全 0、`disk_after.book_dirs == []` 且 `parsed/` 下无残留文件；`resync_result.json`
-的 `af_books == 17`。留档目录：`data/probes/purge-business-20260923/`。
+的 `af_books == 17`。留档目录：`tmp/probes/purge-business-20260923/`。
 
 ## 回滚
 
@@ -100,4 +100,4 @@ $env:PYTHONIOENCODING = "utf-8"
 ## 关闭与归档
 
 S1~S6 逐条判定后关闭；`归档判定：Delete` 成立（条文与运维口径已在固定文档安家，红灯用例入默认门禁，
-真机证据在 `data/probes/` 与 `completed.md`）。关闭时同步 todo 镜像与 `plans/index.md`。
+真机证据在 `tmp/probes/` 与 `completed.md`）。关闭时同步 todo 镜像与 `plans/index.md`。

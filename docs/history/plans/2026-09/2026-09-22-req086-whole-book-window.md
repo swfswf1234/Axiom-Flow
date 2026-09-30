@@ -44,7 +44,7 @@
 
 - `engines/mineru.py`：`parse_document()` 增窗口参数（映射到 MinerU 3.4.4 `/tasks` 表单字段
   `start_page_id`/`end_page_id`，二者已在本仓库 W0 冻结的 OpenAPI 留档
-  `data/probes/mineru-3.4.4-20260920/raw/002_openapi_200.bin` 中确认可用，默认 `0`/`99999`）；
+  `tmp/probes/mineru-3.4.4-20260920/raw/002_openapi_200.bin` 中确认可用，默认 `0`/`99999`）；
   deadline 改为**每次提交独立计算**；返回页号按窗口偏移还原为**全书绝对页号**。
 - `orchestrator/pipeline.py`：全本分支（`:400-409`）由「一次调用 + 字典取页」改为**串行窗口循环**，
   每块完成即走既有 `_handle`（页产物写先于页行 commit）+ `_commit` + `_flush_progress`，
@@ -86,7 +86,7 @@
 
 | # | 工作项 | 产物 | 门禁 | 状态 |
 | --- | --- | --- | --- | --- |
-| W0 | 窗口协议冻结探测（①~④） | `data/probes/window-req086-20260922/` + 结论表 | 只读 | Done（④＝245s/56 页，见「实施登记」） |
+| W0 | 窗口协议冻结探测（①~④） | `tmp/probes/window-req086-20260922/` + 结论表 | 只读 | Done（④＝245s/56 页，见「实施登记」） |
 | W1 | 引擎窗口参数 + 按块 deadline + 绝对页号还原 | `mineru.py` 改动 + `tests/unit/test_engines.py` 新增（先红：表单带窗口字段 0 基含两端、页号跨窗还原为绝对页号） | 单测 | Done（`TestWindowSubmission` 7 条） |
 | W2 | 空白页合法化 + 质量标记 | `mineru.py`/`schemas.py`/`normalize` + 单测（先红：空 `content_list` 不再抛 `EngineError`；反向判据：`pdf_info`/`content_list` 双缺仍抛错） | 单测 | Done（`real-blank-only` 形状 + `TestBlankPageSignal` 3 条） |
 | W3 | pipeline 串行窗口循环 + 块级失败隔离 + 按块进度 | `pipeline.py` + `tests/unit/test_orchestrator.py`（假引擎计数：每块一次提交、块失败仅该块页 `failed`）+ `config.py`/`jobs.py`/`api/main.py` 接线 | 单测 | Done（`TestWholeBookWindows` 6 条，含 `window_size` 接线守护） |
@@ -97,7 +97,7 @@
 
 ## 实施登记（2026-09-22 开工轮）
 
-### W0 窗口协议冻结结论（判据：`data/probes/window-req086-20260922/`）
+### W0 窗口协议冻结结论（判据：`tmp/probes/window-req086-20260922/`）
 
 真机 MinerU 3.4.4，提交前 `/health` queued=0/processing=0（单占用自证），5 次提交全部 `completed`。
 ① ② 用**合成标记 PDF** 冻结（b05 全本无文本层，每页 `get_text()` 长度 0，无法用源文本反查页号；
@@ -131,9 +131,9 @@ b05 无文本层，`textlen==0` 对全部 317 页成立，不能作空白判据�
 真实空白页为 **1 基 48/98/136/162/282 共 5 页**（与根侧 REQ-087 所述「空白五页」一致）；
 `real-wide56` 的 `page_idx` 缺 47（= 1 基 48）与之互相印证。S3 的「5 空白页计 parsed」按此清单判定。
 
-### W6 真机复测登记（2026-09-22，留档 `data/probes/wholebook-req086-20260922/`）
+### W6 真机复测登记（2026-09-22，留档 `tmp/probes/wholebook-req086-20260922/`）
 
-驱动脚本 `scripts/tmp/live_wholebook_req086.py`：**真实环境变量**注入 `QED_DB_NAME=qed_test` +
+驱动脚本 `tmp/live_wholebook_req086.py`：**真实环境变量**注入 `QED_DB_NAME=qed_test` +
 `QED_DATA_ROOT=<探针根>`（不改 `.env`），解析前硬闸门断言二者到位；探针服务起在**独立端口 8912**
 （不碰 `logs/qed-axiom.pid`，业务 8902 实例全程在位未受影响），全流程只经 HTTP 驱动。
 
@@ -291,7 +291,7 @@ PLAN-008 **W3 红灯阶段**的 `TestParseJobListEndpoint`（测试先落、端�
   `AXIOM_PARSE_WINDOW_SIZE` 调大退化，但**不做静默降级开关**（ADR 0004）。
 - 真机产物按版本目录隔离：新 job 未激活时读取面仍走旧生效版本，复测失败不污染现网读取；
   激活后回滚 = 按 `af_*` 备份还原指针 + 保留新版本目录（不删盘）。
-- 业务库备份：复测前 `af_*` 五表 dump（同 R2 窗口口径 `data/backups/`）。
+- 业务库备份：复测前 `af_*` 五表 dump（同 R2 窗口口径 `tmp/backups/`）。
 
 ## 关闭与归档
 
@@ -306,7 +306,7 @@ PLAN-008 **W3 红灯阶段**的 `TestParseJobListEndpoint`（测试先落、端�
   ① **REQ-086/REQ-087 回执正文**见本计划两节（本方判据已达成，锚点为收口 commit）；
   ② **环境侧判据与鉴别命令**见 [operations.md](../../../guides/operations.md)「模型容器中途重启」两条
   （OOM 与发行版空闲回收的鉴别 = `dmesg` 有无 `Killed process`），该节现同时标注归属为根仓库环境线；
-  ③ **驱动脚本自带的常驻前置**（`scripts/tmp/live_wholebook_req086.py --wsl-holder`）是本仓库探针
+  ③ **驱动脚本自带的常驻前置**（`tmp/live_wholebook_req086.py --wsl-holder`）是本仓库探针
   窗口的便利实现，**不构成对本仓库的环境侧职责**——根侧长驻服务链路若遇同一形态，按 ② 的判据自查。
 - **归档判定：Retain**（含 b05 全本真机复测留档与 D 类 `qed_test`/探针数据根写操作，属不可替代外部
   证据）。壳迁入 `docs/history/plans/2026-09/`，去处登记见 [plans/index.md](../../../plans/index.md) 与
@@ -362,7 +362,7 @@ PLAN-008 **W3 红灯阶段**的 `TestParseJobListEndpoint`（测试先落、端�
 **目的**：b05 + b11 解析质量验收收口（2026-09-22 R2 窗口已按**抽查口径**判定 ①~⑤ PASS）。
 **关闭条件**：抽查页公式可解析率 ≥90%、丢弃为 0、`_TYPE_MAP` 缺口归零（等 ARCH-019）。
 **工作项**：W4（映射缺口）+ W6（b05 全本复测顺带消除混合版本 chunks 与 5 个缺页，即抽查口径遗留）。
-**状态**：In Progress。取证脚本沿用 `scripts/tmp/live_forensic_representative.py`（带 `--selftest` 反向判据）。
+**状态**：In Progress。取证脚本沿用 `tmp/live_forensic_representative.py`（带 `--selftest` 反向判据）。
 
 ## 承载 ARCH-019（`ref_text` 未入 `_TYPE_MAP`，b05 抽样页 26 块可见丢弃）
 

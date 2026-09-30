@@ -1,10 +1,13 @@
 """
-模块职责：验证任务 ID、活跃计划镜像、承载引用、列长与并发上限、关闭证据和无状态路线图保持一致。
-设计关联（DesignRef）：docs/standards/task-lifecycle.md、docs/adr/0006-ledger-plan-carrier-contract.md
+模块职责：验证任务 ID、活跃计划镜像（承载列单指针）、三列语义与列界（成功标准终态、承载列唯一
+承载文档指针、文档链接不出现在其他列）、行内禁日期、并发上限、关闭证据和无状态路线图保持一致。
+设计关联（DesignRef）：docs/standards/task-lifecycle.md、docs/adr/0006-ledger-plan-carrier-contract.md、
+docs/adr/0013-ledger-row-three-elements.md
 实现状态：Current
 被测代码：docs/trackers、docs/plans
 守护面：计划与任务治理
-失效后果：任务 ID 复用、计划镜像断裂、任务无承载或台账进度膨胀、并发超限
+失效后果：任务 ID 复用、计划镜像断裂、任务无承载、台账行混入现状与日期化流水、成功标准退化为验收
+流程措辞、并发超限
 """
 
 import re
@@ -15,21 +18,28 @@ ROOT = Path(__file__).resolve().parents[2]
 TRACKERS = ROOT / "docs" / "trackers"
 PLANS = ROOT / "docs" / "plans"
 TASK_ID = re.compile(r"[A-Z][A-Z0-9]*-\d{1,3}")
-PLAN_LINK = re.compile(r"^\[(?P<title>[^]]+)]\(\.\./plans/(?P<path>[^)]+\.md)\)$")
+PLAN_LINK = re.compile(r"^\[(?P<title>[^]]+)]\(\.\./plans/(?P<path>[^)]+\.md)\)")
+PLAN_REF = re.compile(r"\.\./plans/([^\s)]+\.md)")
 ACTIVE_STATUSES = {"Accepted", "In Progress", "Blocked"}
 TERMINAL_STATUSES = {"Completed", "Cancelled", "Superseded"}
 CLOSE_RESULTS = {"Achieved", "Rejected", "Partial", "Not Applicable"}
-TODO_COLUMNS = ("ID", "类别", "优先级", "状态", "任务", "关闭条件", "证据/下一条件")
-PLAN_REF = re.compile(r"\.\./plans/([^\s)]+\.md)")
-EVIDENCE_LIMIT = 200
-CLOSE_CONDITION_LIMIT = 80
+TODO_COLUMNS = ("ID", "类别", "优先级", "状态", "任务", "成功标准", "承载")
+SUCCESS_LIMIT = 80
+ROW_COLUMNS = ("任务", "成功标准", "承载")
+LINK_TARGET = re.compile(r"\]\([^)]*\)")
+DATE_LIKE = re.compile(r"\d{4}-\d{2}-\d{2}")
+MARKDOWN_LINK = re.compile(r"\[[^\]]*]\([^)]+\)")
+POINTER_SEPARATORS = re.compile(r"[\s、,，；;]+")
+POINTER_LINKS_EXACT = 1
+SUCCESS_BANNED = ("门禁", "收口", "全绿", "成文")
+SUCCESS_BANNED_RE = re.compile(r"S\d+~S\d+")
 MAX_BRANCH_IN_PROGRESS = 3
 
 
 def _rows_from(
     lines: list[str], header: str, columns: tuple[str, ...]
 ) -> list[dict[str, str]]:
-    """收集文档中所有匹配表头的表格行（todo 按主线/治理/长期分表）。"""
+    """收集文档中所有匹配表头的表格行（todo 按轮次/长期分表）。"""
     rows: list[dict[str, str]] = []
     for index, line in enumerate(lines):
         if line != header:
@@ -90,6 +100,7 @@ def test_task_ids_are_stable_unique_and_rows_are_complete():
     completed = _completed_rows()
     ids = [row["ID"] for row in (*todo, *completed)]
 
+    assert todo, "todo.md 缺少 ADR 0013 列契约的表头行"
     assert ids
     assert all(TASK_ID.fullmatch(task_id) for task_id in ids)
     assert len(ids) == len(set(ids))
@@ -99,9 +110,10 @@ def test_task_ids_are_stable_unique_and_rows_are_complete():
 def test_todo_plan_rows_exactly_mirror_active_plan_bodies():
     plan_rows: dict[str, tuple[dict[str, str], str]] = {}
     for row in _todo_rows():
-        link = PLAN_LINK.fullmatch(row["任务"])
-        if link is None:
+        if not row["ID"].startswith("PLAN-"):
             continue
+        link = PLAN_LINK.match(row["承载"])
+        assert link, f"{row['ID']}: 计划镜像行的「承载」列唯一指针必须指向 ../plans/ 下的壳"
         assert link.group("path") not in plan_rows, row["ID"]
         plan_rows[link.group("path")] = (row, link.group("title"))
 
@@ -127,15 +139,41 @@ def _expand_ids(text: str) -> set[str]:
     return ids
 
 
-def test_rows_declare_bounded_columns_and_carrier_reference():
-    """ADR 0006：关闭条件/证据列有界；支线行必须有计划承载（关联 Tracker 登记或承载节）。"""
+def test_success_criteria_are_concrete_and_bounded():
+    """ADR 0013：成功标准＝具体终态，≤80 字，禁验收流程措辞与壳内 S 判据区间引用。"""
     for row in _todo_rows():
-        assert len(row["关闭条件"]) <= CLOSE_CONDITION_LIMIT, row["ID"]
-        assert len(row["证据/下一条件"]) <= EVIDENCE_LIMIT, row["ID"]
-        if row["类别"] in {"主线", "长期"}:
+        cell = row["成功标准"]
+        assert len(cell) <= SUCCESS_LIMIT, f"{row['ID']}: {len(cell)} 字超界"
+        hits = [word for word in SUCCESS_BANNED if word in cell]
+        assert not hits, f"{row['ID']}: 成功标准含验收流程措辞 {hits}"
+        assert not SUCCESS_BANNED_RE.search(cell), f"{row['ID']}: 成功标准引用壳内 S 判据区间"
+
+
+def test_pointer_column_is_a_single_document_link():
+    """ADR 0013：「承载」列＝恰好一个文档指针且无自然语言；文档链接不得出现在「任务／成功标准」列。"""
+    for row in _todo_rows():
+        for column in ("任务", "成功标准"):
+            stray = MARKDOWN_LINK.findall(row[column])
+            assert not stray, f"{row['ID']}: {column} 列含文档链接 {stray}（链接只登记在「承载」列）"
+        cell = row["承载"]
+        links = MARKDOWN_LINK.findall(cell)
+        assert links, f"{row['ID']}: 承载列缺文档指针"
+        assert len(links) == POINTER_LINKS_EXACT, (
+            f"{row['ID']}: 承载列指针数 {len(links)}，一任务只有一个承载文档"
+        )
+        residual = POINTER_SEPARATORS.sub("", MARKDOWN_LINK.sub("", cell))
+        assert not residual, f"{row['ID']}: 承载列混入自然语言残余 {residual!r}"
+
+
+def test_rows_are_date_free_and_carrier_reference_registered():
+    """ADR 0013：三列剥链接目标后禁 ISO 日期；ADR 0006：支线行的「承载」列唯一指针必须指向已登记本行的计划。"""
+    for row in _todo_rows():
+        for column in ROW_COLUMNS:
+            stripped = LINK_TARGET.sub("]", row[column])
+            assert not DATE_LIKE.search(stripped), f"{row['ID']}: {column} 列含日期字面量"
+        if row["类别"] != "支线":
             continue
-        cell = f"{row['任务']} {row['证据/下一条件']}"
-        refs = PLAN_REF.findall(cell)
+        refs = PLAN_REF.findall(row["承载"])
         assert refs, f"{row['ID']}: 支线行缺 ../plans/ 承载引用"
         carried = False
         for ref in refs:
@@ -158,17 +196,15 @@ def test_branch_in_progress_within_concurrency_limit():
 
 
 def test_main_aggregate_rows_list_branch_children():
-    """主线聚合行（非计划链接任务）必须列全支线行 ID。"""
+    """主线聚合行（ID 非 PLAN- 前缀）必须在「任务」列列全支线行 ID。"""
     branches = [row["ID"] for row in _todo_rows() if row["类别"] == "支线"]
     aggregates = [
         row
         for row in _todo_rows()
-        if row["类别"] == "主线" and PLAN_LINK.fullmatch(row["任务"]) is None
+        if row["类别"] == "主线" and not row["ID"].startswith("PLAN-")
     ]
     assert aggregates
-    listed = _expand_ids(
-        " ".join(f"{row['任务']} {row['证据/下一条件']}" for row in aggregates)
-    )
+    listed = _expand_ids(" ".join(row["任务"] for row in aggregates))
     for task_id in branches:
         assert task_id in listed, task_id
 

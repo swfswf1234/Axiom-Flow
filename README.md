@@ -21,9 +21,9 @@ flowchart LR
 ## 核心能力
 
 - 导入 PDF（页范围可控），以持久任务方式提交解析。
-- 使用 MinerU（vlm/hybrid 后端，经 8900 网关调用）生成页级 Markdown、LaTeX 公式、表格与结构化块。
-- 页级质量信号校验，效果不达标时按页调用百炼 qwen-vl-plus 兜底。
-- 产物落盘 `data/books/<book_id>/`：页图、markdown、blocks.json、state.sqlite、manifest。
+- 经引擎适配器**直连**本地模型服务（MinerU 先落地）生成页级 Markdown、LaTeX 公式、表格与结构化块；镜像与启停由根仓库 8900 托管（[ADR 0004](docs/adr/0004-model-boundary-and-pipeline-ownership.md)）。
+- 页级质量信号与知识块切分；**无自动兜底**：引擎名显式分派，未实现或未知即报错。
+- 产物落盘 `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`：页图、markdown、blocks.json、chunks.json、manifest；数据根必须显式配置，仓内 `data/` 已退役（[ADR 0009](docs/adr/0009-data-root-must-be-explicit.md)／[ADR 0012](docs/adr/0012-workspace-directory-hygiene.md)）。
 - 对外 `/api/v1` 契约：书目、任务、单页数据与产物清单，供 QED-Engine 前端调用。
 
 ## 技术栈
@@ -31,18 +31,18 @@ flowchart LR
 | 范围 | 技术 |
 | --- | --- |
 | Backend 与协议 | Python 3.12、FastAPI、Pydantic |
-| PDF 解析 | MinerU（vlm/hybrid 后端，经 8900 网关调用；容器由根仓库 `scripts/image-model/` 托管） |
-| 兜底通道 | 阿里百炼 OCR（`qwen-vl-plus`） |
-| 持久化 | 文件系统产物 + 轻量 SQLite（`state.sqlite`） |
-| 部署 | WSL Ubuntu 24.04 + Docker Compose（启停脚本控制） |
+| PDF 解析 | MinerU（vlm/hybrid 后端，本仓库直连其服务端点；镜像与容器由根仓库 `scripts/image-model/` 托管） |
+| 引擎槽位 | PaddleOCR-VL / qwen-vl 预留（未实现，无自动兜底） |
+| 持久化 | 文件系统产物（`parsed/`）＋ `qed` 库 `af_*` 表族（MySQL 为运行库，Alembic 管结构并保持 SQLite 双栈 DDL） |
+| 部署 | Windows 侧 8902 服务（`scripts/axiom_flow_service.py`）＋ WSL Ubuntu 24.04/Docker 内的模型服务（根仓库托管） |
 | 工程门禁 | Pytest、Ruff（本地唯一门禁，无远端 CI） |
 
 ## 能力边界
 
 | 类别 | 内容 |
 | --- | --- |
-| 输入 | 数学/技术 PDF（当前）、明确的页范围、解析策略（local/hybrid） |
-| 核心职责 | 文档解析、统一格式产出、质量校验、兜底、任务编排 |
+| 输入 | 数学/技术 PDF（当前）、明确的页范围、引擎名（显式分派） |
+| 核心职责 | 文档解析、统一格式产出、质量信号、任务编排 |
 | 输出 | 原页高清图、页级 Markdown、结构化块（blocks.json）、可校验产物清单 |
 | 不负责 | 前端展示（QED-Engine）、检索/向量化（Milvus 后续）、知识图谱（后续） |
 
@@ -62,20 +62,21 @@ flowchart LR
 
 ## 典型流程
 
-1. `POST /api/v1/parse-jobs` 提交解析任务（book_id、页范围、策略）。
-2. 编排层逐页调用 MinerU（经 8900 网关，qed-engine 模式），质量信号校验后落盘产物。
-3. local 模式可直连 qwen-vl-plus 作为独立识别通道（非兜底；V2-006 兜底已取消）。
+1. `POST /api/v1/parse-jobs` 提交解析任务（book_id、页范围缺省＝全本、引擎名）。
+2. 编排层经引擎适配器直连模型服务逐页解析，质量信号与分块后原子落盘产物。
+3. 未实现或未知引擎名即报错（400/422），不静默切换引擎。
 4. QED-Engine 前端经 `/api/v1` 拉取页图与统一格式做对照展示。
 
 ## 仓库结构
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/axiom_flow/` | API、编排、导入、兜底与统一格式 schemas（v2 重建中） |
-| `scripts/` | WSL 容器启停脚本与 compose 配置 |
+| `src/axiom_flow/` | API、编排、导入、引擎适配、归一化与统一格式 schemas |
+| `scripts/` | 长期受管脚本：`axiom_flow_service.py` 是 8902 唯一启停入口（容器脚本归根仓库） |
 | `tests/` | 单元、契约、集成与冒烟门禁 |
 | `docs/` | 当前架构、设计、决策、规范、指南、计划和追踪器 |
-| `data/` | 按需创建的本地解析产物，不纳入版本控制 |
+| `tmp/`（仓库根） | 仓内**唯一**临时与留档区：一次性窗口驱动、探针与取证留档；`.gitignore` 排除、不入库、可随手清理（ADR 0012 决定 1） |
+| `logs/` | 本项目运行日志与运行时文件（`qed-axiom*`，文件数 ≤3，ADR 0012 决定 4） |
 
 ## 开发入口
 

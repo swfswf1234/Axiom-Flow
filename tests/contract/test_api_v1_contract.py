@@ -1543,7 +1543,7 @@ class TestAdminPurgeEndpoint:
             assert self._book_root(tmp_path, "mathanalysis-b05").is_dir()
 
     def test_book_scope_purge_deletes_four_tables_and_dir(self, tmp_path, monkeypatch):
-        """按书目清除：四表行含 `af_parse_jobs` 一起走（`PM-17`），他书完好。"""
+        """按书目清除：表族行含 `af_parse_jobs` 一起走（`PM-17`），他书完好。"""
         test_client, session_factory = _admin_build(tmp_path, monkeypatch)
         with test_client as client:
             self._seed(client, "mathanalysis-b05")

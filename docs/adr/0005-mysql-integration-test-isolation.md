@@ -39,7 +39,7 @@ ADR。因此本 ADR 先于 `tests/support/mysql.py`、`tests/integration/` 用�
    不匹配立即 `pytest.exit` 终止整个会话（不是 skip——防止误连运行库被标成「跳过」）；任何代码
    路径**不得读取、写入或 DDL `qed` 业务库**。连接参数由夹具自行构造，不复用运行库的 `QED_DB_NAME`
    值（本仓库 `load_settings(db_name="qed_test")` 覆盖，业务库名从不进入测试 DSN）。
-3. **自有表范围 = `af_*` 四表 + `alembic_version`（2026-09-21 评审修订）**：`qed_test` 由夹具
+3. **自有表范围 = `af_*` 表族（首建时四表，以 `AF_TABLES` 为准）+ `alembic_version`（2026-09-21 评审修订）**：`qed_test` 由夹具
    `CREATE DATABASE IF NOT EXISTS` 保证存在，每项用例只 `DROP TABLE IF EXISTS` 本仓库自有的
    `af_books`/`af_parse_jobs`/`af_pages`/`af_block_edits` 与 `alembic_version`，随后 Alembic 升级到
    head，用例结束再删一次同一白名单。**绝不 `DROP DATABASE`**：`qed_test` 已被根仓库用作 `qed`
@@ -56,7 +56,7 @@ ADR。因此本 ADR 先于 `tests/support/mysql.py`、`tests/integration/` 用�
   `progress` 单调性获得真实数据库语义下的断言。
 - **代价**：集成测试不再是零环境依赖，需要本机 MySQL 在线才能真跑；CI 无远端门禁，故该层由开发者
   本地显式执行，团队必须记住「默认绿 ≠ MySQL 路径已验证」。另有一条**共享面代价**（评审时确认）：
-  `qed_test` 的 `af_*` 四表与 `alembic_version` 归本方测试所有，每次用例会重建它们——根仓库若把该库
+  `qed_test` 的 `af_*` 表族与 `alembic_version` 归本方测试所有，每次用例会重建它们——根仓库若把该库
   当作 `qed` 的镜像，其 `af_*` 行与迁移版本行会随测试消失（镜像可重建，且 `af_*` 的事实源本就是本方
   `qed` 业务库，不是镜像）。
 - **缓解**：`pytest` 输出中 skip 计数可见；`docs/guides/development.md` 与 `testing.md` 记录
@@ -80,7 +80,7 @@ ADR。因此本 ADR 先于 `tests/support/mysql.py`、`tests/integration/` 用�
   默认门禁 `pytest tests -q` 下同批 **8 skipped**（skip 理由含开关名）。反向判据
   `test_deferred_commits_are_genuinely_invisible_mid_run` 证明该层断言测的是提交边界而非恒真：
   退化开关 `persist_per_page=False` 下独立连接看不到任何中间进度。
-- **边界核验**（跑完后只读查库）：`qed` 业务库四表行数与迁移版本行均未变（`af_books` 17 /
+- **边界核验**（跑完后只读查库）：`qed` 业务库 af_* 表族行数与迁移版本行均未变（`af_books` 17 /
   `af_parse_jobs` 10 / `af_pages` 39 / `af_block_edits` 1，`alembic_version = 20260917_0001`），
   测试期间无任何写入；`qed_test` 内根仓库镜像的非 `af_*` 表（`qt_books` 等 8 张）保持不变，其
   `af_*` 四表与 `alembic_version` 如裁决所料随夹具收尾被删除（可由根侧重新镜像，非事实源）。

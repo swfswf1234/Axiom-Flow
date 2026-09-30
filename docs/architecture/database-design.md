@@ -2,8 +2,8 @@
 
 设计状态：Accepted
 确认状态：已确认
-实现状态：Verified（af_* 四表与四条迁移已落地，业务库与测试库均经真机验证）
-最后更新：2026-09-26
+实现状态：Verified（af_* 表族与全部 af_* 迁移已落地，业务库与测试库均经真机验证）
+最后更新：2026-09-29
 关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
 关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py`、`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -12,7 +12,7 @@
 [ADR 0007](../adr/0007-parse-status-semantics.md)、根仓库
 [ADR 0003](https://github.com/QED-Engine/qed-engine/blob/main/docs/history/adr/v0.1/0003-shared-qed-database-independence.md)（共享 qed 库独立性例外）
 
-> 本篇回答唯一问题：**af_\* 四表各自存什么、列的语义是什么、结构如何演进**。
+> 本篇回答唯一问题：**af_\* 表族各自存什么、列的语义是什么、结构如何演进**。
 > 端点参数与响应结构在 [api.md](api.md)，状态流转与职责分段的判据在
 > [design/parsing-management.md](../design/parsing-management.md)（`PM-n`），模块映射在
 > [code-map.md](code-map.md)。根仓库总纲只维护命名空间隔离规则，不复制本篇表结构。
@@ -26,6 +26,11 @@
   变更不进入本表读取路径；本仓库用 Alembic 独立初始化自己的表，不依赖其他项目迁移。
 - **入库边界**：文件系统承载产物正本（`parsed/` 页图 / Markdown / blocks / 分块），DB 只存元数据与
   状态；`chunks.json` 是派生文件，**不入库**（可重建）。
+- **新表准入（表级问题的判据）**：需求的存储形态落在「身份需跨版本稳定、需唯一约束、需 SQL
+  集合检索」三者任一且现有表族承载不了，才新增表，且必须走独立评审轮并同步表清单、列清单与
+  `AF_TABLES`；状态信号注记一律以加列或现有 JSON 键承载，不张表。
+- **JSON 列反向闸**：JSON 列不得承载需要唯一约束或集合检索的身份关系——某键一旦有此需求即为
+  表级问题，按上一条判据走评审，不以塞键回避。
 - 凭据与库名的唯一事实源是根 `.env` 的 `QED_DB_*` 变量；密码值绝不下发。
 - **本篇不写**：列的取值域如何被端点暴露（→ [api.md](api.md)）、页与编辑的版本作用域判据
   （→ `PM-3`/`PM-6`/`PM-11`/`PM-16`）、迁移的运维执行步骤（→ [operations.md](../guides/operations.md)）。
@@ -231,7 +236,7 @@ ER 图只画关系与主键/唯一键的骨架；**列的完整事实源是下�
   版本），产物文件不随迁移删除（DB 与文件解耦）。
 - **读取端如实报错**：生效版本目录缺失即 404，页行 `parsed` 而产物不在位在逐页清单里原样暴露，
   不静默回落根视图——与「无自动兜底」同源（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
-- **管理面清除是 DML-only 例外**：`af_*` 四表行都在清除范围内（含任务行），但**无 DDL、无
+- **管理面清除是 DML-only 例外**：`af_*` 表族行都在清除范围内（含任务行），但**无 DDL、无
   `DROP DATABASE`**——共享库里另有其他项目的表；默认不挂载、须管理 token 与逐字确认，作用域内有
   活动态任务时拒绝执行。`af_books` 行同样可清：书目是同步来的快照，可经同步重建，不是持久资产。
 - **外部故障不传导**：8901 离线只影响同步动作，不影响本表读取。读取面**纯 DB 驱动**：

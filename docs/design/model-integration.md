@@ -143,10 +143,10 @@ flowchart LR
 
 ## 验收判据
 
-1. **协议事实来自冻结探测**，非推测：三段式端点与信封形状留档 `data/probes/mineru-3.4.4-20260920/`
-   （W0 冻结）；窗口字段与页号相对性留档 `data/probes/window-req086-20260922/`；坐标空间与类型字面值
-   留档 `data/probes/live-bringup-20260920/{L3d_coord_space.json,L3c_page0003.json}` 与
-   `data/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`。
+1. **协议事实来自冻结探测**，非推测：三段式端点与信封形状留档 `tmp/probes/mineru-3.4.4-20260920/`
+   （W0 冻结）；窗口字段与页号相对性留档 `tmp/probes/window-req086-20260922/`；坐标空间与类型字面值
+   留档 `tmp/probes/live-bringup-20260920/{L3d_coord_space.json,L3c_page0003.json}` 与
+   `tmp/probes/live-bbox-fix-20260921/E1_anchor_after_fix.json`。
 2. **单元**：`config.py` 引擎/地址/超时读取（含向上走查兜底、旧键忽略）→ `tests/unit/test_config.py`；
    适配器 mock 单测（三段协议 + 信封双兼容 + 窗口页号还原 + 直连开关 + `model_load` 判定）→
    `tests/unit/test_engines.py`。

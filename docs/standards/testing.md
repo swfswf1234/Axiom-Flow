@@ -42,7 +42,7 @@ ruff check src tests
 - 默认测试不得访问公网、不得要求 API key、不得调用外部模型、不得写运行数据库；TLS 校验
   默认开启。**唯一例外**（[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)）：
   `integration` 层在 `QED_TEST_MYSQL=1` 时可连本机回环 MySQL，但只准使用 `qed_test` 库内本仓库
-  自有的 `af_*` 四表与 `alembic_version`（夹具逐名断言、连接后硬校验 `SELECT DATABASE()`，且绝不
+  自有的 `af_*` 表族与 `alembic_version`（夹具逐名断言、连接后硬校验 `SELECT DATABASE()`，且绝不
   `DROP DATABASE`），数据根仍必须是 `tmp_path`；缺该开关时整层 skip，默认门禁零外部依赖不变。
 
 ## 执行与门禁

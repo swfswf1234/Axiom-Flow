@@ -1,6 +1,6 @@
-"""Alembic 迁移单测：四表建表 + 解析版本布局与状态语义迁移可升级/降级（SQLite 临时库，不依赖 MySQL）。
+"""Alembic 迁移单测：表族建表 + 解析版本布局与状态语义迁移可升级/降级（SQLite 临时库，不依赖 MySQL）。
 
-守护面：af_* 四表 DDL 与 database-design.md 一致、迁移可重复执行、降级干净；
+守护面：af_* 表族 DDL 与 database-design.md 一致、迁移可重复执行、降级干净；
 `20260920_0002`（PLAN-004）额外守护版本作用域：`af_pages` 主键与 `af_block_edits` 唯一键纳入
 `job_id`、生效指针单列、存量 backfill（一书一 job 回填该 job，否则 `legacy` 哨兵）；
 `20260921_0001`（PLAN-006 / ADR 0007）守护进度与结局分列：书目新增 `last_parse_result`、

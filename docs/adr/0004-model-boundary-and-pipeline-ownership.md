@@ -34,7 +34,7 @@ v0.1 模型形态（[ADR 0002](0002-pending-design-location.md) 承接的
    本仓库只消费模型服务端点。**模型调参**（引擎参数等）同归 8900，本仓库不暴露调参入口
    （2026-09-17 用户裁决，PLAN-002）。
 5. **数据落点**：产物落 `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`；数据库
-   统一 `qed` 库 `af_*` 命名空间四表（af_books/af_parse_jobs/af_pages/af_block_edits）。
+   统一 `qed` 库 `af_*` 命名空间表族（首建时四表：af_books/af_parse_jobs/af_pages/af_block_edits）。
 6. **独立性**：解析不再要求 8900 在线；模型服务可经根仓库脚本手动启停。`qed_llm_calls`
    调用记录由本仓库在直连成功路径自写（`service=axiom_flow`）。
 

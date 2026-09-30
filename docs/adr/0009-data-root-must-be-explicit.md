@@ -1,7 +1,7 @@
 # ADR 0009：数据根必须显式配置（去仓内静默回退与留档区双身份）
 
 状态：Accepted
-最后更新：2026-09-24
+最后更新：2026-09-29
 关联代码：`src/axiom_flow/config.py`（`_default_data_dir`、`Settings.data_dir`、`load_settings`）、
 `src/axiom_flow/ingest/artifacts.py`（`book_dir_for`/`version_dir_for` 的 `parsed/` 前缀与
 `ensure_within`）、`src/axiom_flow/api/admin.py`（清除作用域限 `parsed/`）
@@ -32,7 +32,7 @@ ADR 0018 的顶层白名单制不相容：
 1. **数据根唯一事实源是 `QED_DATA_ROOT`**：`Settings.data_dir` 不再有仓内默认值；未配置（或解析后
    目录不存在/不可创建）时 `load_settings()` 在启动期抛配置错误并**拒绝起服**，错误文案直接给出
    应设置的变量名与推荐值。与 `require_admin_configured()` 同一 fail-closed 纪律。
-2. **仓内 `data/` 永久不是数据根**：其定性收敛为单一身份——**留档与备份区**（`data/probes/` 真机
+2. **仓内 `data/` 永久不是数据根**（**本条的「留档与备份区」定性已被 [ADR 0012](0012-workspace-directory-hygiene.md) 取代**：仓内留档区已于 2026-09-29 退役、内容清空且不备份，窗口留档与临时件改落仓库根 `tmp/`；「仓内目录不得当数据根」及其代码守卫由 ADR 0012 决定 2 明确保留、继续有效）：其定性收敛为单一身份——**留档与备份区**（`data/probes/` 真机
    窗口证据、`data/backups/` D 类备份留痕）。它不在数据根之内，故根侧顶层白名单与「元数据 JSON 岛」
    规则不作用于它；反过来，它的**顶层**不得出现产物目录形状（`book.json`/`pages/`/`versions/`），
    由守护断言。唯一的合法例外是 `data/probes/<窗口>/root/`——那是窗口脚本**显式声明的探针数据根**，
@@ -65,7 +65,9 @@ ADR 0018 的顶层白名单制不相容：
 ## 取代
 
 取代：无（本决定是新增边界约束，不改写 ADR 0004/0005 的既有裁决）。
-被取代：无。
+被取代：决定 2 的「仓内 `data/` 留档与备份区」定性被 [ADR 0012](0012-workspace-directory-hygiene.md) 取代（2026-09-29，仓内留档区退役）；
+决定 1/3/4/5 与本 ADR 其余约束仍生效。正文里的 `data/probes/…`、`data/backups/…` 随 ADR 0012 决定 6 一律读作
+`tmp/probes/…`、`tmp/backups/…`（仓库根 `tmp/` 是仓内唯一临时与留档区）；「仓内路径不得当数据根」及其守卫不变。
 关联：根仓库 ADR 0018（顶层白名单与 JSON 岛禁止，跨仓库只读引用、不建相对链接）；
 [ADR 0004](0004-model-boundary-and-pipeline-ownership.md)（无静默兜底）；
 [ADR 0008](0008-fixed-doc-form-and-metadata-genres.md)（固定文档骨架与可对账契约表）；

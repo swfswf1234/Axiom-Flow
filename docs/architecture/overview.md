@@ -63,8 +63,8 @@ Axiom-Flow 是 QED-Engine 的**后端解析组件**：把 PDF 教材完整解析
 | 网关与模型生命周期（8900） | 根仓库 | QED-Engine | 根仓库 | 8903 前端 |
 | 书目数据服务（8901） | 根仓库 | QED-Engine | 根仓库 | 8902 的 `POST /books/sync` |
 | 对照与校验前端（8903） | 根仓库 | QED-Engine | 根仓库 | 人 |
-| MySQL `qed` 库 | 本机 | 共享实例（`af_*` 四表为本方私有命名空间） | 建表与结构＝本仓库 Alembic；实例＝环境侧 | 8902 |
-| 集成测试库 `qed_test` | 本机 | 本方自有 `af_*` 四表 + `alembic_version` | 测试夹具（显式 opt-in） | `tests/integration/` |
+| MySQL `qed` 库 | 本机 | 共享实例（`af_*` 表族为本方私有命名空间） | 建表与结构＝本仓库 Alembic；实例＝环境侧 | 8902 |
+| 集成测试库 `qed_test` | 本机 | 本方自有 `af_*` 表族 + `alembic_version` | 测试夹具（显式 opt-in） | `tests/integration/` |
 
 **只经 HTTP 与数据库交互，跨仓库不存在代码依赖**：模型文件、启停、探针、资源互斥与调参全在根仓库
 一侧；本仓库不感知具体模型，也不暴露调参入口。
@@ -81,7 +81,7 @@ flowchart TB
     subgraph WIN["Windows 本地（本仓库）"]
         API["8902 FastAPI<br/>解析编排 + 对外 API v1"]
         ENG["引擎适配器<br/>mineru / paddleocr-vl / qwen-vl"]
-        DB[("qed 库 af_* 四表")]
+        DB[("qed 库 af_* 表族")]
         DATA["QED_DATA_ROOT/parsed/&lt;domain&gt;/&lt;course&gt;/&lt;book_id&gt;/<br/>页图 + markdown + blocks.json + chunks.json + versions/"]
         RAW["QED_DATA_ROOT/raw/&lt;domain&gt;/&lt;course&gt;/&lt;*.pdf&gt;（只读）"]
     end
@@ -132,10 +132,13 @@ flowchart TB
 > 上图只展开本服务读写的两区（`raw/` 只读、`parsed/` 唯一写入）；白名单里的 `tmp/` 与
 > `backups/` 不在产物布局内，本服务不写它们（`PP-6`）。
 
-- **数据根必须显式配置**：`QED_DATA_ROOT` 缺失即在启动期报错，不静默回退到仓库内目录
-  （[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）。仓内 `data/` 是留档与备份区，**不是数据根
-  候选**，其**顶层**也不得出现 `book.json`/`pages/`/`versions/` 产物形状；合法例外是
-  `data/probes/<窗口>/root/`（显式声明的探针数据根，其内 `parsed/` 正当）。
+- **数据根必须显式配置**：`QED_DATA_ROOT` 缺失即在启动期报错，不静默回退到仓库内目录，任何仓内
+  路径都不得当数据根（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）。
+- **仓库工作区目录卫生**（[ADR 0012](../adr/0012-workspace-directory-hygiene.md)）：仓库根 `tmp/` 是仓内
+  唯一临时与留档区（一次性窗口脚本、取证留档、备份件；`.gitignore` 排除、不入库、可随手清理）；
+  仓内 `data/` 留档区已退役、不得复现；`scripts/` 只放长期受管脚本；`logs/` 只写本项目日志且文件数
+  ≤3；本仓库不含前端（`web/` 已删除，UI 归 QED-Engine 根仓库）。注意仓库根 `tmp/` 与数据根
+  `<QED_DATA_ROOT>/tmp/`（本服务不写，`PP-6`）是两个不同位置。
 - **写入与清除同域**：产物路径一律经 `ingest/artifacts.py` 的两个构造器生成（自带 `parsed/`
   前缀与单段名校验），清除作用域同样限 `parsed/` 子树（[api.md](api.md) 管理端点节）。
 - 路径唯一格式与原子落盘判据是 [parsing-pipeline.md 的 `PP-3`/`PP-4`](../design/parsing-pipeline.md)；
@@ -153,7 +156,7 @@ flowchart TB
   新增调参开关（[model-integration.md 的 `MI-15`](../design/model-integration.md)）。
 - **数据边界**：源 PDF 只读；产物落 `QED_DATA_ROOT/parsed/`，目录布局沿用根仓库 dataset 约定
   （只链接不复制）。
-- **元数据入 DB**：书目 / 任务 / 页状态 / 人工编辑落 `qed` 库 `af_*` 四表
+- **元数据入 DB**：书目 / 任务 / 页状态 / 人工编辑落 `qed` 库 `af_*` 表族
   （[database-design.md](database-design.md)），产物正本在文件系统，DB 不存大字段。
 - **WSL 只经 HTTP**：容器不挂载 Windows 盘，产物一律由 Windows 编排层落盘。
 - **测试隔离**：默认测试不访问公网、不调用外部模型服务、不写运行数据库；MySQL 层只在显式 opt-in

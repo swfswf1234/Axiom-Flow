@@ -5,7 +5,7 @@
 1. **只连本机、只用测试库**：`QED_TEST_MYSQL=1` 显式 opt-in，库名固定 `qed_test`，
    连接后读 `SELECT DATABASE()` 硬校验，不符直接 `pytest.exit`（不是 skip）——误连业务库
    必须终止整个会话而不是标记跳过；
-2. **只拥有本仓库自有的表**：夹具只 DROP/CREATE `af_*` 四表与 `alembic_version`，
+2. **只拥有本仓库自有的表**：夹具只 DROP/CREATE `af_*` 表族（以 `AF_TABLES` 为准）与 `alembic_version`，
    **绝不 DROP DATABASE**（`qed_test` 由根仓库用作 `qed` 的镜像，2026-09-21 用户裁决复用该库）；
 3. **缺 opt-in 时 skip**：默认门禁零外部依赖（`tests/conftest.py` 的回环守卫与隔离铁律不变）。
 

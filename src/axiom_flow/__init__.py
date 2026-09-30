@@ -5,7 +5,7 @@
 - orchestrator/ 解析任务编排（ARCH-003）
 - engines/      引擎适配器与显式分派（ARCH-016）
 - normalize/    blocks/markdown 归一化与分块（ARCH-004）
-- db/           af_* 四表 ORM 与仓储（ARCH-013/014）
+- db/           af_* 表族 ORM 与仓储（ARCH-013/014）
 - ingest/       PDF 导入与页图渲染（ARCH-015）
 - schemas.py    统一格式 Pydantic 模型（内外契约单一事实源）
 
