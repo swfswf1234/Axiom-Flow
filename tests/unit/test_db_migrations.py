@@ -8,7 +8,9 @@
 `20260926_0001`（PLAN-017 / REQ-097）守护 `af_books.ingested_at` 纯加列：存量不回填（NULL =
 「本轮规则之前 ingest」），降级干净删列；
 `20260926_0002`（PLAN-018 W2 / ADR 0010）守护 `af_page_regions`：页级三列主键、**无
-`job_id`**、显式索引名，降级只带走该表且不动其余 `af_*` 表。
+`job_id`**、显式索引名，降级只带走该表且不动其余 `af_*` 表；
+`20260928_0001`（PLAN-019 W2）守护 `af_parse_jobs.parser_signature` 纯加列：存量回填哨兵 `''`
+（未知代际），不回算伪造签名，降级干净删列。
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
 from axiom_flow.db.models import AF_TABLES as _AF_TABLE_REGISTRY
@@ -28,6 +31,16 @@ AF_TABLES = {table.name for table in _AF_TABLE_REGISTRY}
 REVISION_0001 = "20260917_0001"
 REVISION_0002 = "20260920_0002"
 LEGACY_JOB_ID = "legacy"
+
+
+def _head_revision() -> str:
+    """迁移脚本目录的当前 head：`upgrade head` 之后库必须停在这里。
+
+    不写死序号——写死会在每次加迁移时假红，而「夹具漏跑最新迁移」才是它该抓的漂移（判例同
+    PLAN-018 W2 集成层）。
+    """
+    script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
+    return str(script.get_current_head())
 
 
 def _config(tmp_path: Path) -> tuple[Config, str]:
@@ -443,8 +456,8 @@ def test_upgrade_0005_creates_page_regions_without_job_id(tmp_path):
     assert "af_page_regions" in inspector.get_table_names()
     with create_engine(url).connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == (
-            REVISION_PAGE_REGIONS
-        ), "区域表迁移接在 20260926_0001 之后成为现 head"
+            _head_revision()
+        ), "区域表迁移已接进链且升级跑到底（head 序号由脚本目录派生）"
     columns = {column["name"] for column in inspector.get_columns("af_page_regions")}
     assert columns == {
         "book_id",
@@ -485,3 +498,91 @@ def test_page_regions_downgrade_is_clean_and_repeatable(tmp_path):
     command.upgrade(config, "head")
 
     assert "af_page_regions" in inspect(create_engine(url)).get_table_names()
+
+
+# ---------- 20260928_0001：解析签名补列（PLAN-019 W2） ----------
+
+REVISION_SIGNATURE = "20260928_0001"
+
+
+def _seed_pre_signature_jobs(url: str) -> None:
+    """在 `20260926_0002` 形态的库上写存量任务行（直连 Core，不经 ORM）。
+
+    回填判据必须对旧结构里的真实存量成立：这些行是「签名规则确立之前」跑出来的版本，参数组合
+    已不可考。
+    """
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO af_books (book_id, domain_id, course_id, title, authors, file_path,"
+                " sha256, ingest_status, parse_status, last_parse_result, pages_done, active_job_id,"
+                " synced_at, updated_at)"
+                " VALUES ('b_sig','','','线性代数','[]','raw/b_sig.pdf','a','ingested','pending',"
+                " 'completed',2,'j_new','2026-09-28 00:00:00','2026-09-28 00:00:00')"
+            )
+        )
+        for job_id, status in (("j_new", "completed"), ("j_old", "failed")):
+            conn.execute(
+                text(
+                    "INSERT INTO af_parse_jobs (job_id, book_id, pages, engine, status, progress,"
+                    " failed_pages, error, source_sha256, page_count, created_at)"
+                    " VALUES (:job_id,'b_sig',NULL,'mineru',:status,'{}','[]','',"
+                    " 'a',2,'2026-09-28 00:00:00')"
+                ),
+                {"job_id": job_id, "status": status},
+            )
+    engine.dispose()
+
+
+def test_upgrade_0006_adds_parser_signature_as_unknown_generation(tmp_path):
+    """纯加列 + 哨兵回填：存量行 `''` ＝ 未知代际，**不回算签名**（历史参数不可考，回算＝伪造第二事实源）。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, REVISION_PAGE_REGIONS)
+    _seed_pre_signature_jobs(url)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(url))
+    columns = {column["name"]: column for column in inspector.get_columns("af_parse_jobs")}
+    assert "parser_signature" in columns
+    assert columns["parser_signature"]["nullable"] is False, "空值只有一种表示，判定面不必分 NULL 与 ''"
+    with create_engine(url).connect() as conn:
+        values = conn.execute(
+            text("SELECT job_id, parser_signature FROM af_parse_jobs ORDER BY job_id")
+        ).all()
+        revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+    assert [row[0] for row in values] == ["j_new", "j_old"], "加列不得带走存量任务行"
+    assert [row[1] for row in values] == ["", ""], "迁移只能回填哨兵，不能编造签名"
+    assert revision == _head_revision()
+
+
+def test_upgrade_0006_keeps_index_and_other_tables(tmp_path):
+    """表族其余部分不动（本壳只加列不建表）：索引与区域表在加列后仍在位。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, REVISION_PAGE_REGIONS)
+    _seed_pre_signature_jobs(url)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(url))
+    assert "ix_af_parse_jobs_book" in {item["name"] for item in inspector.get_indexes("af_parse_jobs")}
+    assert "af_page_regions" in inspector.get_table_names()
+    assert "ingested_at" in {column["name"] for column in inspector.get_columns("af_books")}
+
+
+def test_downgrade_0006_drops_parser_signature(tmp_path):
+    """降级干净：列消失、任务行仍在，回到 `20260926_0002` 形态后可再升回来。"""
+    config, url = _config(tmp_path)
+    command.upgrade(config, "head")
+
+    command.downgrade(config, REVISION_PAGE_REGIONS)
+
+    inspector = inspect(create_engine(url))
+    assert "parser_signature" not in {column["name"] for column in inspector.get_columns("af_parse_jobs")}
+
+    command.upgrade(config, "head")
+
+    assert "parser_signature" in {
+        column["name"] for column in inspect(create_engine(url)).get_columns("af_parse_jobs")
+    }

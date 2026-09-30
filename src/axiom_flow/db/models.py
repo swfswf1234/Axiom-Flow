@@ -89,6 +89,12 @@ class AfParseJob(Base):
     source_sha256: Mapped[str] = mapped_column(
         String(64), nullable=False, default="", comment="本版本解析的源 PDF 快照（自证版本与文件对应）"
     )
+    parser_signature: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        comment="本版本的解析代际签名；'' = 未记录（未知代际，只判需重跑不判过时）",
+    )
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="建任务时的全书页数快照")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

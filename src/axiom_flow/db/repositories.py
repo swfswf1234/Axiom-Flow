@@ -58,11 +58,15 @@ class ParseJobRow:
 
     `engine` 无默认值且必填：引擎名由提交期解析（`AXIOM_OCR_ENGINE`/请求体）后显式传入，
     缺名应在建任务时就失败，而不是静默写成一个具体引擎（ADR 0004 无自动兜底）。
+
+    `parser_signature` 缺省 `''` ＝ **未记录代际**（与迁移回填的存量行同一语义），不是「已算过且
+    相等」的签名；受理面在签名可用时必须显式传入，否则该版本一出生就落在未知代际里。
     """
 
     job_id: str
     book_id: str
     engine: str
+    parser_signature: str = ""
     pages: list[int] | None = None
     status: str = "queued"
     progress: dict[str, Any] = field(default_factory=dict)
@@ -314,6 +318,7 @@ class ParseJobRepository:
             book_id=row.book_id,
             pages=row.pages,
             engine=row.engine,
+            parser_signature=row.parser_signature,
             status=row.status,
             progress=dict(row.progress),
             source_sha256=row.source_sha256,
@@ -450,6 +455,25 @@ class ParseJobRepository:
         if book_ids is not None:
             stmt = stmt.where(AfParseJob.book_id.in_(list(book_ids)))
         return int(self.session.scalar(stmt) or 0)
+
+    def find_in_flight(self, book_id: str, *, signature: str) -> AfParseJob | None:
+        """该书**同签名**的在飞任务（`queued`/`running`），按创建序取最早一个。
+
+        受理门用它挡双跑：同签名的在飞任务已会把这本书跑到当前代际，再建一个只是白跑一遍（模型侧
+        单占用把两次串行，白跑的成本不会因此消失）。终态行不参与判定——失败后再提交是人的决定。
+        同秒创建的多任务以 `job_id` 定序，判据与 `list_for_book` 一致。
+        """
+        stmt = (
+            select(AfParseJob)
+            .where(
+                AfParseJob.book_id == book_id,
+                AfParseJob.parser_signature == signature,
+                AfParseJob.status.in_(["queued", "running"]),
+            )
+            .order_by(AfParseJob.created_at, AfParseJob.job_id)
+            .limit(1)
+        )
+        return self.session.scalars(stmt).first()
 
     def delete_for_book(self, book_id: str) -> int:
         """删除该书全部任务行（含历史版本）：与 `DELETE /books/{id}` 的「保留任务行」相反，

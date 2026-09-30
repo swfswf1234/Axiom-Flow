@@ -55,11 +55,10 @@
 ## 前置条件
 
 1. **迁移链串行（2026-10-01 收口：本条是唯一正文，「W1 勘察登记」结论 4 只指向此处）**：规则＝
-   **先合入者占 head，后合入者将 `down_revision` 改指前者**，绝不并写同版本号。当前实读：已提交
-   head ＝ `20260926_0001`；PLAN-018 的 `20260926_0002_page_regions`（`down_revision = 20260926_0001`）
-   **已在工作区落地但未提交**（2026-10-01 进场实测）。⇒ 本壳 W2 开工前先 `alembic heads` 实读：
-   若 `20260926_0002` 已提交则接其后，若仍只有 `20260926_0001` 则本壳取 `20260928_0001` 占位、
-   由后合入方改指。谁先谁后不改变判据，只改变 `down_revision` 的字面值。
+   **先合入者占 head，后合入者将 `down_revision` 改指前者**，绝不并写同版本号。开工实读
+   （本壳 W2 起做时 `alembic heads`）：已提交 head ＝ `20260926_0002`（PLAN-018 W2 已于 2026-10-01
+   提交），本壳取 `20260928_0001`、`down_revision = 20260926_0002` 接其后。谁先谁后不改变判据，
+   只改变 `down_revision` 的字面值——本条只记实读，规则句以上一行正文为准。
 2. **表数措辞零增量**：本壳只加列、不新增表 ⇒ 不触发 PLAN-018「第 11 节」的 4→5 表同步面；
    加列的列清单同步由 `test_column_list_matches_orm_columns` 守护，与迁移同批晋升。
 3. **模型版本探针已证（2026-09-28 W1 取证，见「W1 勘察登记」节）**：`:5002/health` 实回
@@ -233,7 +232,7 @@ R4 的程序约束在此了结：签名是否含模型版本，**以实际回文
 | --- | --- | --- | --- |
 | W0 | 立项收编：本壳入册 + todo 镜像（ARCH-022 改指本壳、PLAN-019 新行）+ PLAN-009 P 系列表注记改挂；治理契约绿 | — | 完成 2026-09-28 |
 | W1 | 勘察冻结：`/health` 版本字段**取证成文**（回文原文入本壳登记，R4 程序约束）、签名输入集定判、策略版本承载位定判（C1 落档）；产出后**停下等用户确认无争议**再进 W2 | — | 完成 2026-09-28（取证与定判见「W1 勘察登记」节）；停顿点 2026-09-30 用户确认无争议，输入集随 Q4/H3 裁决最终冻结 |
-| W2 | P1 落库：`parser_signature` 加列迁移 + 建/读/判仓储 + canonical 串单测（先红后绿，含**输入集白名单断言**与判定纯函数） | W1 | 待开始 |
+| W2 | P1 落库：`parser_signature` 加列迁移 + 建/读/判仓储 + canonical 串单测（先红后绿，含**输入集白名单断言**与判定纯函数） | W1 | 完成 2026-10-01（结论与偏差见「W2 落地结论与偏差登记」节；受理门与清单端点未挂载） |
 | W3 | P1 受理门：`force` 字段、全本命中 409、在飞同签名 409（Q12）、页区间不受门；契约测试（含 force 缺省形状不变反向判据） | W2 | 待开始 |
 | W4 | S2 只读重跑清单端点（消费方＝「目标」段 2026-10-01 改判的三处现场）；`reason` 分列出 `signature_unknown` 代际（C1 边界 ①）；原「ARCH-011 W0 供数口径」随该行关闭撤除 | W2 | 待开始 |
 | W5 | P2 DB 单源（[ADR 0015](../adr/0015-db-single-source-for-readiness.md)）：`_resumed_pages`/`_version_is_complete`/`_inherit_page_rows` 的「产物在位」判据去 fs、改读 `af_pages` 页行，`GET /chunks` 不以文件存在定 404；提交序现状保持（页产物写先于页行提交）；`has_artifact` 等完整性披露原样保留；守护＝删/造产物文件不改就绪与终态 ＋ 设计措辞同步（`orchestrator/pipeline.py` 文件头与 `parsing-pipeline.md`/`parsing-management.md`/`api.md` 三篇的「产物在位」句；三篇「关联 ADR」已于 2026-10-01 先行接入 ADR 0015，正文措辞与实现状态按前置 5 晋升纪律留在本项） | ADR 0015 | 待开始 |
@@ -241,6 +240,51 @@ R4 的程序约束在此了结：签名是否含模型版本，**以实际回文
 | W7 | 过时清点（裁决 ①，作用域已裁 R1；删除时机 Q2＝沿用 REQ-097 判例、执行面 Q7＝扩 `admin/purge` dry-run）：只读清点——正本配对唯一性、孤儿任务行、孤儿版本目录、`.tmp-`/`.old-` 三式残骸、**页图物理保留例外与硬链接自证**；清理执行顺序与安全边界成文（先磁盘后库、重跑幂等判例沿用 PLAN-010）；**执行另批 D 类批准** | W2/W6 | 待开始 |
 | W8 | 文档晋升：`api.md`（C2/C3 小节与总表，随挂载同批；C4 随 PLAN-018）、`database-design.md` 列清单、`parsing-pipeline/management` 口径、`project-status` 刷新；**同批核对**（2026-10-01 复核：原更正对象「业务库升迁移属窗口前置」在活文档已无载体——ARCH-011 承载节 2026-09-30 关闭时已记项①执行、`history/` 冻结面按规则不追改 ⇒ 本项从「更正」降为「核对」：W8 只确认活文档不再把业务库迁移写成窗口前置） | W3~W7 | 待开始 |
 | W9 | 门禁与真机：默认门禁全绿 + `QED_TEST_MYSQL=1` 迁移往返 + 变异复验（撤签名门 ⇒ 对应用例转红；撤确认门用例归 PLAN-018）；真机面按前置 6 另批 D 类窗口（原 ARCH-011 窗口 2026-09-30 已关闭，读数改挂本壳 W9） | W8 | 待开始 |
+
+## W2 落地结论与偏差登记（2026-10-01）
+
+结论：**W2 已实施并通过本地门禁**——`af_parse_jobs.parser_signature` 加列（迁移 `20260928_0001`，
+`down_revision = 20260926_0002`）＋ `orchestrator/signature.py`（canonical 签名与重跑判定纯函数）＋
+`ParseJobRepository.find_in_flight`。W2 只交付**写入面与判据**：受理门（W3）与只读重跑清单（W4）未挂载
+⇒ `api.md`、端点总表与任何 API 回包**零改动**（前置 5 晋升纪律）。业务库 `qed` 的 `20260926_0002` 与
+`20260928_0001` 属 D 类窗口，本批**未执行**。
+
+### 交付面与守护
+
+| 交付 | 位置 | 守护（会红的判据） |
+| --- | --- | --- |
+| 签名列 ORM | `src/axiom_flow/db/models.py`（`AfParseJob.parser_signature`） | `test_fixed_document_form.py::test_column_list_matches_orm_columns[af_parse_jobs]`（列清单↔ORM 双向对账，含 VARCHAR 长度与可空性） |
+| 迁移 | `src/axiom_flow/migrations/versions/20260928_0001_parser_signature.py` | `tests/unit/test_db_migrations.py`（存量回填恰为哨兵 `''`、列 NOT NULL、加列不带走任务行与索引、降级干净可重复）＋ `QED_TEST_MYSQL=1` 集成层在真 MySQL 从 base 重建到 head |
+| canonical 与输入集 | `src/axiom_flow/orchestrator/signature.py`（`SignatureInputs`、`compute_signature`、`block_policy_payload`） | `tests/unit/test_parser_signature.py`（键集合恰等冻结四元组、非内容参数不在串内、字典序 JSON→SHA-256、四个输入项任一变化必翻转、缺读数 fail-closed、改 `_TYPE_MAP`/`_OUTPUT_FLAGS` 即翻转、分块侧常量不影响） |
+| 判定纯函数 | 同上（`decide_rerun`、`VersionIdentity`、`RerunDecision`） | 同上 `TestRerunDecision`（`up_to_date`/`resume`/`need_reparse`＋`signature_unknown`/`never_parsed` 逐条，含当前侧空值报错） |
+| 仓储写入与在飞读数 | `src/axiom_flow/db/repositories.py`（`ParseJobRow.parser_signature`、`find_in_flight`） | `tests/unit/test_db.py::TestParseJobRepository`（签名回读、缺省即 `''`、在飞按「书＋签名＋活动态」过滤取最早） |
+| 文档同步 | `database-design.md`（列清单行＋任务表语义签名段＋迁移序列行＋业务库 head 现状）、`code-map.md`（`orchestrator/signature.py` 行＋迁移行措辞） | `test_fixed_document_form.py`、`test_architecture_documents.py`、`test_code_document_mapping.py` |
+
+门禁读数（本批收口时复跑）：`pytest tests -q` **624 passed / 10 skipped**；`ruff check src tests scripts`
+全过；`QED_TEST_MYSQL=1 pytest tests/integration -q` **8 passed**；`alembic heads` ＝ `20260928_0001`。
+守护变异复验（各撤一处、对应用例转红后从 `tmp/` 备份还原）：`canonical_json` 去字典序 ⇒ 字典序用例红；
+`signature_unknown` 写成 `signature_changed` ⇒ 哨兵用例红；`find_in_flight` 去掉签名过滤 ⇒ 在飞用例红。
+
+### 偏差登记（与草案 C1 / 工作项表的差异）
+
+| # | 差异 | 定判理由与落点 |
+| --- | --- | --- |
+| D1 | canonical 计算与判定纯函数落 `orchestrator/signature.py`，不塞进 `db/repositories.py` | 签名是「一版产物用哪一代参数跑的」编排判据，不是数据访问；且它要引用 `normalize/`＋`engines/` 的代码级常量，放进持久层会把数据访问层绑到引擎形状上。`code-map` 同批加行 |
+| D2 | `ParseJobRow.parser_signature` 带默认 `''`（草案未写写入面形状） | 受理面在 W3 才接线；缺省 `''` 与迁移回填同一语义＝「本行未记录签名」。漏传的后果是**保守方向**（该书落进 `signature_unknown` 判需重跑），不会被误判 `up_to_date` |
+| D3 | 当前侧 `''` 直接 `ValueError`（C1 只写了生效侧 `''` 的三条边界） | 「没算签名」不是一个代际，把它读成哨兵会静默吞掉真正的代际变化；两条 raise 分别锁 `current_signature` 与 `current_source_sha256` |
+| D4 | 白名单断言写成字面四元组，不从 dataclass 字段反射 | 反射等于「加个字段就自动合法」，冻结集合的意义就在于加字段必须显式改判据并留下红转记录 |
+| D5 | `up_to_date` 优先于 `resume`（生效版本已双全等时不再指向在飞任务） | 清单口径回答「这本书需不需要重跑」；已有可用产物时把在飞任务算作结论会让 8900 侧读数随并发时序抖动 |
+| D6 | 前置 1 的实读改写（head 已推进），规则句不动 | PLAN-018 W2 于 `e4dd55d` 提交；易漂移的版本号只记一次实读，判据仍以规则句为准 |
+| D7 | 业务库待应用迁移由一支变两支（`20260926_0002` ＋ `20260928_0001`） | D 类窗口按用户排期执行；`database-design.md` 迁移现状段已并列标注，测试库 `qed_test` 由夹具每次重建到 head 故 DDL 已在门禁真实执行 |
+
+### 遗留（不在 W2 面）
+
+- W3：受理门（`force`、全本命中 409、在飞同签名 409、`af_books` 行锁内的原子判定）＋ 签名注入。
+  `/health` 的 `version`/`protocol_version` 由受理面读入后构造 `SignatureInputs`，`signature.py` 不发探活
+  ——默认门禁不许打外部模型服务（测试隔离铁律）。
+- W4：只读重跑清单端点与 `reason` 文案（`signature_unknown` 代际分列、Q11 的 `model_drift_suspect` 报警）。
+- W6：策略拆域若改动 `_TYPE_MAP`/`_OUTPUT_FLAGS` 的位置或形状，签名随之翻转属**预期代际变化**；但改
+  `block_policy_payload` 的键集合时，白名单断言与 `database-design.md` 任务表语义段须同批跟进。
 
 ## 验证与验收
 
@@ -339,4 +383,5 @@ R4 的程序约束在此了结：签名是否含模型版本，**以实际回文
   **591 passed / 10 skipped** + `ruff check src tests scripts` clean（该读数含并行会话 PLAN-018 W2 的
   未提交面，提交前须复跑）。
 - **W2 开工闸（用户 2026-10-01 指令）**：等 PLAN-018 W2 那批**提交**后起本壳 W2；开工第一步仍是前置 1 的
-  `alembic heads` 实读。悬置项只剩 Q9（责任在 PLAN-018 侧，复核触发点＝本壳 W6 开工前）。
+  `alembic heads` 实读。**该闸已于同日达成**（PLAN-018 W2 提交为 `e4dd55d`，本壳 W2 结论见
+  「W2 落地结论与偏差登记」节）。悬置项只剩 Q9（责任在 PLAN-018 侧，复核触发点＝本壳 W6 开工前）。

@@ -207,6 +207,53 @@ class TestParseJobRepository:
         with pytest.raises(TypeError, match="engine"):
             ParseJobRow(job_id="job1", book_id="b05")
 
+    def test_parser_signature_round_trips(self, session):
+        """签名与 `source_sha256` 同属版本自证：这一版是哪一代解析参数产的，事后仍可判。"""
+        repo = ParseJobRepository(session)
+        repo.create(
+            ParseJobRow(job_id="job_sig", book_id="b05", engine="mineru", parser_signature="a" * 64)
+        )
+
+        job = repo.get("job_sig")
+        assert job is not None and job.parser_signature == "a" * 64
+
+    def test_unrecorded_signature_is_unknown_generation_sentinel(self, session):
+        """缺省 `''` ＝ 未知代际（如实表示「本行未记录签名」），不是伪造出来的摘要。"""
+        repo = ParseJobRepository(session)
+        repo.create(ParseJobRow(job_id="job_blank", book_id="b05", engine="mineru"))
+
+        job = repo.get("job_blank")
+        assert job is not None and job.parser_signature == ""
+
+    def test_find_in_flight_returns_earliest_row_with_that_signature(self, session):
+        repo = ParseJobRepository(session)
+        repo.create(
+            ParseJobRow(
+                job_id="q_old", book_id="b05", engine="mineru", status="queued", parser_signature="a" * 64
+            )
+        )
+        repo.create(
+            ParseJobRow(
+                job_id="r_new", book_id="b05", engine="mineru", status="running", parser_signature="a" * 64
+            )
+        )
+        repo.create(
+            ParseJobRow(job_id="q_other", book_id="b05", engine="mineru", status="queued", parser_signature="b" * 64)
+        )
+        repo.create(
+            ParseJobRow(
+                job_id="done", book_id="b05", engine="mineru", status="completed", parser_signature="a" * 64
+            )
+        )
+        repo.create(
+            ParseJobRow(job_id="q_elsewhere", book_id="b11", engine="mineru", status="queued", parser_signature="a" * 64)
+        )
+
+        assert repo.find_in_flight("b05", signature="a" * 64).job_id == "q_old"
+        assert repo.find_in_flight("b05", signature="b" * 64).job_id == "q_other"
+        assert repo.find_in_flight("b05", signature="c" * 64) is None, "不同代际的在飞任务不挡本次提交"
+        assert repo.find_in_flight("b11", signature="a" * 64).job_id == "q_elsewhere"
+
     def test_list_for_book_and_missing_updates(self, session):
         repo = ParseJobRepository(session)
         repo.create(ParseJobRow(job_id="job1", book_id="b05", engine="mineru"))
