@@ -16,7 +16,11 @@ venv/
 .vscode/
 *.swp
 *.swo
-.qoder/
+# Qoder 工作区：技能正本（L2 四件套）与权限边界入库，其余（缓存、本机面）继续忽略。
+# 目录模式必须写成内容模式，否则被排除目录的子项无法重新纳入（2026-10-20 三仓统一，REQ-124 形态②）。
+.qoder/*
+!.qoder/skills/
+!.qoder/settings.json
 
 # Project data
 data/

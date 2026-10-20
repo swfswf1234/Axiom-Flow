@@ -102,6 +102,11 @@ $env:QED_TEST_MYSQL = "1"
 
 ### 标准映射机制
 
-全局 agent 工具层（`~/.config/opencode/`）与 `qed-*` 技能只引用「概念」（如「文档治理」
-「任务生命周期」），不硬编码路径；本仓库实际文件由 `AGENTS.md`「标准映射（概念 → 本仓库
-文件）」表定位。新增或改名标准后，同步更新该表与 `docs/standards/index.md`。
+技能与工具层为 **Qoder 单端**（2026-10-20 起；opencode 接线层经用户授权取消，不立 ADR，机器级配置目录
+改名停用为 `~/.config/opencode.disabled-2026-10-20` 备查）。全局 L1 通用技能正本在机器级 `~/.qoder/skills/`
+（由 Qoder 自动发现，无需清单配置），本仓 L2 治理四件套正本在 `.qoder/skills/`，agent 端直读正本、不持有副本。
+技能只引用「概念」（如「文档治理」「任务生命周期」）：不硬编码本仓库路径，不写单一 agent 端的专有工具名，
+`description` 值长 ≤200 字符（技能清单每会话全量注入，属常驻成本）。`.qoder/` 的版本控制取白名单形态
+`.qoder/*` ＋ `!.qoder/skills/` ＋ `!.qoder/settings.json`——技能正本与权限边界入库，`tmp/`、缓存等本机面
+继续忽略（目录模式必须改成内容模式，否则被排除目录的子项无法重新纳入）。本仓库实际文件由 `AGENTS.md`
+「标准映射（概念 → 本仓库文件）」表定位。新增或改名标准后，同步更新该表与 `docs/standards/index.md`。

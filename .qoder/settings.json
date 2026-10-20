@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(rg:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(conda run -n QED_env:*)"
+    ],
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git clean:*)",
+      "Bash(git checkout:*)",
+      "Bash(git restore:*)",
+      "Bash(rm:*)",
+      "Bash(mv:*)",
+      "Bash(Remove-Item:*)",
+      "Bash(Move-Item:*)"
+    ],
+    "deny": [
+      "Edit(dataset/**)",
+      "Edit(D:/coding/QED-Engine/dataset/**)",
+      "Read(D:/coding/QED-Engine/dataset/**)",
+      "Bash(sudo:*)"
+    ]
+  }
+}
