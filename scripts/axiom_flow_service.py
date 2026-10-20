@@ -8,8 +8,15 @@ QED_env）；PID 文件 logs/qed-axiom.pid，子进程 stdout/stderr 落 logs/qe
 （ADR 0004），配置三段式（服务 / 数据与数据库 / 解析引擎）见 docs/design/model-integration.md。
 接口契约（含 8900 控制中心接入方式）见 docs/architecture/api.md ①生命周期与健康分类。
 
-退出码：0 成功/幂等；1 运行失败（spawn 失败、health 超时、stop 无法终止）；2 参数错误（argparse）。
+退出码：0 成功或幂等（含按端口真停外部实例）；1 运行失败（spawn 失败、health 超时、stop 无法终止）；
+2 参数错误（argparse）；3 端口由非本脚本启动的进程监听且 `netstat` 反查不到监听 PID（无从处置，
+本脚本不终止任何进程；REQ-126／PLAN-023 三形分界）。
 Windows 注意：os.kill(pid, 0) 会直接 TerminateProcess，进程存在性检测用 tasklist。
+
+停止分诊（2026-10-20，PLAN-023 W1~W4）：本脚本是 8902 端口的生命周期属主，「无 PID 文件而端口在听」
+＝PID 文件丢失的外部实例形，按端口反查监听 PID 后走同一条「优雅停止 → 强杀兜底 → 存活复核」链真停
+（与根仓库自有 8900/8903 脚本的「只检测不杀」有意不同：控制中心对非托管进程无处置权，脚本对自己
+端口的实例有）；反查不到 PID 时以 3 回报且零终止调用。`cmd_restart` 取回停止结果，非 0 即中止。
 
 停止可靠性（2026-09-04 修复，与根仓库 scripts/qed_engine_service.py 同构）：判活用
 _proc_alive（ctypes OpenProcess，毫秒级）——tasklist 探测失败曾被当作「进程已死」导致
@@ -44,6 +51,8 @@ STOP_GRACE_SECONDS = 5.0
 STOP_POLL_INTERVAL = 0.2
 HEALTH_TIMEOUT_SECONDS = 30.0
 HEALTH_INTERVAL_SECONDS = 0.5
+
+UNMANAGED_LISTENER_EXIT = 3
 
 
 def default_port() -> int:
@@ -169,6 +178,37 @@ def _health_ok(port: int) -> bool:
         return False
 
 
+def _parse_netstat_pid(text: str, port: int) -> int | None:
+    """从 `netstat -ano` 文本取该端口 LISTENING 行的 PID；无匹配返回 None。"""
+    suffix = f":{port}"
+    for line in text.splitlines():
+        cols = line.split()
+        if len(cols) < 5 or cols[0] != "TCP" or cols[3] != "LISTENING":
+            continue
+        if cols[1].endswith(suffix):
+            try:
+                return int(cols[4])
+            except ValueError:
+                return None
+    return None
+
+
+def _listening_pid(port: int) -> int | None:
+    """端口反查监听进程 PID（REQ-126：外部实例形需要它才能落到真停链）。
+
+    字节捕获 + 容错解码（本机 netstat 表头走 GBK 管道，`text=True` 会让 readerthread
+    中断而吞掉整段输出，判例同 `_pid_is_alive` 的 V2-012）；命令不可用或无法解析时
+    返回 None，由调用方降级为「未取得监听 PID」并以退出码 3 回报。
+    """
+    try:
+        result = subprocess.run(["netstat", "-ano"], capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    blob = result.stdout
+    text = blob.decode("utf-8", errors="replace") if isinstance(blob, bytes) else (blob or "")
+    return _parse_netstat_pid(text, port)
+
+
 def _spawn(port: int) -> int:
     """拉起服务进程并写 PID 文件；返回退出码（子进程继承当前环境，配置由 config.py 自读）。"""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -245,15 +285,11 @@ def _kill_tree(pid: int) -> bool:
     return False
 
 
-def cmd_stop(args: argparse.Namespace) -> int:
-    pid = read_pid()
-    if pid is None:
-        print("not running (no pid file)")
-        return 0
-    if not _proc_alive(pid):
-        PID_FILE.unlink(missing_ok=True)
-        print("not running (stale pid file)")
-        return 0
+def _graceful_then_force(pid: int) -> tuple[bool, bool]:
+    """既有停止链（优雅 → 宽限轮询 → taskkill 强杀兜底 → 存活复核）。
+
+    返回 `(是否确认终止, 是否走了强杀兜底)`；两腿都失效时由调用方显式报错，绝不假 stopped。
+    """
     forced = False
     try:
         os.kill(pid, CTRL_BREAK_EVENT)
@@ -274,7 +310,47 @@ def cmd_stop(args: argparse.Namespace) -> int:
         deadline = time.monotonic() + STOP_GRACE_SECONDS
         while time.monotonic() < deadline and _proc_alive(pid):
             time.sleep(STOP_POLL_INTERVAL)
-    if _proc_alive(pid):
+    return not _proc_alive(pid), forced
+
+
+def _stop_unmanaged(args: argparse.Namespace) -> int:
+    """无 PID 文件的分诊：端口不通＝真未运行（幂等 0）；端口在听＝外部实例，按反查 PID 真停。
+
+    本脚本对 8902 端口有生命周期属主身份，因此这里执行真停（区别于根仓库 8900 控制中心：
+    它不终止非本中心启动的进程）。反查不到监听 PID 时无从处置，退出码 3 且零终止调用。
+    """
+    port = getattr(args, "port", None) or default_port()
+    if not _port_open(port):
+        print("not running (no pid file)")
+        return 0
+    listener = _listening_pid(port)
+    if listener is None:
+        print(
+            f"port {port} 由非本脚本启动的进程监听，但 netstat 反查不到监听 PID，"
+            "本脚本未终止任何进程（请人工按端口处置）"
+        )
+        return UNMANAGED_LISTENER_EXIT
+    stopped, forced = _graceful_then_force(listener)
+    if not stopped:
+        print(
+            f"stop failed: 端口 {port} 上的未纳管进程 pid {listener} "
+            f"优雅停止与 taskkill 强杀后仍存活，请手动 taskkill /PID {listener} /T /F"
+        )
+        return 1
+    print(f"stopped (unmanaged listener pid {listener}{', forced' if forced else ''})")
+    return 0
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    pid = read_pid()
+    if pid is None:
+        return _stop_unmanaged(args)
+    if not _proc_alive(pid):
+        PID_FILE.unlink(missing_ok=True)
+        print("not running (stale pid file)")
+        return 0
+    stopped, forced = _graceful_then_force(pid)
+    if not stopped:
         print(f"stop failed: pid {pid} 优雅停止与 taskkill 强杀后仍存活，请手动 taskkill /PID {pid} /T /F")
         return 1
     PID_FILE.unlink(missing_ok=True)
@@ -283,7 +359,10 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
 
 def cmd_restart(args: argparse.Namespace) -> int:
-    cmd_stop(args)
+    stopped = cmd_stop(args)
+    if stopped != 0:
+        print(f"restart aborted: stop 未确认成功（退出码 {stopped}），不拉起新实例")
+        return stopped
     return cmd_start(args)
 
 

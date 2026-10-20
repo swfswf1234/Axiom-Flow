@@ -254,6 +254,8 @@ def test_load_env_no_env_file_is_noop(module, monkeypatch, tmp_path):
 
 
 def test_stop_no_pid_file(module, isolated, monkeypatch):
+    """真未运行形（无 PID 文件且端口不通）仍幂等退出 0；端口探测必须打桩，不触碰真实 8902。"""
+    monkeypatch.setattr(module, "_port_open", lambda port: False)
     args = module.build_parser().parse_args(["stop"])
     assert module.cmd_stop(args) == 0
 
@@ -460,3 +462,129 @@ def test_cmd_stop_forced_when_graceful_signal_ignored(module, isolated, monkeypa
     assert module.cmd_stop(args) == 0
     assert "stopped (forced)" in capsys.readouterr().out
     assert not (isolated / "qed-axiom.pid").exists()
+
+
+# --- 端口兜底真停（REQ-126 / PLAN-023 W1~W4，2026-10-20） ---
+
+
+def test_parse_netstat_pid_reads_listen_line(module):
+    """端口→监听 PID 反查解析：只认 TCP LISTENING 且本地地址以 `:端口` 结尾，
+    89020 前缀行与 UDP 行不算命中。"""
+    text = (
+        "  协议  本地地址          外部地址        状态           PID\n"
+        "  TCP    127.0.0.1:8902           0.0.0.0:0              LISTENING       4321\n"
+        "  TCP    127.0.0.1:89020          0.0.0.0:0              LISTENING       9999\n"
+        "  UDP    0.0.0.0:8902             *:*                                    7777\n"
+    )
+    assert module._parse_netstat_pid(text, 8902) == 4321
+    assert module._parse_netstat_pid(text, 8999) is None
+
+
+def test_listening_pid_uses_byte_capture_and_degrades_on_error(module, monkeypatch):
+    """netstat 表头在本机走 GBK 管道：必须字节捕获后自行容错解码；命令异常降级为
+    「未取得 PID」而不是抛出（调用方据此走 3 形）。"""
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured.update(cmd=cmd, **kwargs)
+        return type(
+            "R", (), {"stdout": b"  TCP    127.0.0.1:8902   0.0.0.0:0   LISTENING  4321\n"}
+        )()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    assert module._listening_pid(8902) == 4321
+    assert captured["cmd"] == ["netstat", "-ano"], "只读反查，不带任何终止参数"
+    assert "text" not in captured, "text=True 会让 GBK 表头解码失败并吞掉整段输出"
+
+    def boom(*args, **kwargs):
+        raise module.subprocess.SubprocessError("netstat 不可用")
+
+    monkeypatch.setattr(module.subprocess, "run", boom)
+    assert module._listening_pid(8902) is None
+
+
+def test_stop_no_pid_file_but_port_listening_stops_listener_by_port(
+    module, isolated, monkeypatch, capsys
+):
+    """W1/W2 主形：无 PID 文件而端口在听＝外部实例，按反查到的监听 PID 走既有
+    「优雅停止 → 强杀兜底 → 存活复核」链真停，输出与托管形可区分。"""
+    monkeypatch.setattr(module, "_port_open", lambda port: True)
+    monkeypatch.setattr(module, "_listening_pid", lambda port: 4321)
+    monkeypatch.setattr(module, "STOP_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(module.os, "kill", lambda pid, sig: None)  # 跨 console：信号空放
+    alive = {"flag": True}
+
+    def fake_kill_tree(pid):
+        alive["flag"] = False
+        return True
+
+    monkeypatch.setattr(module, "_proc_alive", lambda pid: alive["flag"])
+    monkeypatch.setattr(module, "_kill_tree", fake_kill_tree)
+    args = module.build_parser().parse_args(["--port", "8902", "stop"])
+    assert module.cmd_stop(args) == 0
+    out = capsys.readouterr().out
+    assert "stopped (unmanaged listener pid 4321" in out
+    assert "not running" not in out, "外部实例形不得再说成未运行"
+    assert not (isolated / "qed-axiom.pid").exists()
+
+
+def test_stop_no_pid_file_and_port_free_is_idempotent_zero(module, isolated, monkeypatch, capsys):
+    """三形分界①：真未运行（端口不通）仍 0，与「端口在听」两形互不混淆、零终止调用。"""
+    monkeypatch.setattr(module, "_port_open", lambda port: False)
+    monkeypatch.setattr(module, "_listening_pid", lambda port: 4321)
+    touched: list = []
+    monkeypatch.setattr(module, "_kill_tree", lambda pid: touched.append(("taskkill", pid)) or True)
+    monkeypatch.setattr(module.os, "kill", lambda pid, sig: touched.append(("kill", pid)))
+    args = module.build_parser().parse_args(["--port", "8902", "stop"])
+    assert module.cmd_stop(args) == 0
+    out = capsys.readouterr().out
+    assert "not running (no pid file)" in out
+    assert "4321" not in out
+    assert touched == []
+
+
+def test_stop_returns_unmanaged_exit_code_when_listener_pid_unresolved(
+    module, isolated, monkeypatch, capsys
+):
+    """三形分界②：端口在听但反查不到监听 PID＝无从处置，退出码 3 且不终止任何进程
+    （8900 以 0/3 一并交端口复核，据 stdout 给原因）。"""
+    monkeypatch.setattr(module, "_port_open", lambda port: True)
+    monkeypatch.setattr(module, "_listening_pid", lambda port: None)
+    touched: list = []
+    monkeypatch.setattr(module, "_kill_tree", lambda pid: touched.append(pid) or True)
+    monkeypatch.setattr(module.os, "kill", lambda pid, sig: touched.append(pid))
+    args = module.build_parser().parse_args(["--port", "8902", "stop"])
+    assert module.UNMANAGED_LISTENER_EXIT == 3
+    assert module.cmd_stop(args) == module.UNMANAGED_LISTENER_EXIT
+    out = capsys.readouterr().out
+    assert "8902" in out and "未终止" in out
+    assert touched == []
+    assert "not running" not in out
+
+
+def test_stop_unmanaged_listener_still_alive_returns_1(module, isolated, monkeypatch, capsys):
+    """三形分界③：外部实例反查到 PID 但优雅+强杀两腿都失效 → 1（沿用不假 stopped 的口径）。"""
+    monkeypatch.setattr(module, "_port_open", lambda port: True)
+    monkeypatch.setattr(module, "_listening_pid", lambda port: 4321)
+    monkeypatch.setattr(module, "_proc_alive", lambda pid: True)
+    monkeypatch.setattr(module, "_kill_tree", lambda pid: False)
+    monkeypatch.setattr(module, "STOP_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(module.os, "kill", lambda pid, sig: None)
+    args = module.build_parser().parse_args(["--port", "8902", "stop"])
+    assert module.cmd_stop(args) == 1
+    out = capsys.readouterr().out
+    assert "stop failed" in out and "4321" in out
+    assert "stopped" not in out.replace("stop failed", "")
+
+
+def test_restart_aborts_when_stop_unconfirmed(module, monkeypatch, capsys):
+    """W4：cmd_stop 非 0 即中止并原样返回该码，不拉起第二实例（停止失败仍重启＝双实例）。"""
+    monkeypatch.setattr(module, "cmd_stop", lambda args: module.UNMANAGED_LISTENER_EXIT)
+    started: list = []
+    monkeypatch.setattr(module, "cmd_start", lambda args: started.append(args) or 0)
+    args = module.build_parser().parse_args(["restart"])
+    assert module.cmd_restart(args) == 3
+    assert started == [], "stop 未确认成功时不得启动新实例"
+    assert "restart aborted" in capsys.readouterr().out
