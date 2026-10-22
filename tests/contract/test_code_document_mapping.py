@@ -16,6 +16,7 @@ ACTIVE_DOCUMENTS = [
     ROOT / "docs" / "design" / "parsing-pipeline.md",
     ROOT / "docs" / "design" / "parsing-management.md",
     ROOT / "docs" / "design" / "model-integration.md",
+    ROOT / "docs" / "design" / "knowledge-analysis.md",
     ROOT / "docs" / "architecture" / "overview.md",
     ROOT / "docs" / "architecture" / "api.md",
     ROOT / "docs" / "architecture" / "database-design.md",

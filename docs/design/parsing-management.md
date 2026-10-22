@@ -2,11 +2,11 @@
 
 设计状态：Accepted
 确认状态：已确认
-实现状态：Verified（af_* 表族 + 8902 管理与对照端点已实现并真机取证）
-最后更新：2026-10-01
+实现状态：Implemented（af_* 四表代码与端点已落；真库整族重建属待批准的人工窗口）
+最后更新：2026-10-22
 关联代码：`src/axiom_flow/db/`、`src/axiom_flow/api/`（含 `api/admin.py` 管理面）、`src/axiom_flow/orchestrator/`
-关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`、`tests/unit/test_db_page_regions.py`
-关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)
+关联测试：`tests/contract/test_api_v1_contract.py`、`tests/unit/test_db.py`、`tests/unit/test_orchestrator.py`、`tests/unit/test_db_table_family_governance.py`
+关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)、[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)、根仓库 `QED-Engine/docs/adr/0014-parsing-ownership-and-model-boundary.md`
 
 > **本篇回答的唯一问题**：一本书从「已验证书目」到「人工校验完成」，**状态如何流转、职责落在哪一段**。
 > 产物怎么生成与什么算合格归 [parsing-pipeline.md](parsing-pipeline.md)；如何与模型服务对话归
@@ -65,17 +65,17 @@ sequenceDiagram
     FE->>GW: 点开书目（POST /books/{id}/ingest）
     GW->>AX: 渲染页图（根视图只 pages/*.png）+ 回写 af_books
     FE->>GW: 解析（POST /parse-jobs）
-    GW->>AX: 202 任务受理（af_parse_jobs）
+    GW->>AX: 202 任务受理（af_operations 的 parse 事件行）
     AX->>AX: 播种版本基线 + 引擎解析 + 归一化 + 分块 → versions/<job_id>/
     AX->>AX: 页行按 (book_id, job_id, page_no) 落 af_pages；校验通过后置 af_books.active_job_id
     AX->>AX: 激活成功即删除被替换的旧版本目录（磁盘只留生效正本）
     FE->>GW: 作业列表/页清单（GET /parse-jobs、GET /books/{id}/pages）
-    GW->>AX: af_parse_jobs + af_pages 聚合（只读，不触模型）
+    GW->>AX: af_operations 的 parse 行 + af_pages 聚合（只读，不触模型）
     FE->>GW: 对照（GET /books/{id}/pages/{no}）
     FE->>GW: 编辑（PUT /books/{id}/pages/{no}/blocks/{index}/edit）
-    GW->>AX: upsert af_block_edits
+    GW->>AX: upsert af_operations 的 edit 意图行
     FE->>GW: 结构声明（PUT /books/{id}/pages/{no}/structure）
-    GW->>AX: 全量声明 af_page_regions（页级、缺席即撤销，不调模型）
+    GW->>AX: 全量声明 af_operations 的 structure 意图行（页级、缺席即撤销，不调模型）
     FE->>GW: 分块预览（GET /books/{id}/chunks）
     GW->>AX: chunks.json（可带参数重算）
 ```
@@ -97,15 +97,15 @@ sequenceDiagram
 
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
-| PM-3 | **编辑幂等键含解析版本**：`af_block_edits` 以 `(book_id, job_id, page_no, block_index)` 为唯一键 upsert，同版本同版面块重复提交＝覆盖更新 | 边界：`edit_id` 只是幂等标识，仓储一律按唯一键读写，故迁移前的存量行（旧摘要不含 `job_id`）升级后仍可达 | `db/repositories.py:BlockEditRepository.upsert`、`edit_id_for()` → `tests/unit/test_db.py`（edit upsert 覆盖） |
+| PM-3 | **编辑幂等键含解析版本**：`af_operations` 的 `op_kind='edit'`、`lifecycle='intent'` 行按 `intent_key`（`op_kind:book_id:job_id:page_no:block_index:target_id` 的摘要）单语句 upsert，同版本同版面块重复提交＝覆盖更新 | 为什么把版本放进键：块下标只在版本内有意义（PP-9），不带 `job_id` 的键会让上一版的结论套到新版产物上。边界：`op_id` 只是行身份，仓储一律按 `intent_key` 读写 | `db/repositories.py:OperationRepository.upsert_edit`、`intent_key_for()` → `tests/unit/test_db.py`（edit upsert 覆盖、intent_key 幂等） |
 | PM-4 | **进度由本篇自持，且只描述生效版本**：`ingest_status`/`parse_status`/`pages_done` 由本篇维护，不依赖 qt_books 之外的上游字段；`pages_done` 与 `active_job_id` 一致地描述**生效版本**，不是全书历史累计 | — | `db/repositories.py:BookRepository.update_parse` → `tests/unit/test_db.py` |
-| PM-5 | **人工编辑是覆盖层，不改产物文件**：解析产物文件是模型产物事实源，人工编辑只入 `af_block_edits`、**不改文件**；读取端在响应里按生效版本合并编辑 | 后果：「产物没变、校验结论变了」两件事可分别追溯 | `api/main.py` 单页端点合并 edits → `tests/contract/test_api_v1_contract.py` |
+| PM-5 | **人工编辑是覆盖层，不改产物文件**：解析产物文件是模型产物事实源，人工编辑只入 `af_operations` 的 `edit` 意图行、**不改文件**；读取端在响应里按生效版本合并编辑 | 后果：「产物没变、校验结论变了」两件事可分别追溯 | `api/main.py` 单页端点合并 edits → `tests/contract/test_api_v1_contract.py` |
 
 #### 生效指针与引擎边界
 
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
-| PM-6 | **「哪一版生效」只有一列**：唯一事实源是 `af_books.active_job_id`（`NULL` = 根视图 `legacy`），`af_parse_jobs` **不设布尔生效列**；改写只经 `BookRepository.set_active_job()` 的单列 UPDATE | 为什么：同一事实两处存必漂移。产物目录布局与齐备判据见 [parsing-pipeline.md](parsing-pipeline.md) | `db/repositories.py:BookRepository.set_active_job` → `tests/unit/test_orchestrator.py` |
+| PM-6 | **「哪一版生效」只有一列**：唯一事实源是 `af_books.active_job_id`（`NULL` = 根视图 `legacy`），`af_operations` 的 parse 事件行**不设布尔生效列**；改写只经 `BookRepository.set_active_job()` 的单列 UPDATE | 为什么：同一事实两处存必漂移——版本「是不是生效」由书目这一列回答，事件行只回答「做过什么」。产物目录布局与齐备判据见 [parsing-pipeline.md](parsing-pipeline.md) | `db/repositories.py:BookRepository.set_active_job` → `tests/unit/test_orchestrator.py`、`tests/unit/test_db.py`（版本激活只改这一列） |
 | PM-7 | **闭环对模型无感知**：闭环只传引擎名称，不感知模型、参数与服务地址；换模型不影响任何状态列的语义 | 协议事实源见 [model-integration.md](model-integration.md) | `orchestrator/pipeline.py:run_parse_job` → `tests/unit/test_orchestrator.py` |
 
 #### 任务与书目状态语义
@@ -113,7 +113,7 @@ sequenceDiagram
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | PM-8 | **任务状态六态，原值透传**：`queued`/`running` 为活动态；终态 `completed`（目标页齐备）、`partial`（≥1 页 `parsed` 但未齐备）、`failed`（0 页产出或引擎整体异常）、`interrupted`（上次进程遗留） | 边界：六态**原值透传给前端**，不做「看起来更好」的归并——读取面一旦加工，就把语义分歧冻结给了前端 | `schemas.py:JobStatus`、`api/main.py` 响应 → `tests/contract/test_api_v1_contract.py` |
-| PM-9 | **失败页结构化且不截断**：`af_parse_jobs.failed_pages` 存页码数组——「哪些页失败」必须是可机读的事实 | 边界：`error`（≤500）与 `progress.error`（≤200）只是给人看的摘要，摘要截断不丢页码 | `db/repositories.py:ParseJobRepository.mark_finished` → `tests/unit/test_db.py` |
+| PM-9 | **失败页结构化且不截断**：parse 事件行的 `failed_pages` 存页码数组——「哪些页失败」必须是可机读的事实 | 边界：`error`（≤500）与 `progress.error`（≤200）只是给人看的摘要，摘要截断不丢页码 | `db/repositories.py:OperationRepository.mark_finished` → `tests/unit/test_db.py` |
 | PM-10 | **书目进度与结局分列**：`parse_status` ∈ `pending`/`parsing` 只表进度；`last_parse_result` ∈ `completed`/`partial`/`failed`/`interrupted`（`""` = 从未有任务）**只在终态写入** | 为什么：运行中的进度刷新不得覆盖结局——根因是旧 `parse_status` 一列两用（该缺陷已修，判据由本条固定） | `db/repositories.py:BookRepository.update_parse`、`mark_parse_idle` → `tests/unit/test_db.py` |
 | PM-11 | **`completed` 与版本激活同一判据**：齐备判定一次产出「任务终态」与「指针动作」，故「`completed` 但未激活」在**结构上不可能**，不是靠文档约定 | 例外：`partial`/`failed`/中断一律不激活，产物保留在 `versions/` 供排查（自然回滚 = 指针从未动过） | `orchestrator/pipeline.py:_version_is_complete` → `tests/unit/test_orchestrator.py` |
 
@@ -131,13 +131,13 @@ sequenceDiagram
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | PM-16 | **重复 ingest 只作废根视图**：`POST /books/{id}/ingest` 成功后把 `active_job_id` 置 `NULL`、`parse_status` 归 `pending`、`pages_done` 归零，并只清 `job_id='legacy'` 的页行；历史版本作用域的页行、任务行、编辑行与**页级区域意图（PM-18）**全部保留 | 为什么：源文件已变，旧版本不再对生效端点可见，但不会被伪造或删除。区域意图是页级输入，换源文件后仍要按锚重新命中，故不随 ingest 作废。例外：`last_parse_result` **不回置**——ingest 不是任务 | `db/repositories.py:PageRepository.reset_legacy`、`api/main.py` ingest 路由 → `tests/contract/test_api_v1_contract.py`（重复 ingest 保留人工框） |
-| PM-17 | **删除保审计，一键清除是唯一例外**：`DELETE /books/{id}` 删书目行与该书**所有版本**的页行/编辑行**及页级区域意图行**（`?purge=true` 连产物目录一并删），但 `af_parse_jobs` 历史行保留为审计线索 | 为什么：书目行是区域的唯一归属键，书没了锚就不存在，留着只会指向不存在的页。例外：唯一能删任务行的路径是 `POST /api/v1/admin/purge`（见下「管理面」），它存在的目的正是回到干净状态 | `api/admin.py`、`db/repositories.py:ParseJobRepository.delete_for_book`、`RegionRepository.delete_for_book` → `tests/contract/test_api_v1_contract.py`（删书带走人工框）、`tests/unit/test_db_page_regions.py` |
+| PM-17 | **删除保审计，一键清除是唯一例外**：`DELETE /books/{id}` 删书目行与该书**所有版本**的页行、`edit` 与 `structure` **意图行**（`?purge=true` 连产物目录一并删），但 `af_operations` 的 parse **事件行保留为审计线索** | 为什么：书目行是区域的唯一归属键，书没了锚就不存在，留着只会指向不存在的页；事件行不同，它记录「做过什么」，不可撤回。例外：唯一能删事件行的路径是 `POST /api/v1/admin/purge`（见下「管理面」），它存在的目的正是回到干净状态 | `api/admin.py`、`db/repositories.py:OperationRepository.delete_intents_for_book`（意图行）、`delete_for_book`（含事件行，仅管理面） → `tests/contract/test_api_v1_contract.py`（删书带走人工框、事件行留存）、`tests/unit/test_db.py` |
 
 #### 页级结构意图
 
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
-| PM-18 | **结构意图是页级解析输入，不是版本内覆盖层**：人工框 / 删块 / 并块落 `af_page_regions`（作用域 `(book_id, page_no)`，PK **不含 `job_id`**），写入是**全量声明**＝缺席即撤销，故重复提交同一组意图幂等、无需 undo 端点；受理时把三选一（下标 / `region_id` / 框）统一换算成**几何锚**才落库 | 为什么与 PM-5 分列：编辑结论绑版本（换版不自动套用），结构意图跨版本存活（换版后按锚重新命中）。下标 ↔ `region_id` 的翻译归本仓（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)）；画框先于解析 ⇒ 本端点不调模型服务；投影合并的读语义与重锚定阈值另批落，本篇不复制形状（事实源见文首指针） | `db/repositories.py:RegionRepository.replace_page`、`api/main.py:put_structure` → `tests/unit/test_db_page_regions.py`、`tests/contract/test_api_v1_contract.py::TestStructureEndpoint` |
+| PM-18 | **结构意图是页级解析输入，不是版本内覆盖层**：人工框 / 删块 / 并块落 `af_operations` 的 `op_kind='structure'`、`lifecycle='intent'` 行（作用域 `(book_id, page_no)`，`job_id` 恒 `''` 即**不绑解析版本**），写入是**全量声明**＝缺席即撤销，故重复提交同一组意图幂等、无需 undo 端点；受理时把三选一（下标 / `region_id` / 框）统一换算成**几何锚**才落库 | 为什么与 PM-5 分列：编辑结论绑版本（换版不自动套用），结构意图跨版本存活（换版后按锚重新命中）——两行同表、靠 `job_id` 是否参与幂等键分列，不因折叠而混写。下标 ↔ `region_id` 的翻译归本仓（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)）；画框先于解析 ⇒ 本端点不调模型服务；投影合并的读语义与重锚定阈值另批落，本篇不复制形状（事实源见文首指针） | `db/repositories.py:OperationRepository.replace_page_intents`、`region_id_for()`、`api/main.py:put_structure` → `tests/unit/test_db.py`、`tests/contract/test_api_v1_contract.py::TestStructureEndpoint` |
 
 ### 端点语义（形状一律见 api.md）
 
@@ -192,7 +192,7 @@ sequenceDiagram
 5. 端到端联调（8903 → 8900 → 8901/8902：同步 → ingest → 解析 → 对照 → 编辑 → 回显）与 8901/8902
    离线降级 → 需 8903 排期窗口，联调证据归根仓库侧（`docs/trackers/completed.md` 的对照/编辑两行）。
 6. 结构意图落库（PM-18）：同一页重复声明幂等、缺席即撤销、三选一定位换算成几何锚、legacy 拒绝一切
-   结构操作、超限与越界判在写入前 → `tests/unit/test_db_page_regions.py`、
+   结构操作、超限与越界判在写入前 → `tests/unit/test_db.py`、
    `tests/contract/test_api_v1_contract.py::TestStructureEndpoint`（真机面：业务库迁移与 8903 画框
    链路另批）。
 
@@ -204,5 +204,9 @@ sequenceDiagram
   [ADR 0007](../adr/0007-parse-status-semantics.md) 的裁决，由 PLAN-006 实施；版本作用域来自 PLAN-004；
   只读清单与作业列表端点来自 PLAN-008；一键清除来自 PLAN-010 与 PLAN-011（四者均已归档，
   去处见 [plans/index.md](../plans/index.md)）。
+- **承载随步**：PM-3/5/6/9/17/18 的承载表由五表折叠为四表（`af_parse_jobs`/`af_block_edits`/
+  `af_page_regions` 三表退役为 `af_operations` 的事件行与意图行）由
+  [ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md) 裁决，六条守则的**判据与写入时机不变**，
+  本篇只换落点不改语义。
 - **叙述框架**：本篇的六段结构与 `PM-n` 编号由 [PLAN-012](../history/plans/2026-09/2026-09-23-design-narrative-framework.md)
   建立；日期化的执行过程与真机读数一律在 [trackers/completed.md](../trackers/completed.md)。

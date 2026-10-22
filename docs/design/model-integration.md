@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（MinerU 适配器已实现并真机取证；paddleocr-vl/qwen-vl 预留槽位）
-最后更新：2026-09-23
+最后更新：2026-10-22
 关联代码：`src/axiom_flow/config.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`
 关联测试：`tests/unit/test_config.py`、`tests/unit/test_engines.py`、`tests/unit/test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)
@@ -92,7 +92,7 @@ flowchart LR
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | MI-1 | **配置只有三段，两边 `.env` 允许不一致**：配置中心只有三段——服务（`AXIOM_PORT`）/ 数据与库（`QED_DATA_ROOT`、`QED_DB_*`）/ 解析引擎（见上方「配置键」表）；读取优先级＝真实环境变量 > 自身 `.env` > 父目录 `.env`（向上走查）> 内置默认值 | 本仓库既要能独立部署，也要能被 QED-Engine 托管时跟随根 `.env`；「两边允许不一致」是明确裁决，不是默认行为。服务启动不依赖 8900 与模型在线，只在解析时连接模型 API | `config.py:load_settings`（三段式 + `.env` 向上走查） → `tests/unit/test_config.py` |
-| MI-2 | **引擎名先解析后落库，未注册即 400**：实际引擎 = 请求体 `engine`（可选）优先、缺省回落 `AXIOM_OCR_ENGINE`，由 `engines/factory.py` 显式分派；`af_parse_jobs.engine` 存**解析后的实际引擎名**，DDL 侧该列**无默认值** | 缺引擎名必须报错、不做静默回落——否则这一行作业记录的引擎归属不可信。例外：未在 `factory.ENGINE_NAMES` 注册的名称返回 400；非法字面值由 schema 返回 422 | `engines/factory.py:resolve_engine_name/build_engine` → `tests/unit/test_engine_factory.py` |
+| MI-2 | **引擎名先解析后落库，未注册即 400**：实际引擎 = 请求体 `engine`（可选）优先、缺省回落 `AXIOM_OCR_ENGINE`，由 `engines/factory.py` 显式分派；`af_operations` 的 parse 事件行的 `engine` 存**解析后的实际引擎名**，写侧恒取该已解析值（`pipeline.py:engine=engine.name`），不接受调用方原样透传 | 缺引擎名必须报错、不做静默回落——否则这一行作业记录的引擎归属不可信。例外：未在 `factory.ENGINE_NAMES` 注册的名称返回 400；非法字面值由 schema 返回 422。边界：DDL 侧该列是 NOT NULL + 空串默认值，**这不是引擎兜底**——四表折叠后 `edit`/`structure` 等意图行不写引擎，默认值只让它们有合法列值；parse 行读到空串即视为写侧缺陷，不解释为「默认引擎」 | `engines/factory.py:resolve_engine_name/build_engine` → `tests/unit/test_engine_factory.py` |
 
 #### 适配器契约与请求形态
 

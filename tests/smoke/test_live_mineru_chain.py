@@ -23,12 +23,12 @@ from sqlalchemy.engine import create_engine
 from sqlalchemy.orm import Session
 
 from axiom_flow.config import load_settings
-from axiom_flow.db.models import AfBook, AfPage, AfParseJob, Base
+from axiom_flow.db.models import AfBook, AfOperation, AfPage, Base
 from axiom_flow.db.repositories import (
     BookRepository,
     BookSyncRow,
+    OperationRepository,
     PageRepository,
-    ParseJobRepository,
     ParseJobRow,
 )
 from axiom_flow.engines.factory import build_engine
@@ -217,7 +217,7 @@ def test_smoke_full_document_five_pages(tmp_path, smoke_session, live_engine) ->
     job_id = "smokefulljob01"
     assert _prepare_book(session=smoke_session, data_root=tmp_path, book_id=book_id, pages=5) == 5
 
-    ParseJobRepository(smoke_session).create(ParseJobRow(
+    OperationRepository(smoke_session).create(ParseJobRow(
         job_id=job_id,
         book_id=book_id,
         pages=None,
@@ -241,7 +241,7 @@ def test_smoke_full_document_five_pages(tmp_path, smoke_session, live_engine) ->
     assert (outcome.parsed, outcome.total) == (5, 5)
     assert outcome.failed_pages == []
 
-    job = smoke_session.get(AfParseJob, job_id)
+    job = smoke_session.get(AfOperation, job_id)
     assert job.status == JobStatus.COMPLETED.value
     assert job.engine == "mineru"
     assert job.progress == {"parsed": 5, "total": 5, "failed": 0, "error": ""}

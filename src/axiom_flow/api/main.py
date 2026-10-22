@@ -23,17 +23,19 @@ from axiom_flow import __version__ as VERSION
 from axiom_flow.api.admin import mount_admin
 from axiom_flow.config import Settings, load_settings
 from axiom_flow.db.engine import create_engine_for
-from axiom_flow.db.models import AfBlockEdit, AfBook, AfPageRegion
+from axiom_flow.db.models import AfBook
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
     BookSyncRow,
-    EditRepository,
+    EditRow,
+    OperationRepository,
     PageRepository,
-    ParseJobRepository,
     ParseJobRow,
     RegionIntent,
-    RegionRepository,
+    RegionRow,
+    job_timing,
+    public_progress,
 )
 from axiom_flow.engines.base import ParseEngine
 from axiom_flow.engines.factory import EngineSelectionError, build_engine, resolve_engine_name
@@ -99,7 +101,7 @@ def _book_out(book: AfBook) -> BookOut:
     )
 
 
-def _edit_record(edit: AfBlockEdit) -> EditRecord:
+def _edit_record(edit: EditRow) -> EditRecord:
     return EditRecord(
         edit_id=edit.edit_id,
         book_id=edit.book_id,
@@ -130,8 +132,8 @@ def _checked_bbox(bbox: BBox, label: str) -> list[int]:
     return [x0, y0, x1, y1]
 
 
-def _region_record(row: AfPageRegion) -> RegionRecord:
-    """`af_page_regions` 行 → 响应记录（几何以数组回给根侧，与 `Block.bbox` 同一形状）。"""
+def _region_record(row: RegionRow) -> RegionRecord:
+    """structure 意图行投影 → 响应记录（几何以数组回给根侧，与 `Block.bbox` 同一形状）。"""
     return RegionRecord(
         region_id=row.region_id,
         op=row.op,
@@ -297,10 +299,11 @@ def create_app(
 
     @app.delete("/api/v1/books/{book_id}")
     def delete_book(book_id: SafeBookId, session: SessionDep, purge: bool = False) -> dict:
-        """删除 af_books 行与该书**所有解析版本**的 af_pages / af_block_edits 行，以及该书全部
-        人工结构意图（af_page_regions）；`?purge=true` 同时删除整本产物目录（含 `versions/` 历史版本）。
+        """删除 af_books 行与该书**所有解析版本**的 af_pages 行，以及该书全部人工意图行
+        （`af_operations` 的 edit 与 structure 两类）；`?purge=true` 同时删除整本产物目录（含
+        `versions/` 历史版本）。
 
-        af_parse_jobs 历史行保留为审计线索（不随书目删除；`architecture/database-design.md`「删除保留
+        parse 事件行保留为审计线索（不随书目删除；`architecture/database-design.md`「删除保留
         审计」，其管理面 purge 例外见 `PM-17`）。人工框**不保留**：它是这本书某一页的解析输入，书行没了
         就是无主行，留着只会在重建同 id 书时凭空复活旧框。
         """
@@ -310,8 +313,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
         book_dir = book_dir_for(data_root, book.domain_id, book.course_id, book_id)
         PageRepository(session).delete_for_book(book_id)
-        EditRepository(session).delete_for_book(book_id)
-        RegionRepository(session).delete_for_book(book_id)
+        OperationRepository(session).delete_intents_for_book(book_id)
         repo.delete(book_id)
         if purge and book_dir.is_dir():
             shutil.rmtree(book_dir)
@@ -398,7 +400,7 @@ def create_app(
         artifact_dir, job_id = _read_scope(session, book_id)
         total = _page_total(session, book_id)
         states = {state.page_no: state for state in PageRepository(session).list_states(book_id, job_id)}
-        edit_counts = EditRepository(session).count_by_page(book_id, job_id)
+        edit_counts = OperationRepository(session).count_edits_by_page(book_id, job_id)
         pages = [
             PageStateOut(
                 page_no=page_no,
@@ -439,7 +441,7 @@ def create_app(
         markdown_path = artifact_dir / "pages" / f"p{page_no:04d}.md"
         edits = [
             _edit_record(edit)
-            for edit in EditRepository(session).list_for_page(book_id, job_id, page_no)
+            for edit in OperationRepository(session).list_edits_for_page(book_id, job_id, page_no)
         ]
         return PageData(
             blocks=blocks,
@@ -464,7 +466,7 @@ def create_app(
     def edit_block(
         book_id: SafeBookId, page_no: int, index: int, payload: EditRequest, session: SessionDep
     ) -> EditRecord:
-        """块编辑 upsert（落 af_block_edits，绑定**生效版本**的 `job_id`，同版本同块覆盖更新）。
+        """块编辑 upsert（落 `af_operations` 的 edit 意图行，绑定**生效版本**的 `job_id`，同版本同块覆盖更新）。
 
         块下标只在解析版本内有意义（映射表/归一化规则一变语义就变），故编辑必须记在它核对
         的那个版本上；换版本后旧编辑不自动套用。
@@ -474,7 +476,7 @@ def create_app(
         if not 0 <= index < len(page.blocks):
             raise HTTPException(status_code=400, detail=f"块下标越界：{index}")
         block: Block = page.blocks[index]
-        edit = EditRepository(session).upsert(
+        edit = OperationRepository(session).upsert_edit(
             book_id,
             job_id,
             page_no,
@@ -494,7 +496,7 @@ def create_app(
     def put_structure(
         book_id: SafeBookId, page_no: int, payload: StructureRequest, session: SessionDep
     ) -> list[RegionRecord]:
-        """页结构意图**全量声明**（落 `af_page_regions`，页级、不绑生效版本，ADR 0010 决定 1）。
+        """页结构意图**全量声明**（落 `af_operations` 的 structure 意图行，页级、不绑生效版本，ADR 0010 决定 1）。
 
         缺席即撤销：本次未列出的人工意图被删除，所以重复提交同一组意图结果不变（幂等，无需
         undo 端点）。定位三选一在受理时统一换算成**几何锚**再落库——块下标只在生效版本内有
@@ -537,7 +539,7 @@ def create_app(
         )
         existing = {
             row.region_id: row
-            for row in RegionRepository(session).list_for_page(book_id, page_no)
+            for row in OperationRepository(session).list_regions_for_page(book_id, page_no)
         }
 
         def anchor_of(locator: BlockLocator) -> list[int]:
@@ -577,7 +579,7 @@ def create_app(
             RegionIntent(op="merge", members=[anchor_of(locator) for locator in group.targets])
             for group in payload.merges
         ]
-        rows = RegionRepository(session).replace_page(book_id, page_no, intents)
+        rows = OperationRepository(session).replace_page_intents(book_id, page_no, intents)
         return [_region_record(row) for row in rows]
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}/edits", response_model=list[EditRecord])
@@ -586,7 +588,7 @@ def create_app(
         _, job_id = _read_scope(session, book_id)
         return [
             _edit_record(edit)
-            for edit in EditRepository(session).list_for_page(book_id, job_id, page_no)
+            for edit in OperationRepository(session).list_edits_for_page(book_id, job_id, page_no)
         ]
 
     @app.get("/api/v1/books/{book_id}/versions", response_model=list[ParseVersionOut])
@@ -607,7 +609,7 @@ def create_app(
                 created_at=job.created_at,
                 active=job.job_id == book.active_job_id,
             )
-            for job in ParseJobRepository(session).list_for_book(book_id)
+            for job in OperationRepository(session).list_versions(book_id)
         ]
 
     @app.get("/api/v1/books/{book_id}/chunks", response_model=ChunkSet)
@@ -640,9 +642,11 @@ def create_app(
     def create_parse_job(payload: ParseJobCreate, session: SessionDep) -> ParseJob:
         """提交解析任务：pages 缺省 = 全本解析；指定页 = 逐页重解析。202 受理后后台执行。
 
-        受理前三道门槛（`api.md` 错误码表 + `MI-2` + DEFECT-006）：页码越界 422（不探活、不落任务行，否则会在
-        `af_pages` 写出指向不存在页图的状态行）、引擎名解析（未实现 400、未知 422，不回落
-        MinerU）、模型服务探活（不可用 503）；三者都不创建任务行。受理后的服务故障才记为 job `failed`。
+        受理前四道门槛（`api.md` 错误码表 + `MI-2` + DEFECT-006）：页码越界 422（不探活、不落任务行，否则会在
+        `af_pages` 写出指向不存在页图的状态行）、区域驱动框数越限 422（逐目标页计 `add` 框数对
+        `AXIOM_MAX_REGIONS_PER_PAGE`，判在探活前——每框一次单页提交，非法请求不打模型，ADR 0010 决定 4）、
+        引擎名解析（未实现 400、未知 422，不回落
+        MinerU）、模型服务探活（不可用 503）；四者都不创建任务行。受理后的服务故障才记为 job `failed`。
 
         「已 ingest」的门槛只看 af_books（`ingest_status`，REQ-097）：根视图 book.json 已退役，
         磁盘文件证明不了页数与哈希已回写库。
@@ -658,6 +662,24 @@ def create_app(
                 status_code=422,
                 detail=f"页码越界：{payload.book_id} 共 {book.page_count} 页，请求 {out_of_range}",
             )
+        # 区域驱动受理门：只查目标页、只计 add（delete/merge 不产生模型提交）；全本提交逐页全查。
+        target_pages = (
+            set(payload.pages) if payload.pages else set(range(1, (book.page_count or 0) + 1))
+        )
+        add_counts: dict[int, int] = {}
+        for row in OperationRepository(session).list_regions_for_book(payload.book_id):
+            if row.op == "add":
+                add_counts[row.page_no] = add_counts.get(row.page_no, 0) + 1
+        over_limit = sorted(p for p in target_pages if add_counts.get(p, 0) > settings.max_regions_per_page)
+        if over_limit:
+            readings = "；".join(
+                f"第 {p} 页人工框 {add_counts[p]} 超每页上限 {settings.max_regions_per_page}"
+                for p in over_limit
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=f"区域驱动受理拒绝，不创建任务行：{readings}（每框一次单页提交，非法请求不打模型）",
+            )
         try:
             engine_name = resolve_engine_name(payload.engine, settings.ocr_engine)
         except EngineSelectionError as exc:
@@ -665,7 +687,7 @@ def create_app(
         _probe_model_service(make_engine(engine_name))
         total = len(payload.pages) if payload.pages else (book.page_count or 0)
         job_id = uuid.uuid4().hex[:12]
-        job = ParseJobRepository(session).create(
+        job = OperationRepository(session).create(
             ParseJobRow(
                 job_id=job_id,
                 book_id=payload.book_id,
@@ -683,7 +705,7 @@ def create_app(
             pages=job.pages,
             engine=job.engine,
             status=job.status,
-            progress=job.progress,
+            progress=public_progress(job),
             failed_pages=list(job.failed_pages or []),
         )
 
@@ -697,44 +719,42 @@ def create_app(
     ) -> ParseJobListOut:
         """解析作业列表（只读）：过滤组合 + 稳定倒序 + 过滤后总数。
 
-        本端点**不经** `_read_scope` 也不摸磁盘：作业事实全在 `af_parse_jobs`，跨书列表没有单一
+        本端点**不经** `_read_scope` 也不摸磁盘：作业事实全在 `af_operations` 的 parse 事件行，跨书列表没有单一
         per-book 产物作用域，硬套会造出第二套作用域语义（`api.md` 强制规则的同一条）。
         已删书的审计行不排除、其 `active` 恒为 `False`。
         """
-        jobs, total = ParseJobRepository(session).list_all(
+        jobs, total = OperationRepository(session).list_all(
             status=[job_status.value for job_status in status_filter] if status_filter else None,
             book_id=book_id,
             limit=limit,
             offset=offset,
         )
         active_by_book = BookRepository(session).active_job_index()
-        return ParseJobListOut(
-            jobs=[
+        items: list[ParseJobListItem] = []
+        for job in jobs:
+            started_at, finished_at = job_timing(job)
+            items.append(
                 ParseJobListItem(
                     id=job.job_id,
                     book_id=job.book_id,
                     pages=job.pages,
                     engine=job.engine,
                     status=job.status,
-                    progress=job.progress,
+                    progress=public_progress(job),
                     failed_pages=list(job.failed_pages or []),
                     error=job.error,
                     created_at=job.created_at,
-                    started_at=job.started_at,
-                    finished_at=job.finished_at,
+                    started_at=started_at,
+                    finished_at=finished_at,
                     active=active_by_book.get(job.book_id) == job.job_id,
                 )
-                for job in jobs
-            ],
-            total=total,
-            limit=limit,
-            offset=offset,
-        )
+            )
+        return ParseJobListOut(jobs=items, total=total, limit=limit, offset=offset)
 
     @app.get("/api/v1/parse-jobs/{job_id}", response_model=ParseJob)
     def get_parse_job(job_id: str, session: SessionDep) -> ParseJob:
         """任务状态与进度。"""
-        job = ParseJobRepository(session).get(job_id)
+        job = OperationRepository(session).get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"任务不存在：{job_id}")
         return ParseJob(
@@ -743,7 +763,7 @@ def create_app(
             pages=job.pages,
             engine=job.engine,
             status=job.status,
-            progress=job.progress,
+            progress=public_progress(job),
             failed_pages=list(job.failed_pages or []),
             error=job.error,
         )

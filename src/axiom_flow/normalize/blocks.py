@@ -33,7 +33,7 @@ _TYPE_MAP: dict[str, BlockType] = {
     "page_number": BlockType.PAGE_NUMBER,
     "list": BlockType.LIST,
     # ARCH-019（2026-09-22 用户裁决取 (A)）：参考文献条目按正文段落承接，丢弃归零；(B) LIST 聚合会
-    # 改变块下标 index（af_block_edits 定位键），待根侧渲染面提出后再议。
+    # 改变块下标 index（af_operations edit 意图行的定位键），待根侧渲染面提出后再议。
     "ref_text": BlockType.PARAGRAPH,
 }
 

@@ -1,7 +1,7 @@
 # ADR 0005：MySQL 集成测试的隔离边界（qed_test 显式 opt-in）
 
 状态：Accepted
-最后更新：2026-10-01
+最后更新：2026-10-22
 关联代码：`tests/support/mysql.py`（ADR 接受后实现）、`tests/conftest.py`（既有
 `mysql_settings` / `mysql_store` 夹具入口）
 关联测试：`tests/integration/test_parse_persistence.py`、
@@ -41,7 +41,7 @@ ADR。因此本 ADR 先于 `tests/support/mysql.py`、`tests/integration/` 用�
    值（本仓库 `load_settings(db_name="qed_test")` 覆盖，业务库名从不进入测试 DSN）。
 3. **自有表范围 = `af_*` 表族（首建时四表，以 `AF_TABLES` 为准）+ `alembic_version`（2026-09-21 评审修订）**：`qed_test` 由夹具
    `CREATE DATABASE IF NOT EXISTS` 保证存在，每项用例只 `DROP TABLE IF EXISTS` 本仓库自有的
-   `af_books`/`af_parse_jobs`/`af_pages`/`af_block_edits`/`af_page_regions` 与 `alembic_version`，随后 Alembic 升级到
+   `af_books`/`af_operations`/`af_pages`/`af_kp` 与 `alembic_version`，随后 Alembic 升级到
    head，用例结束再删一次同一白名单。**绝不 `DROP DATABASE`**：`qed_test` 已被根仓库用作 `qed`
    的 13 表镜像（2026-09-21），整库删除会带走别人的资产。数据只用合成样本，不从 `qed` 拷贝。
 4. **缺 opt-in 时 skip 而非 fail**：未设 `QED_TEST_MYSQL=1` 时用例 `pytest.skip`，门禁照常全绿；
@@ -85,7 +85,8 @@ ADR。因此本 ADR 先于 `tests/support/mysql.py`、`tests/integration/` 用�
   测试期间无任何写入；`qed_test` 内根仓库镜像的非 `af_*` 表（`qt_books` 等 8 张）保持不变，其
   `af_*` 四表与 `alembic_version` 如裁决所料随夹具收尾被删除（可由根侧重新镜像，非事实源）。
 - **销账**：DEFECT-001 的关闭条件（ADR 0005 接受 + 双 Session 提交边界回归网就位）就此达成。
-- **白名单随表族扩项（不改决定）**：决定 3 的逐名枚举随 `AF_TABLES` 同步（现含 `af_page_regions`），
+- **白名单随表族扩项（不改决定）**：决定 3 的逐名枚举随 `AF_TABLES` 同步（2026-10-22 整族重建后为
+  `af_books`／`af_operations`／`af_pages`／`af_kp`），
   隔离决定本身一字未动——仍「只删本方自有 `af_*` 表族 + `alembic_version`、绝不 `DROP DATABASE`」。
   枚举与 `AF_TABLES` 的同构由 `tests/unit/test_db_table_family_governance.py` 钉住，加表时漏改
   白名单即红（判据形状见 PLAN-020，已归档）。

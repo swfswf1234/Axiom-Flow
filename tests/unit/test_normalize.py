@@ -382,7 +382,7 @@ class TestVisibleDrop:
         assert page.quality.dropped_types == ["equation", "image", "table"]
 
     def test_index_stays_contiguous_after_drop(self):
-        """丢弃不得让 `index` 跳号：块编辑以 `index` 为定位键（af_block_edits）。"""
+        """丢弃不得让 `index` 跳号：块编辑以 `index` 为定位键（af_operations 的 edit 意图行）。"""
         page = _normalize([
             {"type": "aside_text", "text": "边注", "bbox": [0, 0, 10, 10]},
             {"type": "text", "text": "第一", "bbox": [0, 0, 10, 10]},

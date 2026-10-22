@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（v2 拓扑与 8902 服务面已落地并真机取证）
-最后更新：2026-10-01
+最后更新：2026-10-22
 关联代码：`src/axiom_flow/api/main.py`（应用装配与生命周期）、`src/axiom_flow/config.py`（端口、数据根、引擎地址）、`scripts/axiom_flow_service.py`（8902 唯一启停入口）
 关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -27,7 +27,7 @@ Axiom-Flow 是 QED-Engine 的**后端解析组件**：把 PDF 教材完整解析
 | 端点参数、响应结构、错误码 | [api.md](api.md) |
 | 表结构与列语义、迁移序列 | [database-design.md](database-design.md) |
 | 模块 ↔ 设计 ↔ 测试的映射 | [code-map.md](code-map.md) |
-| 解析流程、状态流转、引擎协议、质量门槛与验收判据 | [design/](../design/index.md) 三篇的「确定规范」条文（`PP-n` / `PM-n` / `MI-n`） |
+| 解析流程、状态流转、引擎协议、梳理通路、质量门槛与验收判据 | [design/](../design/index.md) 四篇的「确定规范」条文（`PP-n` / `PM-n` / `MI-n` / `KA-n`） |
 | 工程治理规则 | [standards/](../standards/index.md) |
 | 当前进度、排期、阻塞与遗留 | [trackers/](../trackers/index.md)（`project-status.md` 与 `todo.md`） |
 
@@ -156,8 +156,9 @@ flowchart TB
   新增调参开关（[model-integration.md 的 `MI-15`](../design/model-integration.md)）。
 - **数据边界**：源 PDF 只读；产物落 `QED_DATA_ROOT/parsed/`，目录布局沿用根仓库 dataset 约定
   （只链接不复制）。
-- **元数据入 DB**：书目 / 任务 / 页状态 / 人工编辑 / 页级结构意图落 `qed` 库 `af_*` 表族
-  （[database-design.md](database-design.md)），产物正本在文件系统，DB 不存大字段。
+- **元数据入 DB**：书目 / 操作事件与人工意图（解析任务、块编辑、结构声明）/ 页状态与确认 / 知识点
+  结构落 `qed` 库 `af_*` **四表**（`af_books`、`af_operations`、`af_pages`、`af_kp`，
+  [database-design.md](database-design.md)），产物正本在文件系统，DB 不存大字段。
 - **WSL 只经 HTTP**：容器不挂载 Windows 盘，产物一律由 Windows 编排层落盘。
 - **测试隔离**：默认测试不访问公网、不调用外部模型服务、不写运行数据库；MySQL 层只在显式 opt-in
   时启用，且只用 `qed_test` 内本方自有的 `af_*` 表族（[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)）。
@@ -176,6 +177,7 @@ flowchart TB
 | 块级人工编辑落库与回显 | 已交付 | `PM-3`、`PM-5` |
 | 页级结构意图声明落库（人工框 / 删块 / 并块，跨版本存活） | 已实现，待真机窗口 | [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[api.md](api.md) ③ 类 |
 | 非公开一键清除（先清后建） | 已交付 | [api.md 管理面节](api.md)、`PM-17` |
+| 知识点梳理与提升通路（人工发起、批次三态、确认与只读导出） | 设计已确认，未实现 | [knowledge-analysis.md](../design/knowledge-analysis.md) `KA-1`~`KA-28` |
 | PaddleOCR-VL / qwen-vl 引擎槽位 | 预留，未实现 | `MI-11`~`MI-13` |
 | 8903 端到端联调与重建产物后的真机校验写入 | 未交付（等根侧排期与产物重建窗口） | 只在 `trackers/` 登记 |
 | 检索 / 知识图谱 / 数学解析器 / 学习交互 | 非 v0.1 目标 | [roadmap](../trackers/roadmap.md) |

@@ -2,10 +2,11 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-10-01
+最后更新：2026-10-22
 治理对象：文档分类与事实边界、确认状态、文档生命周期、代码与文档追溯、写作命名与体裁化元数据、固定文档骨架与可对账契约、版本末期整理、归档与删除
 依据：QED-Tracker `docs/standards/doc-governance.md` 治理模式（[ADR 0003](../adr/0003-standards-governance-alignment.md)），
-元数据体裁、骨架与对账规则由 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 立法；上游参照 QED-Engine 根仓库标准
+元数据体裁、骨架与对账规则由 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md) 立法、
+[ADR 0017](../adr/0017-database-design-eight-chapter-skeleton.md) 改为按体裁分治；上游参照 QED-Engine 根仓库标准
 关联测试：`tests/contract/test_document_structure.py`、`tests/contract/test_standard_governance.py`、
 `tests/contract/test_fixed_document_form.py`、`tests/contract/test_markdown_links.py`、`tests/contract/test_code_document_mapping.py`
 
@@ -156,14 +157,21 @@ flowchart LR
 
 ### 固定文档骨架与可对账契约
 
-- **四段骨架**：`architecture/` 的契约正文固定为 `目的与边界 / 当前契约 / 失败与兼容语义 /
-  验证与追溯`，H2 顺序固定、白名单穷举，缺段或多段即守护转红；`design/` 三篇用六段骨架，
+- **骨架按体裁分治**（ADR 0017）：`architecture/` 有两种 H2 白名单，顺序固定、穷举校验，缺段或多段
+  即守护转红——**四段体**（默认，`overview.md`／`api.md`／`code-map.md`）`目的与边界 / 当前契约 /
+  失败与兼容语义 / 验证与追溯`；**八章编号体**（唯一适用篇 `database-design.md`，与根仓库总纲按章对读）
+  `一、前言 / 二、遵循的规则 / 三、本项目表总览 / 四、整体架构（本项目所需部分） / 五、详细设计 /
+  六、与 QED-Engine 的交互与同步契约 / 七、变更与运维 / 八、守护与验证`。`design/` 三篇用六段骨架，
   守则段统一名「确定规范」（见[设计索引](../design/index.md)）。
 - **正文去日期化**：固定文档的**契约正文段**（除末段追溯段以外的全部段落）不得出现任务编号
   （`REQ-`/`PLAN-`/`ARCH-`/`DEFECT-`）与具体日期。来源与判例只写在末段追溯段
-  （`architecture/` 的 `## 验证与追溯`、`design/` 的 `## 追溯`），那里允许 Accepted ADR、在地条文编号
+  （四段体＝`architecture/` 的 `## 验证与追溯`、八章体＝`database-design.md` 的 `## 八、守护与验证`、
+  `design/` 的 `## 追溯`），那里允许 Accepted ADR、在地条文编号
   （`PP-n`/`PM-n`/`MI-n`）与「来源：PLAN-0xx（已归档）」式的归档壳链接；但追溯段也不得把条文编号
   指向已归档壳。日期化过程的事实源是 `trackers/completed.md` 与承载计划，不是固定文档头部或正文。
+- **可对账锚点与章号解耦**：被守护解析的小节标题（`### <table> 列清单`、`#### METHOD /path`、
+  `### 端点总表`）不因改章体而改名或降级；改章体只搬移 H2 归属，且**不得增删事实**——条文、判据、
+  代价、例外、列清单逐条零丢失，以搬运前后的表行首格与反引号 token 集合比对作零丢失证据。
 - **契约表必须可对账**：`architecture/api.md` 每个端点一节、节标题固定为 `#### METHOD /path`
   （四段骨架占 H2、接口分类占 H3）；管理面端点同形但单独成节、不进公共契约总表；
   `architecture/database-design.md` 每张表一张列清单表。守护以**运行态真源**（FastAPI `app.routes`、

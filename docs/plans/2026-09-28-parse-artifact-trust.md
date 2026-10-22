@@ -2,15 +2,23 @@
 
 状态：In Progress
 任务类型：B
-最后更新：2026-10-01
-关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0007](../adr/0007-parse-status-semantics.md)（`completed` 与激活同一判据——P2 的 DB 单口径必须与之对齐）、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)（**就绪与激活判据的 DB 单源**，取代 ADR 0007 决定 1 的「产物在位」子句；S3/W5 的立法依据）、[ADR 0009](../adr/0009-data-root-must-be-explicit.md)（数据根 fail-closed，W6 残骸清点只读不自动创建）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型版本探针归 8900 侧能力，P1 只消费 `/health` 读数）
+最后更新：2026-10-22
+关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0007](../adr/0007-parse-status-semantics.md)（`completed` 与激活同一判据——P2 的 DB 单口径必须与之对齐）、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)（**就绪与激活判据的 DB 单源**，取代 ADR 0007 决定 1 的「产物在位」子句；S3/W5 的立法依据）、[ADR 0009](../adr/0009-data-root-must-be-explicit.md)（数据根 fail-closed，W6 残骸清点只读不自动创建）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型版本探针归 8900 侧能力，P1 只消费 `/health` 读数）、[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（**承载随步**：`af_parse_jobs` 折叠为 `af_operations` 的 `op_kind='parse'` 事件行，本壳语义与判据一字未改）
 关联设计：[parsing-pipeline.md](../design/parsing-pipeline.md)（blocks 归一与分块规则）、[parsing-management.md](../design/parsing-management.md)（af_* 表族与版本生命周期）、[database-design.md](../architecture/database-design.md)、[api.md](../architecture/api.md)
-关联 Tracker：docs/trackers/todo.md（PLAN-019 镜像行；承载 ARCH-022，自 PLAN-009 转入）
+关联 Tracker：docs/trackers/todo.md（PLAN-019 镜像行；承载 ARCH-022，自 PLAN-009 转入；入站请求 REQ-123 同壳承接，见「承载 REQ-123」节）
 归档判定：Retain（含 P 系列契约草案与逐条实施判据，关闭时按当时里程碑归档）
 
 > **登记沿革**：本壳承接 PLAN-009「ARCH-022 · 解析面优化（P 系列）」的 P1/P2/P3 三条（P4 暂缓、
 > P5 无动作不入本壳）。2026-09-28 用户裁决立项实施，并对三条原口径给出**四项改判**（见下），
 > 本壳是当前口径的唯一事实源，PLAN-009 壳的 P 系列表只保留来源指向。
+>
+> **承载随步（2026-10-22，[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)／PLAN-024 W7）**：
+> 本文出现的 `af_parse_jobs`（含其 `parser_signature`／`failed_pages` 列与「终态」口径）已由
+> `af_operations` 的 `op_kind='parse'`、`lifecycle='event'` 行逐列承接，`started_at`／`finished_at`
+> 折进 `progress` 的同名键；`parser_signature` 是 `af_operations` 的实体列，语义与哨兵 `''` 一字未改。
+> **本壳的判据（S1~S6、C 系列、R 系列）全部按原语义继续有效**，只是承载表名换了。迁移链已随档 B
+> 重置为唯一 base `20261022_0001`，本文的 `20260926_0002`／`20260928_0001` 等 revision 号属当时
+> 的执行记录，不再可执行（现库内 `alembic_version` 读数只以 `project-status.md` 为唯一登记处）。
 
 ## 用户裁决（2026-09-28，本壳口径的上界）
 
@@ -240,6 +248,8 @@ R4 的程序约束在此了结：签名是否含模型版本，**以实际回文
 | W7 | 过时清点（裁决 ①，作用域已裁 R1；删除时机 Q2＝沿用 REQ-097 判例、执行面 Q7＝扩 `admin/purge` dry-run）：只读清点——正本配对唯一性、孤儿任务行、孤儿版本目录、`.tmp-`/`.old-` 三式残骸、**页图物理保留例外与硬链接自证**；清理执行顺序与安全边界成文（先磁盘后库、重跑幂等判例沿用 PLAN-010）；**执行另批 D 类批准** | W2/W6 | 待开始 |
 | W8 | 文档晋升：`api.md`（C2/C3 小节与总表，随挂载同批；C4 随 PLAN-018）、`database-design.md` 列清单、`parsing-pipeline/management` 口径、`project-status` 刷新；**同批核对**（2026-10-01 复核：原更正对象「业务库升迁移属窗口前置」在活文档已无载体——ARCH-011 承载节 2026-09-30 关闭时已记项①执行、`history/` 冻结面按规则不追改 ⇒ 本项从「更正」降为「核对」：W8 只确认活文档不再把业务库迁移写成窗口前置） | W3~W7 | 待开始 |
 | W9 | 门禁与真机：默认门禁全绿 + `QED_TEST_MYSQL=1` 迁移往返 + 变异复验（撤签名门 ⇒ 对应用例转红；撤确认门用例归 PLAN-018）；真机面按前置 6 另批 D 类窗口（原 ARCH-011 窗口 2026-09-30 已关闭，读数改挂本壳 W9） | W8 | 待开始 |
+| W10 | REQ-123 R1：重新摄取路径书级结局复位口径定档并实施（含回归用例） | W2 | 待开始（2026-10-17 移交入壳） |
+| W11 | REQ-123 R2：`af_books` 三列跨库分叉只读对账 + 归一口径入 `database-design.md` | W5 | 待开始（2026-10-17 移交入壳） |
 
 ## W2 落地结论与偏差登记（2026-10-01）
 
@@ -285,6 +295,43 @@ R4 的程序约束在此了结：签名是否含模型版本，**以实际回文
 - W4：只读重跑清单端点与 `reason` 文案（`signature_unknown` 代际分列、Q11 的 `model_drift_suspect` 报警）。
 - W6：策略拆域若改动 `_TYPE_MAP`/`_OUTPUT_FLAGS` 的位置或形状，签名随之翻转属**预期代际变化**；但改
   `block_policy_payload` 的键集合时，白名单断言与 `database-design.md` 任务表语义段须同批跟进。
+
+### 业务库 `qed` D 类窗口执行（2026-10-03，与 PLAN-018 同窗）
+
+- 本壳 W2 的 `20260928_0001` 与 PLAN-018 的 `20260926_0002` 在同一窗口落到业务库：
+  `alembic upgrade head` 后 `qed` 的 `alembic_version = 20260928_0001 (head)`。
+  落地前 8902 **起不来**——启动期 `find_in_flight` 的 SELECT 已引用 `parser_signature`，
+  旧库报 1054 并 `Application startup failed. Exiting.`（判据直证：`logs/qed-axiom-serve.log:9823-9830`）。
+- 签名回填如契约：存量 6 行 `parser_signature` 全为哨兵 `''`＝未知代际；
+  ⇒ W4 的只读重跑清单上线首日会把这 6 行全判 `need_reparse(reason=signature_unknown)`，
+  且 `''` **不作为过时判据**（C1 边界三条）。这不是产物过时，登记以免误读。
+- 备份与回滚同 PLAN-018 节：`tmp/backup_qed_af_family_20261003.sql`；
+  `alembic downgrade 20260926_0002` 即删列还原，任务行与索引不动。
+
+## 承载 REQ-123
+
+**请求接收（QED-Engine 根仓库 REQ-123，2026-10-17 用户评审放行移交）**——本壳以 W10/W11 两项承接，
+不新立专属计划（[ADR 0011](../adr/0011-ledger-one-row-per-task.md) 决定 2：共享既有计划 ⇒ 登记 `REQ-*`
+支线行引用同一承载）。请求方只读消费面为根仓库 8900/8903，**无新增端点、无端口／协议／`.env` 变量变化**。
+
+### 请求项与实读证据（快照时刻 2026-10-17，由根侧只读探针采集）
+
+| ID | 请求 | 证据锚点（实读，非推断） | 兼容性 |
+| --- | --- | --- | --- |
+| R1 | 重新摄取（ingest 再入口）在复位生效指针与进度时，`last_parse_result` 保留上一版本的旧结局 ⇒ 库里出现「结局 `completed`、`active_job_id` 为空、该书页行成百上千」的自相矛盾行。请给出该列在此路径的复位口径（随指针一并归零，或引入表达「版本已复位」的取值）并补回归用例 | `src/axiom_flow/api/main.py:372-374`（`set_active_job(book_id, None)` → `update_parse(parse_status=PENDING, pages_done=0)` → `PageRepository(session).reset_legacy(book_id)`，该调用**不传** `last_parse_result`）；`src/axiom_flow/db/repositories.py:231-244`（`update_parse` 内 `if last_parse_result is not None:` 即 None 保留原值）；库内实读：`qed` 与 `qed_test` 的 `mathanalysis-b12` 两行均为 `parse_status=pending`／`pages_done=3`／`last_parse_result=completed`／`active_job_id=NULL`，而 `af_pages` 中该书各有 486／540 页行；本方 [ADR 0007](../adr/0007-parse-status-semantics.md) 决定 3 自述「`active_job_id` 仍是『哪一版可读』唯一事实源」 | 纯语义修正，取值枚举可不扩；根侧只读消费遇未知取值按 ADR 0007 决定 7 保守处理，不破既有契约。合规范写法已有先例可对齐：`repositories.py:246` `mark_parse_idle` |
+| R2 | 对 `af_books` 三列（`pages_done`／`last_parse_result`／`active_job_id`）与 `af_pages`／`af_parse_jobs` 页行事实做一次**只读**对账并给归一口径：同一书目行在 `qed` 与 `qed_test` 给出不同生效指针／进度／结局时以何库为准、如何在不重跑解析的前提下收敛；口径写入其 `af_*` 事实源文档 | 库内实读（同快照）：`mathanalysis-b05` 在 `qed` 为 `active_job_id=012d637df1eb`／`pages_done=317`，在 `qed_test` 为 `active_job_id=NULL`／`pages_done=317`，而该 job 在两库 `af_parse_jobs` 都是 `completed`／317；成因＝8902 实例先后按各自 `.env` 连过两个库（根侧已另立 `DEFECT-015` 修「8900 托管时不注入库名」这一上游缺口）；另 `qed_test.b05.parse_status` 曾越枚举为 `completed`，本窗口内已由启动期归一（ADR 0007 决定 4）自动收敛为 `pending`，故不列请求项，仅作归一机制有效的实证 | 只读清点为主，改写仅及 `af_books` 三列（所有权在本方）；不涉及 DDL、不改列名与端点字段 |
+
+### 承接判据（对应 todo `REQ-123` 行「成功标准」列）
+
+- R1＝复位路径三列自洽：重新摄取后不出现「`last_parse_result=completed` ∧ `active_job_id` 为空」的组合，且有回归用例锁定。
+- R2＝两库分叉行有只读对账结果与明文归一口径，且口径已入 `af_*` 事实源文档。
+- 前置：单实例部署前提成立（ADR 0007 决定 4）；若多实例并存，R2 归一口径须先改为心跳＋后台回收，否则启动期归一会误杀他实例的活任务。
+
+### 回执口径
+
+按[跨项目协作流程](../standards/cross-project-collaboration.md)，回执正文写本节之下（落地／推后／拒绝三选一，
+逐条对 R1/R2），由根仓库自读登记并据此关闭其 `REQ-123` 行；本仓库不写根仓库文件。
+
 
 ## 验证与验收
 

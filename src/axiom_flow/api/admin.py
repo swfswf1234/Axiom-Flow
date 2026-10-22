@@ -23,21 +23,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from axiom_flow.config import Settings
-from axiom_flow.db.models import (
-    AF_TABLES,
-    AfBlockEdit,
-    AfBook,
-    AfPage,
-    AfPageRegion,
-    AfParseJob,
-)
-from axiom_flow.db.repositories import (
-    BookRepository,
-    EditRepository,
-    PageRepository,
-    ParseJobRepository,
-    RegionRepository,
-)
+from axiom_flow.db.models import AF_TABLES, AfBook, AfKp, AfOperation, AfPage
+from axiom_flow.db.repositories import BookRepository, KpRepository, OperationRepository, PageRepository
 from axiom_flow.ingest import warn_transient_residue
 from axiom_flow.schemas import AdminPurgeCounts, AdminPurgeIn, AdminPurgeOut, AdminPurgeScope
 
@@ -46,13 +33,13 @@ log = logging.getLogger(__name__)
 PURGE_URL = "/api/v1/admin/purge"
 PURGE_CONFIRM = "PURGE"
 ADMIN_TOKEN_HEADER = "X-QED-Admin-Token"
-# 「在飞」的唯一判据 = ADR 0007 的两个活动态；终态（含 interrupted/partial）正是待清理对象。
-ACTIVE_JOB_STATUSES = ("queued", "running")
+# 「在飞」的唯一判据在 `db.repositories.ACTIVE_JOB_STATUSES`，本文件只经 `count_active` 用它。
+# 这里再写一遍元组＝把 ADR 0007 的状态口径复制成第二个事实源。
 # 书目录最深 = `parsed/<domain>/<course>/<book>`；更深的层属于版本目录，不遍历。
 _BOOK_DIR_MAX_DEPTH = 3
 # 删除面覆盖的 ORM 模型元组：判据守护要求其集合 ≡ `AF_TABLES`（加表只改这一处 + 仓储分支）。
 # 标识符刻意不带张数——带张数就是把「表族有几张」写进名字，加一张表即全仓改名。
-_AF_TABLE_MODELS = (AfBook, AfParseJob, AfPage, AfBlockEdit, AfPageRegion)
+_AF_TABLE_MODELS = (AfBook, AfOperation, AfPage, AfKp)
 #: 行数计数字段名 = 表名（唯一口径来自 `AF_TABLES`，不在本文件逐字写死表名）。
 _ROW_COUNT_FIELDS = tuple(tbl.name for tbl in AF_TABLES)
 
@@ -145,20 +132,18 @@ def _merge_counts(target: AdminPurgeCounts, add: AdminPurgeCounts) -> None:
 def _delete_rows_for_book(session: Session, book_id: str) -> AdminPurgeCounts:
     counts = AdminPurgeCounts()
     counts.af_books = BookRepository(session).delete_for_book(book_id)
-    counts.af_parse_jobs = ParseJobRepository(session).delete_for_book(book_id)
+    counts.af_operations = OperationRepository(session).delete_for_book(book_id)
     counts.af_pages = PageRepository(session).delete_for_book(book_id)
-    counts.af_block_edits = EditRepository(session).delete_for_book(book_id)
-    counts.af_page_regions = RegionRepository(session).delete_for_book(book_id)
+    counts.af_kp = KpRepository(session).delete_for_book(book_id)
     return counts
 
 
 def _delete_all_rows(session: Session) -> AdminPurgeCounts:
     counts = AdminPurgeCounts()
     counts.af_books = BookRepository(session).delete_all()
-    counts.af_parse_jobs = ParseJobRepository(session).delete_all()
+    counts.af_operations = OperationRepository(session).delete_all()
     counts.af_pages = PageRepository(session).delete_all()
-    counts.af_block_edits = EditRepository(session).delete_all()
-    counts.af_page_regions = RegionRepository(session).delete_all()
+    counts.af_kp = KpRepository(session).delete_all()
     return counts
 
 
@@ -289,7 +274,7 @@ def build_router(*, settings: Settings, session_factory: sessionmaker[Session]) 
                 session=session, data_root=Path(settings.data_dir), scope=payload.scope
             )
             if not payload.dry_run:
-                in_flight = ParseJobRepository(session).count_active(
+                in_flight = OperationRepository(session).count_active(
                     None if use_all else book_ids
                 )
                 if in_flight:

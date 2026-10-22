@@ -1,4 +1,4 @@
-"""解析签名与重跑判定：一版产物「用哪一代解析参数跑出来的」由 `af_parse_jobs` 单源自证。
+"""解析签名与重跑判定：一版产物「用哪一代解析参数跑出来的」由 `af_operations` parse 行的 `parser_signature` 单源自证。
 
 设计事实源：承载计划 PLAN-019 契约草案 C1（输入集已冻结）与
 [ADR 0015](../../../docs/adr/0015-db-single-source-for-readiness.md)（判定只看库内读数，不看磁盘）。
@@ -92,7 +92,7 @@ def signature_canonical(inputs: SignatureInputs) -> str:
 
 
 def compute_signature(inputs: SignatureInputs) -> str:
-    """SHA-256(键按字典序的 JSON 规范化串)，落 `af_parse_jobs.parser_signature`。"""
+    """SHA-256(键按字典序的 JSON 规范化串)，落 `af_operations` parse 行的 `parser_signature`。"""
     return _sha256_hex(signature_canonical(inputs))
 
 
@@ -100,7 +100,7 @@ def compute_signature(inputs: SignatureInputs) -> str:
 class VersionIdentity:
     """判定所需的最小版本读数：任务号 + 源指纹 + 签名。
 
-    由调用方从 `af_parse_jobs` 行投影而来；仓储返回的 ORM 行也能直接喂进来（同名列）。
+    由调用方从 parse 事件行投影而来；仓储返回的 ORM 行也能直接喂进来（同名列）。
     """
 
     job_id: str

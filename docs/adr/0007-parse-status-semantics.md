@@ -1,8 +1,8 @@
 # ADR 0007：解析状态语义三分（结局三态、进度/结局分列、启动期归一）
 
 状态：Accepted
-最后更新：2026-10-01
-关联代码：`src/axiom_flow/schemas.py`（`JobStatus`/`ParseStatus`）、`src/axiom_flow/orchestrator/pipeline.py`（终态判定）、`src/axiom_flow/orchestrator/jobs.py`（执行器）、`src/axiom_flow/db/models.py`（af_books/af_parse_jobs）、`src/axiom_flow/api/main.py`（lifespan）
+最后更新：2026-10-22
+关联代码：`src/axiom_flow/schemas.py`（`JobStatus`/`ParseStatus`）、`src/axiom_flow/orchestrator/pipeline.py`（终态判定）、`src/axiom_flow/orchestrator/jobs.py`（执行器）、`src/axiom_flow/db/models.py`（`AfBook` 的进度/结局两列与 `AfOperation` 的 parse 行状态列）、`src/axiom_flow/api/main.py`（lifespan）
 关联测试：`tests/unit/test_schemas.py`、`tests/unit/test_orchestrator.py`、`tests/unit/test_db_migrations.py`、`tests/contract/test_api_v1_contract.py`、`tests/integration/test_parse_persistence.py`
 
 ## 背景
@@ -33,7 +33,9 @@ DEFECT-006/007 的取证（[PLAN-003](../history/plans/2026-09/2026-09-20-parse-
    - `failed` ⟺ 0 页 `parsed`，或引擎异常导致执行提前终止；
    - `interrupted` ⟺ 终态由启动期归一写入（见决定 4），管线自身不写。
    `partial` 不激活版本（沿用 V3：目标页齐备才交给生效指针），产物保留在 `versions/<job_id>/` 供排查。
-2. **失败页结构化**：`af_parse_jobs` 新增 `failed_pages`（JSON 整型数组，不截断），页级失败原因继续
+2. **失败页结构化**：`af_parse_jobs` 新增 `failed_pages`（JSON 整型数组，不截断；该表已由
+   [ADR 0016](0016-af-family-rebuild-into-four-tables.md) 折叠为 `af_operations` 的 parse 事件行，
+   **列同名平移、写时机不变**），页级失败原因继续
    逐页写 `af_pages.error`；`progress` 增 `failed` 计数。`error`/`progress.error` 字符串只作为人类
    可读摘要保留，不再是失败清单的唯一载体。
 3. **书级进度与结局分列**：`af_books.parse_status` 只表达**进度**，取值收缩为 `pending`/`parsing`；

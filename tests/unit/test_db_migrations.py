@@ -1,46 +1,152 @@
-"""Alembic 迁移单测：表族建表 + 解析版本布局与状态语义迁移可升级/降级（SQLite 临时库，不依赖 MySQL）。
-
-守护面：af_* 表族 DDL 与 database-design.md 一致、迁移可重复执行、降级干净；
-`20260920_0002`（PLAN-004）额外守护版本作用域：`af_pages` 主键与 `af_block_edits` 唯一键纳入
-`job_id`、生效指针单列、存量 backfill（一书一 job 回填该 job，否则 `legacy` 哨兵）；
-`20260921_0001`（PLAN-006 / ADR 0007）守护进度与结局分列：书目新增 `last_parse_result`、
-任务新增 `failed_pages`，存量只平移不改写历史 job 状态；
-`20260926_0001`（PLAN-017 / REQ-097）守护 `af_books.ingested_at` 纯加列：存量不回填（NULL =
-「本轮规则之前 ingest」），降级干净删列；
-`20260926_0002`（PLAN-018 W2 / ADR 0010）守护 `af_page_regions`：页级三列主键、**无
-`job_id`**、显式索引名，降级只带走该表且不动其余 `af_*` 表；
-`20260928_0001`（PLAN-019 W2）守护 `af_parse_jobs.parser_signature` 纯加列：存量回填哨兵 `''`
-（未知代际），不回算伪造签名，降级干净删列。
+"""
+模块职责：守护 `af_*` 表族的**单一 base 迁移链**——档 B 整族重建后链上只有一条
+`20261022_0001`（`down_revision = None`），一次建齐四表；升降级可重复且形状与
+`database-design.md` 目标列清单逐列一致。
+设计关联（DesignRef）：docs/architecture/database-design.md（目标形状四表 + 整族重建的档位与迁移链）
+实现状态：Current
+关联测试：tests/unit/test_db_table_family_governance.py（表集合派生面）、
+tests/integration/test_parse_persistence.py（新 base 在真 MySQL 上从 base 建到 head）
+守护面：迁移链张数、四表列集合、主键/唯一键/索引名、DDL 默认值
+失效后果：旧链残留 ⇒ 测试库夹具每次先建旧五表再删；列集合漂移 ⇒ 权威文档与 DDL 各说一套
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
-
-from axiom_flow.db.models import AF_TABLES as _AF_TABLE_REGISTRY
+from sqlalchemy import create_engine, inspect
 
 ROOT = Path(__file__).resolve().parents[2]
-#: 表名集合从 ORM 派生，不再本地硬编码（PLAN-020 S2：加表只改 `AF_TABLES`，升降级往返自动覆盖新表）。
-AF_TABLES = {table.name for table in _AF_TABLE_REGISTRY}
-REVISION_0001 = "20260917_0001"
-REVISION_0002 = "20260920_0002"
-LEGACY_JOB_ID = "legacy"
+BASE_REVISION = "20261022_0001"
+
+#: 四表列集合（正本＝database-design.md 目标列清单；`created_at`/`updated_at` 各算一列）。
+EXPECTED_COLUMNS: dict[str, set[str]] = {
+    "af_books": {
+        "book_id",
+        "domain_id",
+        "course_id",
+        "course_name",
+        "knowledge_id",
+        "title",
+        "part",
+        "display_title",
+        "authors",
+        "file_path",
+        "page_count",
+        "sha256",
+        "ingest_status",
+        "ingested_at",
+        "parse_status",
+        "last_parse_result",
+        "pages_done",
+        "active_job_id",
+        "notes",
+        "meta",
+        "synced_at",
+        "updated_at",
+    },
+    "af_operations": {
+        "op_id",
+        "book_id",
+        "job_id",
+        "op_kind",
+        "lifecycle",
+        "actor",
+        "page_no",
+        "block_index",
+        "target_id",
+        "intent_key",
+        "engine",
+        "pages",
+        "page_count",
+        "source_sha256",
+        "parser_signature",
+        "embedding_signature",
+        "render_profile",
+        "status",
+        "progress",
+        "failed_pages",
+        "error",
+        "payload",
+        "result",
+        "note",
+        "meta",
+        "created_at",
+        "updated_at",
+    },
+    "af_pages": {
+        "book_id",
+        "job_id",
+        "page_no",
+        "status",
+        "source",
+        "quality",
+        "error",
+        "artifacts",
+        "confirm_state",
+        "section_kind",
+        "meta",
+        "parsed_at",
+    },
+    "af_kp": {
+        "node_id",
+        "book_id",
+        "job_id",
+        "node_kind",
+        "parent_id",
+        "depth",
+        "order_hint",
+        "name",
+        "norm_key",
+        "role",
+        "type",
+        "summary",
+        "links",
+        "anchors",
+        "narrative_ref",
+        "gen_status",
+        "confirmed",
+        "gen_batch",
+        "model_ref",
+        "rev",
+        "meta",
+        "created_at",
+        "updated_at",
+    },
+}
+
+EXPECTED_INDEXES: dict[str, dict[str, list[str]]] = {
+    "af_books": {
+        "ix_af_books_course": ["course_id"],
+        "ix_af_books_status": ["parse_status"],
+    },
+    "af_operations": {
+        "ix_af_operations_book": ["book_id", "op_kind", "created_at"],
+        "ix_af_operations_version": ["job_id", "page_no"],
+        "ix_af_operations_sig": ["book_id", "parser_signature", "status"],
+    },
+    "af_pages": {},
+    "af_kp": {
+        "ix_af_kp_book": ["book_id", "node_kind", "gen_status"],
+        "ix_af_kp_parent": ["parent_id"],
+        "ix_af_kp_batch": ["gen_batch"],
+        "ix_af_kp_norm": ["book_id", "node_kind", "norm_key"],
+    },
+}
+
+#: 被吸收的三张旧表：档 B 之后任何路径都不得再建出它们。
+RETIRED_TABLES = ("af_parse_jobs", "af_block_edits", "af_page_regions")
 
 
-def _head_revision() -> str:
-    """迁移脚本目录的当前 head：`upgrade head` 之后库必须停在这里。
-
-    不写死序号——写死会在每次加迁移时假红，而「夹具漏跑最新迁移」才是它该抓的漂移（判例同
-    PLAN-018 W2 集成层）。
-    """
-    script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    return str(script.get_current_head())
+@pytest.fixture()
+def migrated_url(tmp_path: Path) -> str:
+    config, url = _config(tmp_path)
+    command.upgrade(config, "head")
+    return url
 
 
 def _config(tmp_path: Path) -> tuple[Config, str]:
@@ -51,538 +157,175 @@ def _config(tmp_path: Path) -> tuple[Config, str]:
     return config, url
 
 
-def test_upgrade_creates_four_af_tables(tmp_path):
-    config, url = _config(tmp_path)
-
-    command.upgrade(config, "head")
-
-    tables = set(inspect(create_engine(url)).get_table_names())
-    assert AF_TABLES <= tables
-    assert "alembic_version" in tables
+def _script() -> ScriptDirectory:
+    return ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
 
 
-def test_downgrade_drops_all_af_tables(tmp_path):
+def _columns(url: str, table: str) -> dict[str, dict]:
+    return {c["name"]: c for c in inspect(create_engine(url)).get_columns(table)}
+
+
+def _indexes(url: str, table: str) -> dict[str, list[str]]:
+    return {i["name"]: list(i["column_names"]) for i in inspect(create_engine(url)).get_indexes(table)}
+
+
+# ---------- 迁移链张数（档 B 重置的唯一形状） ----------
+
+
+def test_chain_is_a_single_base_revision():
+    """链上只有一条迁移且它就是 base：旧链每条都在为不存在的形状跑 DDL，留着即漂移源。"""
+    script = _script()
+    revisions = list(script.walk_revisions())
+
+    assert [rev.revision for rev in revisions] == [BASE_REVISION]
+    assert revisions[0].down_revision is None, "重置后的 base 不得再指向任何旧序号"
+
+
+def test_version_files_are_exactly_the_base():
+    """目录里不得残留旧链文件（`__pycache__` 之外只有 base 一个 .py）。"""
+    versions = ROOT / "src/axiom_flow/migrations/versions"
+    files = sorted(p.name for p in versions.glob("*.py"))
+
+    assert files == [f"{BASE_REVISION}_af_family_rebuild.py"], files
+
+
+def test_upgrade_creates_exactly_the_four_tables(migrated_url: str):
+    tables = {t for t in inspect(create_engine(migrated_url)).get_table_names() if t.startswith("af_")}
+
+    assert tables == set(EXPECTED_COLUMNS)
+    assert "alembic_version" in inspect(create_engine(migrated_url)).get_table_names()
+
+
+def test_retired_tables_are_never_recreated(migrated_url: str):
+    """被吸收的三张表不得再由任何迁移建出（吸收结论的可执行半边）。"""
+    tables = set(inspect(create_engine(migrated_url)).get_table_names())
+
+    assert not (tables & set(RETIRED_TABLES)), sorted(tables & set(RETIRED_TABLES))
+
+
+def test_downgrade_drops_every_af_table(migrated_url: str, tmp_path: Path):
     config, url = _config(tmp_path)
     command.upgrade(config, "head")
 
     command.downgrade(config, "base")
 
-    tables = set(inspect(create_engine(url)).get_table_names())
-    assert not (AF_TABLES & tables)
+    assert not (set(EXPECTED_COLUMNS) & set(inspect(create_engine(url)).get_table_names()))
 
 
-def test_upgrade_is_repeatable_after_downgrade(tmp_path):
+def test_upgrade_is_repeatable_after_downgrade(tmp_path: Path):
+    """升→降→升可重复：真机回滚演练的最低门槛，也是集成夹具每轮从 base 重建的前提。"""
     config, url = _config(tmp_path)
     command.upgrade(config, "head")
     command.downgrade(config, "base")
 
     command.upgrade(config, "head")
 
-    assert AF_TABLES <= set(inspect(create_engine(url)).get_table_names())
-
-
-# ---------- 20260920_0002：解析产物按版本划分（PLAN-004 / REQ-080） ----------
-
-
-def _seed_pre_version_rows(url: str, *, jobs: list[tuple[str, str]]) -> None:
-    """在 0001 形态的库上写存量行：一本书 + `jobs` 个任务 + 全书 2 页 + 1 条块编辑。
-
-    直连 Core 写（不经 ORM 模型）：迁移的 backfill 判据必须对「旧结构里的真实存量」成立，
-    而不是对新模型写入的结果成立。
-    """
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO af_books (book_id, domain_id, course_id, title, authors, file_path,"
-                " sha256, ingest_status, parse_status, pages_done, synced_at, updated_at)"
-                " VALUES ('b01','','','线性代数','[]','raw/b01.pdf','','ingested','completed',2,"
-                " '2026-09-20 00:00:00','2026-09-20 00:00:00')"
-            )
-        )
-        for job_id, status in jobs:
-            conn.execute(
-                text(
-                    "INSERT INTO af_parse_jobs (job_id, book_id, pages, engine, status, progress, error,"
-                    " created_at) VALUES (:job_id,'b01',NULL,'mineru',:status,'{}','','2026-09-20 00:00:00')"
-                ),
-                {"job_id": job_id, "status": status},
-            )
-        for page_no in (1, 2):
-            conn.execute(
-                text(
-                    "INSERT INTO af_pages (book_id, page_no, status, source, quality, error, parsed_at)"
-                    " VALUES ('b01',:page_no,'parsed','mineru',NULL,'','2026-09-20 00:00:00')"
-                ),
-                {"page_no": page_no},
-            )
-        conn.execute(
-            text(
-                "INSERT INTO af_block_edits (edit_id, book_id, page_no, block_index, block_type, verdict,"
-                " note, corrected_text, corrected_bbox, edited_at, updated_at)"
-                " VALUES ('ed_old001','b01',1,0,'paragraph','ok','改一处','正文',NULL,"
-                " '2026-09-20 00:00:00','2026-09-20 00:00:00')"
-            )
-        )
-    engine.dispose()
-
-
-def _job_ids_for_pages(url: str) -> list[str | None]:
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        rows = [row[0] for row in conn.execute(text("SELECT job_id FROM af_pages ORDER BY page_no"))]
-    engine.dispose()
-    return rows
-
-
-def test_upgrade_0002_adds_version_pointer_and_scope_columns(tmp_path):
-    """版本布局：`af_books` 单列生效指针 + 页/编辑表按 `job_id` 作用域。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0001)
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    book_columns = {column["name"] for column in inspector.get_columns("af_books")}
-    job_columns = {column["name"] for column in inspector.get_columns("af_parse_jobs")}
-    assert "active_job_id" in book_columns, "生效指针必须落在 af_books 单列（V2）"
-    assert {"source_sha256", "page_count"} <= job_columns, "版本与源快照自证对应（V7）"
-    assert set(inspector.get_pk_constraint("af_pages")["constrained_columns"]) == {
-        "book_id",
-        "job_id",
-        "page_no",
-    }, "同一页在不同版本可有独立状态：主键必须纳入 job_id"
-    unique_keys = [set(item["column_names"]) for item in inspector.get_unique_constraints("af_block_edits")]
-    assert {"book_id", "job_id", "page_no", "block_index"} in unique_keys, (
-        f"编辑键必须绑定其所属版本，实际唯一键：{unique_keys}"
-    )
-
-
-def test_downgrade_0002_restores_pre_version_shape(tmp_path):
-    """降级干净：删新增列、主键与唯一键回到 0001 形态（不残留 job_id）。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, "head")
-
-    command.downgrade(config, REVISION_0001)
-
-    inspector = inspect(create_engine(url))
-    assert "active_job_id" not in {column["name"] for column in inspector.get_columns("af_books")}
-    assert "job_id" not in {column["name"] for column in inspector.get_columns("af_pages")}
-    assert set(inspector.get_pk_constraint("af_pages")["constrained_columns"]) == {"book_id", "page_no"}
-    unique_keys = [set(item["column_names"]) for item in inspector.get_unique_constraints("af_block_edits")]
-    assert {"book_id", "page_no", "block_index"} in unique_keys
-
-
-def test_upgrade_0002_backfills_single_job_book_to_that_job(tmp_path):
-    """一书只有一个 job：存量页行/编辑行回填该 job（该书只有一个版本，作用域无歧义）。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0001)
-    _seed_pre_version_rows(url, jobs=[("j_single", "completed")])
-
-    command.upgrade(config, "head")
-
-    assert _job_ids_for_pages(url) == ["j_single", "j_single"]
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        edit_job = conn.execute(text("SELECT job_id FROM af_block_edits")).scalar_one()
-    engine.dispose()
-    assert edit_job == "j_single"
-
-
-def test_upgrade_0002_backfills_multi_job_book_to_legacy_sentinel(tmp_path):
-    """一书有多个历史 job：无法判定归属 → 回填 `legacy` 哨兵（根视图语义），不猜。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0001)
-    _seed_pre_version_rows(url, jobs=[("j_first", "completed"), ("j_second", "failed")])
-
-    command.upgrade(config, "head")
-
-    assert _job_ids_for_pages(url) == [LEGACY_JOB_ID, LEGACY_JOB_ID]
-
-
-def test_upgrade_0002_leaves_active_pointer_null_for_existing_books(tmp_path):
-    """存量不自动迁移：升级后 `active_job_id` 恒 NULL → 端点继续读根视图（旧产物不失明）。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0001)
-    _seed_pre_version_rows(url, jobs=[("j_single", "completed")])
-
-    command.upgrade(config, "head")
-
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        active = conn.execute(text("SELECT active_job_id FROM af_books")).scalar_one()
-    engine.dispose()
-    assert active is None
-
-
-def test_upgrade_0002_drops_dead_engine_default(tmp_path):
-    """PLAN-003「W7 发现 2」销账：写入路径恒显式传解析后的引擎名，DDL 的 `'mineru'` 是死兜底。
-
-    留着它等于在表里藏一个静默回落（ADR 0004 禁无自动兜底）；随本迁移一并删除，并证明
-    `af_parse_jobs` 重建后存量行与索引不丢。
-    """
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0001)
-    _seed_pre_version_rows(url, jobs=[("j_single", "completed")])
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    columns = {column["name"]: column for column in inspector.get_columns("af_parse_jobs")}
-    assert columns["engine"]["default"] is None, "引擎列不得保留死默认值"
-    assert "ix_af_parse_jobs_book" in {item["name"] for item in inspector.get_indexes("af_parse_jobs")}
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        rows = conn.execute(text("SELECT job_id, engine, status FROM af_parse_jobs")).all()
-    engine.dispose()
-    assert rows == [("j_single", "mineru", "completed")], "存量任务行必须原样保留"
-
-
-def test_upgrade_0002_is_repeatable_after_full_downgrade(tmp_path):
-    """升→降→升可重复（真机回滚演练的最低门槛）。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, "head")
-    command.downgrade(config, REVISION_0001)
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    assert "job_id" in {column["name"] for column in inspector.get_columns("af_pages")}
-
-
-# ---------- 20260921_0001：进度与结局分列（PLAN-006 / ADR 0007） ----------
-
-
-def _seed_pre_semantics_rows(url: str) -> None:
-    """在 0002 形态（当前 head 前）的库上写存量：三本书分别停在 `completed`/`failed`/`parsing`。
-
-    直连 Core 写而不经 ORM：回填判据必须对旧枚举的真实存量成立。历史 job 状态一并写入，
-    用于证明迁移**不改写**任务行（改写会让「活动态只有一个写入者」的不变式失效）。
-    """
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        for book_id, parse_status in (("b_done", "completed"), ("b_fail", "failed"), ("b_run", "parsing")):
-            conn.execute(
-                text(
-                    "INSERT INTO af_books (book_id, domain_id, course_id, title, authors, file_path,"
-                    " sha256, ingest_status, parse_status, pages_done, synced_at, updated_at)"
-                    " VALUES (:book_id,'','','书名','[]','raw/x.pdf','','ingested',:parse_status,3,"
-                    " '2026-09-21 00:00:00','2026-09-21 00:00:00')"
-                ),
-                {"book_id": book_id, "parse_status": parse_status},
-            )
-        for job_id, book_id, status in (("j_done", "b_done", "completed"), ("j_fail", "b_fail", "failed")):
-            conn.execute(
-                text(
-                    "INSERT INTO af_parse_jobs (job_id, book_id, pages, engine, status, progress, error,"
-                    " created_at) VALUES (:job_id,:book_id,NULL,'mineru',:status,'{}','',:created_at)"
-                ),
-                {"job_id": job_id, "book_id": book_id, "status": status, "created_at": "2026-09-21 00:00:00"},
-            )
-        conn.execute(
-            text(
-                "INSERT INTO af_parse_jobs (job_id, book_id, pages, engine, status, progress, error, created_at)"
-                " VALUES ('j_run','b_run',NULL,'mineru','running','{\"parsed\": 1, \"total\": 3}','',"
-                " '2026-09-21 00:00:00')"
-            )
-        )
-    engine.dispose()
-
-
-def _book_states(url: str) -> dict[str, tuple[str, str]]:
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text("SELECT book_id, parse_status, last_parse_result FROM af_books ORDER BY book_id")
-        ).all()
-    engine.dispose()
-    return {row[0]: (row[1], row[2]) for row in rows}
-
-
-def test_upgrade_0003_adds_result_and_failed_page_columns(tmp_path):
-    """ADR 0007 决定 1/2：结局与失败页各落一列，进度不再兼任结局。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0002)
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    assert "last_parse_result" in {column["name"] for column in inspector.get_columns("af_books")}
-    job_columns = {column["name"]: column for column in inspector.get_columns("af_parse_jobs")}
-    assert "failed_pages" in job_columns, "失败页必须有结构化列，不能只埋在 error 文本里"
-
-
-def test_upgrade_0003_splits_outcome_from_progress_without_touching_job_status(tmp_path):
-    """回填只做平移：旧 `parse_status` 的终态值搬进 `last_parse_result`，进度归 `pending`。
-
-    反向判据：历史 job 状态一字不改（迁移不是第二次写活动态的机会）。
-    """
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0002)
-    _seed_pre_semantics_rows(url)
-
-    command.upgrade(config, "head")
-
-    assert _book_states(url) == {
-        "b_done": ("pending", "completed"),
-        "b_fail": ("pending", "failed"),
-        "b_run": ("pending", ""),
-    }
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        jobs = conn.execute(text("SELECT job_id, status FROM af_parse_jobs ORDER BY job_id")).all()
-    engine.dispose()
-    assert jobs == [("j_done", "completed"), ("j_fail", "failed"), ("j_run", "running")], (
-        "迁移不得改写历史任务状态"
-    )
-
-
-def test_upgrade_0003_backfills_failed_pages_as_empty_array(tmp_path):
-    """存量任务没有失败页记录：回填 `[]` 而非留 NULL，读取面免于两种空值语义。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0002)
-    _seed_pre_semantics_rows(url)
-
-    command.upgrade(config, "head")
-
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        values = conn.execute(
-            text("SELECT failed_pages FROM af_parse_jobs ORDER BY job_id")
-        ).scalars().all()
-    engine.dispose()
-    assert [json.loads(v) if isinstance(v, str) else v for v in values] == [[], [], []]
+    assert set(EXPECTED_COLUMNS) <= set(inspect(create_engine(url)).get_table_names())
 
 
-def test_downgrade_0003_drops_semantics_columns(tmp_path):
-    """降级干净：两列消失，0002 形态可回到 head 再升一次。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, "head")
-
-    command.downgrade(config, REVISION_0002)
-
-    inspector = inspect(create_engine(url))
-    assert "last_parse_result" not in {column["name"] for column in inspector.get_columns("af_books")}
-    assert "failed_pages" not in {column["name"] for column in inspector.get_columns("af_parse_jobs")}
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    assert "last_parse_result" in {column["name"] for column in inspector.get_columns("af_books")}
-
-
-def test_upgrade_0003_keeps_rows_and_indexes_on_rebuild(tmp_path):
-    """SQLite 侧经重建表收敛 NOT NULL：存量行与索引不得在重建中丢失。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0002)
-    _seed_pre_semantics_rows(url)
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    assert "ix_af_parse_jobs_book" in {item["name"] for item in inspector.get_indexes("af_parse_jobs")}
-    columns = {column["name"]: column for column in inspector.get_columns("af_parse_jobs")}
-    assert columns["failed_pages"]["nullable"] is False
-
-
-# ---------- 20260926_0001：ingest 元数据补列（PLAN-017 / REQ-097） ----------
-
-REVISION_0003 = "20260921_0001"
-
-
-def test_upgrade_0004_adds_ingested_at_without_backfill(tmp_path):
-    """纯加列且**不回填**：存量行 `NULL` 如实表示「本列规则确立之前 ingest」，不猜值。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_0003)
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        for book_id in ("b_a", "b_b", "b_c"):
-            conn.execute(
-                text(
-                    "INSERT INTO af_books (book_id, domain_id, course_id, title, authors, file_path,"
-                    " sha256, ingest_status, parse_status, last_parse_result, pages_done,"
-                    " synced_at, updated_at)"
-                    " VALUES (:book_id,'','','书名','[]','raw/x.pdf','','ingested','pending','',0,"
-                    " '2026-09-26 00:00:00','2026-09-26 00:00:00')"
-                ),
-                {"book_id": book_id},
-            )
-    engine.dispose()
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    columns = {column["name"]: column for column in inspector.get_columns("af_books")}
-    assert "ingested_at" in columns
-    assert columns["ingested_at"]["nullable"] is True, "从未 ingest 必须能用 NULL 表达"
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        stamps = conn.execute(
-            text("SELECT book_id, ingested_at FROM af_books ORDER BY book_id")
-        ).all()
-    engine.dispose()
-    assert [row[1] for row in stamps] == [None, None, None], "迁移不得为存量行编造 ingest 时刻"
-
-
-def test_downgrade_0004_drops_ingested_at(tmp_path):
-    """降级干净：列消失，回到 0003 形态后可再升回。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, "head")
-
-    command.downgrade(config, REVISION_0003)
-
-    inspector = inspect(create_engine(url))
-    assert "ingested_at" not in {column["name"] for column in inspector.get_columns("af_books")}
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    assert "ingested_at" in {column["name"] for column in inspector.get_columns("af_books")}
-
-
-# ---------- 20260926_0002：页级区域表（PLAN-018 W2 / ADR 0010） ----------
-
-REVISION_PAGE_REGIONS = "20260926_0002"
-REVISION_HEAD_BEFORE_REGIONS = "20260926_0001"
-
-
-def test_upgrade_0005_creates_page_regions_without_job_id(tmp_path):
-    """`af_page_regions` 按页级建：主键三列、**无 `job_id`**，索引显式命名（PLAN-020 评审壳的列清单口径）。"""
-    config, url = _config(tmp_path)
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    assert "af_page_regions" in inspector.get_table_names()
-    with create_engine(url).connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == (
-            _head_revision()
-        ), "区域表迁移已接进链且升级跑到底（head 序号由脚本目录派生）"
-    columns = {column["name"] for column in inspector.get_columns("af_page_regions")}
-    assert columns == {
-        "book_id",
-        "page_no",
-        "region_id",
-        "op",
-        "bbox",
-        "anchor_bbox",
-        "members",
-        "kind",
-        "note",
-        "created_at",
-        "updated_at",
-    }, f"列集合与 database-design.md 列清单漂移：{sorted(columns)}"
-    assert "job_id" not in columns, "区域是页级解析输入，不是版本内覆盖层（ADR 0010 决定 1）"
-    assert set(inspector.get_pk_constraint("af_page_regions")["constrained_columns"]) == {
-        "book_id",
-        "page_no",
-        "region_id",
-    }
-    indexed = {item["name"]: item["column_names"] for item in inspector.get_indexes("af_page_regions")}
-    assert indexed.get("ix_af_page_regions_page") == ["book_id", "page_no", "op"], indexed
-
-
-def test_page_regions_downgrade_is_clean_and_repeatable(tmp_path):
-    """降级只带走 `af_page_regions`（其余表与列不动）；升回来后可重复。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, "head")
-
-    command.downgrade(config, REVISION_HEAD_BEFORE_REGIONS)
-
-    inspector = inspect(create_engine(url))
-    assert "af_page_regions" not in inspector.get_table_names()
-    retained = {t.name for t in _AF_TABLE_REGISTRY} - {"af_page_regions"}
-    assert retained <= set(inspector.get_table_names())
-    assert "ingested_at" in {column["name"] for column in inspector.get_columns("af_books")}
-
-    command.upgrade(config, "head")
-
-    assert "af_page_regions" in inspect(create_engine(url)).get_table_names()
-
-
-# ---------- 20260928_0001：解析签名补列（PLAN-019 W2） ----------
-
-REVISION_SIGNATURE = "20260928_0001"
-
-
-def _seed_pre_signature_jobs(url: str) -> None:
-    """在 `20260926_0002` 形态的库上写存量任务行（直连 Core，不经 ORM）。
-
-    回填判据必须对旧结构里的真实存量成立：这些行是「签名规则确立之前」跑出来的版本，参数组合
-    已不可考。
-    """
-    engine = create_engine(url)
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO af_books (book_id, domain_id, course_id, title, authors, file_path,"
-                " sha256, ingest_status, parse_status, last_parse_result, pages_done, active_job_id,"
-                " synced_at, updated_at)"
-                " VALUES ('b_sig','','','线性代数','[]','raw/b_sig.pdf','a','ingested','pending',"
-                " 'completed',2,'j_new','2026-09-28 00:00:00','2026-09-28 00:00:00')"
-            )
-        )
-        for job_id, status in (("j_new", "completed"), ("j_old", "failed")):
-            conn.execute(
-                text(
-                    "INSERT INTO af_parse_jobs (job_id, book_id, pages, engine, status, progress,"
-                    " failed_pages, error, source_sha256, page_count, created_at)"
-                    " VALUES (:job_id,'b_sig',NULL,'mineru',:status,'{}','[]','',"
-                    " 'a',2,'2026-09-28 00:00:00')"
-                ),
-                {"job_id": job_id, "status": status},
-            )
-    engine.dispose()
-
-
-def test_upgrade_0006_adds_parser_signature_as_unknown_generation(tmp_path):
-    """纯加列 + 哨兵回填：存量行 `''` ＝ 未知代际，**不回算签名**（历史参数不可考，回算＝伪造第二事实源）。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_PAGE_REGIONS)
-    _seed_pre_signature_jobs(url)
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    columns = {column["name"]: column for column in inspector.get_columns("af_parse_jobs")}
-    assert "parser_signature" in columns
-    assert columns["parser_signature"]["nullable"] is False, "空值只有一种表示，判定面不必分 NULL 与 ''"
-    with create_engine(url).connect() as conn:
-        values = conn.execute(
-            text("SELECT job_id, parser_signature FROM af_parse_jobs ORDER BY job_id")
-        ).all()
-        revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert [row[0] for row in values] == ["j_new", "j_old"], "加列不得带走存量任务行"
-    assert [row[1] for row in values] == ["", ""], "迁移只能回填哨兵，不能编造签名"
-    assert revision == _head_revision()
-
-
-def test_upgrade_0006_keeps_index_and_other_tables(tmp_path):
-    """表族其余部分不动（本壳只加列不建表）：索引与区域表在加列后仍在位。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, REVISION_PAGE_REGIONS)
-    _seed_pre_signature_jobs(url)
-
-    command.upgrade(config, "head")
-
-    inspector = inspect(create_engine(url))
-    assert "ix_af_parse_jobs_book" in {item["name"] for item in inspector.get_indexes("af_parse_jobs")}
-    assert "af_page_regions" in inspector.get_table_names()
-    assert "ingested_at" in {column["name"] for column in inspector.get_columns("af_books")}
-
-
-def test_downgrade_0006_drops_parser_signature(tmp_path):
-    """降级干净：列消失、任务行仍在，回到 `20260926_0002` 形态后可再升回来。"""
-    config, url = _config(tmp_path)
-    command.upgrade(config, "head")
-
-    command.downgrade(config, REVISION_PAGE_REGIONS)
-
-    inspector = inspect(create_engine(url))
-    assert "parser_signature" not in {column["name"] for column in inspector.get_columns("af_parse_jobs")}
-
-    command.upgrade(config, "head")
-
-    assert "parser_signature" in {
-        column["name"] for column in inspect(create_engine(url)).get_columns("af_parse_jobs")
-    }
+# ---------- 逐表列集合（与权威文档对账） ----------
+
+
+@pytest.mark.parametrize("table", sorted(EXPECTED_COLUMNS))
+def test_table_columns_match_the_authoritative_list(migrated_url: str, table: str):
+    actual = set(_columns(migrated_url, table))
+    expected = EXPECTED_COLUMNS[table]
+
+    assert actual == expected, f"{table} 列集合与 database-design.md 漂移：多={sorted(actual - expected)}，缺={sorted(expected - actual)}"
+
+
+@pytest.mark.parametrize("table", sorted(EXPECTED_COLUMNS))
+def test_table_indexes_match_the_authoritative_names(migrated_url: str, table: str):
+    """索引名与列序逐条 pin：显式命名是「避免 autogenerate 漂移」的全部依据。"""
+    actual = _indexes(migrated_url, table)
+
+    for name, columns in EXPECTED_INDEXES[table].items():
+        assert actual.get(name) == columns, f"{table}.{name} 期望 {columns}，实际 {actual}"
+
+
+def test_primary_keys(migrated_url: str):
+    inspector = inspect(create_engine(migrated_url))
+
+    assert inspector.get_pk_constraint("af_books")["constrained_columns"] == ["book_id"]
+    assert inspector.get_pk_constraint("af_operations")["constrained_columns"] == ["op_id"]
+    assert inspector.get_pk_constraint("af_pages")["constrained_columns"] == ["book_id", "job_id", "page_no"]
+    assert inspector.get_pk_constraint("af_kp")["constrained_columns"] == ["node_id"]
+
+
+# ---------- DDL 默认值（判据面的空值语义） ----------
+
+
+def test_intent_key_is_the_only_unique_key_on_af_operations(migrated_url: str):
+    """意图幂等靠 `intent_key` 唯一键；坐标列本身不设唯一键（多行 NULL 即部分唯一索引）。"""
+    uniques = inspect(create_engine(migrated_url)).get_unique_constraints("af_operations")
+
+    assert [(u["name"], set(u["column_names"])) for u in uniques] == [
+        ("uq_af_operations_intent", {"intent_key"})
+    ], uniques
+
+
+def test_intent_key_column_is_nullable(migrated_url: str):
+    """`event` 行恒 NULL——MySQL 唯一键允许多行 NULL，这正是「只对意图行生效」的实现方式。"""
+    assert _columns(migrated_url, "af_operations")["intent_key"]["nullable"] is True
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [
+        ("lifecycle", "'event'"),
+        ("actor", "'human'"),
+        ("op_kind", None),
+        ("job_id", "''"),
+        ("status", "'queued'"),
+        ("engine", "''"),
+        ("parser_signature", "''"),
+        ("embedding_signature", "''"),
+        ("render_profile", "''"),
+        ("target_id", "''"),
+        ("error", "''"),
+        ("note", "''"),
+    ],
+)
+def test_af_operations_defaults(migrated_url: str, column: str, expected: str | None):
+    """默认值逐列 pin：`engine` 的默认是空串而非某个引擎名（缺引擎名要报错，不静默回落）。"""
+    assert _columns(migrated_url, "af_operations")[column]["default"] == expected
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [("confirm_state", "'unconfirmed'"), ("section_kind", "''"), ("status", "'pending'")],
+)
+def test_af_pages_defaults(migrated_url: str, column: str, expected: str):
+    assert _columns(migrated_url, "af_pages")[column]["default"] == expected
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [
+        ("node_kind", "'point'"),
+        ("job_id", "''"),
+        ("role", "''"),
+        ("type", "''"),
+        ("summary", "''"),
+        ("narrative_ref", "''"),
+        ("gen_status", "'candidate'"),
+        ("confirmed", "0"),
+        ("gen_batch", "''"),
+        ("model_ref", "''"),
+        ("rev", "0"),
+        ("norm_key", None),
+        ("name", None),
+    ],
+)
+def test_af_kp_defaults(migrated_url: str, column: str, expected: str | None):
+    assert _columns(migrated_url, "af_kp")[column]["default"] == expected
+
+
+def test_extension_slots_are_all_nullable_json(migrated_url: str):
+    """四表各有一个 `meta` 扩展槽：可空 JSON，不进任何唯一键（三条红线的可执行半边）。"""
+    for table in EXPECTED_COLUMNS:
+        column = _columns(migrated_url, table)["meta"]
+        assert column["nullable"] is True, table
+        assert "meta" not in {
+            name for u in inspect(create_engine(migrated_url)).get_unique_constraints(table) for name in u["column_names"]
+        }, table

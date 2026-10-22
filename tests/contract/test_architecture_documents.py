@@ -117,7 +117,7 @@ def test_api_document_declares_interface_categories():
 
 def test_database_design_document_declares_af_namespace_and_tables():
     content = (ARCHITECTURE / "database-design.md").read_text(encoding="utf-8")
-    for table in ("af_books", "af_parse_jobs", "af_pages", "af_block_edits"):
+    for table in ("af_books", "af_operations", "af_pages", "af_kp"):
         assert table in content, table
     assert "af_*" in content
     assert "qed" in content

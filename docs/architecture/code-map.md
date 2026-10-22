@@ -2,9 +2,9 @@
 
 状态：Current
 确认状态：已确认
-最后更新：2026-10-01
+最后更新：2026-10-22
 覆盖范围：`src/axiom_flow/` 全部受管包与模块、`scripts/` 与仓库级临时/日志/评估目录；映射目标为
-`docs/architecture/` 契约正文与 `docs/design/` 三篇的守则条文
+`docs/architecture/` 契约正文与 `docs/design/` 四篇的守则条文
 
 ## 目的与边界
 
@@ -12,7 +12,7 @@
 由哪条测试守护」的唯一映射入口。它只回答三件事：
 
 - 这个模块**是什么层级、担什么职责**（一句话，不含行为判据）；
-- 它的**契约与判据事实源**在哪（固定文档小节，或 `design/` 的条文编号 `PP-n` / `PM-n` / `MI-n`）；
+- 它的**契约与判据事实源**在哪（固定文档小节，或 `design/` 的条文编号 `PP-n` / `PM-n` / `MI-n` / `KA-n`）；
 - 它的**回归面**是哪几条测试。
 
 v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射范围（`src/axiom_flow/` 下
@@ -32,6 +32,7 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | 解析管线条文（预处理/引擎/归一化/落盘/分块） | `docs/design/parsing-pipeline.md`（PP-1~PP-20） |
 | 书目与版本管理条文 | `docs/design/parsing-management.md`（PM-1~PM-17） |
 | 模型服务对接与配置条文 | `docs/design/model-integration.md`（MI-1~MI-15） |
+| 知识点梳理与提升条文（发起、批次三态、写者分域、确认与提升通路） | `docs/design/knowledge-analysis.md`（KA-1~KA-28） |
 | 测试分层与门禁命令 | [testing.md](../standards/testing.md)、[development.md](../guides/development.md) |
 | 交付过程、退役时间线 | `docs/trackers/completed.md` 与承载计划 |
 
@@ -48,15 +49,15 @@ v1 时代的模块已归档于 `docs/history/v1-20260814/`，不在本表映射�
 | `src/axiom_flow/api/main.py` | 接口层 | 公共契约端点 + lifespan 启动期归一与瞬态残留告警 | [api.md](api.md)「① 生命周期与健康」「② 数据查询」「③ 解析结果与 PDF 对照」；PM-12；PP-4 | `tests/contract/test_api_v1_contract.py`、`tests/unit/test_orchestrator.py` |
 | `src/axiom_flow/api/admin.py` | 运维接口层 | 非公开管理面：`af_*` 表族行 + `parsed/` 产物一键清除 | [api.md](api.md)「非公开管理面」节（挂载/token/双确认/守卫次序/六条不变式）；PM-17；PP-4 | `tests/contract/test_api_v1_contract.py`（`TestAdminPurgeEndpoint`） |
 | `src/axiom_flow/ingest/` | 预处理 | PDF 导入、页图渲染（根视图唯一产物 `pages/`）、原子落盘与版本目录播种 | PP-2、PP-3、PP-4、PP-5、PP-15、PP-16；[api.md](api.md) ingest 端点节 | `tests/unit/test_ingest.py`、`tests/contract/test_storage_conventions_governance.py` |
-| `src/axiom_flow/orchestrator/` | 编排层 | 全本按窗口串行提交、逐页解析、失败语义、分块重建、af_* 回写、版本激活 | PP-11、PP-13、PP-14、PP-16、PP-17、PP-18；PM-8、PM-11、PM-12、PM-15；MI-12 | `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py`、`tests/smoke/test_live_mineru_chain.py` |
+| `src/axiom_flow/orchestrator/` | 编排层 | 全本按窗口串行提交、逐页解析、区域驱动逐框提交、失败语义、分块重建、af_* 回写、版本激活 | PP-11、PP-13、PP-14、PP-16、PP-17、PP-18、PP-21；PM-8、PM-11、PM-12、PM-15；MI-12 | `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py`、`tests/smoke/test_live_mineru_chain.py` |
 | `src/axiom_flow/orchestrator/jobs.py` | 编排层 | 后台单 worker 队列与任务生命周期转发 | PM-8、PM-13；[api.md](api.md)「单占用与排队」 | `tests/unit/test_orchestrator.py` |
-| `src/axiom_flow/orchestrator/pipeline.py` | 编排层 | 一次解析版本的执行主体（窗口循环、页级持久化、终态判定、激活轮换删旧版本、版本 book.json 生成） | PP-11、PP-13、PP-14、PP-18；PM-11、PM-15；MI-9 | `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py` |
-| `src/axiom_flow/orchestrator/signature.py` | 编排层 | 解析代际签名的 canonical 计算与重跑判定纯函数（不探模型服务，版本读数由受理面注入） | [database-design.md](database-design.md)「任务表语义」段；[ADR 0015](../adr/0015-db-single-source-for-readiness.md) | `tests/unit/test_parser_signature.py` |
+| `src/axiom_flow/orchestrator/pipeline.py` | 编排层 | 一次解析版本的执行主体（窗口循环、区域驱动逐框裁剪与一框至多一块、页级持久化、终态判定、激活轮换删旧版本、版本 book.json 生成） | PP-11、PP-13、PP-14、PP-18、PP-21；PM-11、PM-15；MI-9 | `tests/unit/test_orchestrator.py`、`tests/integration/test_parse_persistence.py` |
+| `src/axiom_flow/orchestrator/signature.py` | 编排层 | 解析代际签名的 canonical 计算与重跑判定纯函数（不探模型服务，版本读数由受理面注入） | [database-design.md](database-design.md)「`af_operations` 列清单」的 `parser_signature` 行；[ADR 0015](../adr/0015-db-single-source-for-readiness.md) | `tests/unit/test_parser_signature.py` |
 | `src/axiom_flow/engines/` | 适配层 | 引擎适配器（MinerU 落地，paddleocr-vl / qwen-vl 预留）与显式分派工厂 | MI-2、MI-3、MI-4、MI-5、MI-6、MI-7、MI-8、MI-10、MI-11、MI-12、MI-13、PP-12 | `tests/unit/test_engines.py`、`tests/unit/test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py` |
 | `src/axiom_flow/normalize/` | 后处理 | 统一 blocks 归一化、坐标换算、可见丢弃、公式定界符剥离、知识块切分与质量信号 | PP-7、PP-8、PP-9、PP-10、PP-19、PP-20；MI-8 | `tests/unit/test_normalize.py`、`tests/unit/test_chunking.py` |
-| `src/axiom_flow/db/` | 持久层 | `af_*` 表族 ORM 与仓储（版本作用域读写、页级区域意图全量声明、进度/结局分列、清除原语） | [database-design.md](database-design.md) 列清单与条文语义节；[api.md](api.md)「PUT …/structure」小节；PM-1、PM-2、PM-3、PM-4、PM-5、PM-6、PM-9、PM-10、PM-17 | `tests/unit/test_db.py`、`tests/unit/test_db_page_regions.py` |
+| `src/axiom_flow/db/` | 持久层 | `af_*` 四表 ORM 与仓储（`BookRepository`/`OperationRepository`/`PageRepository`/`KpRepository`：事件与意图两态、`intent_key` 幂等 upsert、结构意图全量声明、版本作用域读写、进度/结局分列、清除原语） | [database-design.md](database-design.md) 列清单与条文语义节；[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)；[api.md](api.md)「PUT …/structure」小节；PM-1、PM-2、PM-3、PM-4、PM-5、PM-6、PM-9、PM-10、PM-17、PM-18；[knowledge-analysis.md](../design/knowledge-analysis.md)（KA-11 写者分域、KA-27/KA-28 的「建值不建写者」与域外值守护） | `tests/unit/test_db.py`、`tests/unit/test_db_table_family_governance.py`、`tests/integration/test_concurrency_criteria.py` |
 | `src/axiom_flow/db/engine.py` | 持久层 | 双 Session 工厂（业务库 / 测试库）与连接参数装配 | [database-design.md](database-design.md)「边界」；ADR 0005 | `tests/integration/test_parse_persistence.py` |
-| `src/axiom_flow/migrations/` | 持久层 | Alembic 迁移（建表、解析版本布局、状态语义分列、ingest 元数据补列、页级区域表、代际签名补列） | [database-design.md](database-design.md)「迁移序列」表 + 「边界」的无自动迁移约定 | `tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py` |
+| `src/axiom_flow/migrations/` | 持久层 | Alembic 迁移（档 B 链重置后只有唯一 base：一条迁移建 `af_*` 四表，`downgrade` 可重复） | [database-design.md](database-design.md)「迁移序列」表 + 「边界」的无自动迁移约定；[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md) | `tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py` |
 | `src/axiom_flow/schemas.py` | 契约模型 | 统一格式与请求/响应的 Pydantic 单一事实源 | [api.md](api.md)「兼容承诺」；PP-7、PP-20；PM-8、PM-10 | `tests/unit/test_schemas.py` |
 | `src/axiom_flow/config.py` | 配置 | 三段式配置读取、数据根 fail-closed 解析与 `.env` 走查（含管理面 fail-closed 校验） | MI-1；[model-integration.md](../design/model-integration.md)「配置键」表；PM-11 的超时/窗口键；[api.md](api.md)「非公开管理面」；ADR 0009；[operations.md](../guides/operations.md)「数据目录」 | `tests/unit/test_config.py`、`tests/contract/test_storage_conventions_governance.py` |
 

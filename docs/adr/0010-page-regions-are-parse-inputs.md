@@ -1,17 +1,20 @@
 # ADR 0010：页框图是页级解析输入，不是版本内覆盖层
 
 状态：Accepted
-最后更新：2026-10-01
-关联代码：`src/axiom_flow/db/models.py`（`AfPageRegion` 与 `AfBlockEdit` 唯一键）、
-`src/axiom_flow/db/repositories.py`（`RegionRepository`/`RegionIntent`/`region_id_for`、
-`EditRepository`）、`src/axiom_flow/migrations/versions/20260926_0002_page_regions.py`、
+最后更新：2026-10-22
+关联代码：`src/axiom_flow/db/models.py`（`AfOperation` 的 `intent` 行与 `intent_key` 唯一键、
+`AfPage` 的版本作用域 PK）、`src/axiom_flow/db/repositories.py`（`OperationRepository` 的
+`upsert_intent`/`replace_page_intents`/`region_id_for`、`EditRow`/`RegionRow` 意图读法）、
+`src/axiom_flow/migrations/versions/20261022_0001_af_family_rebuild.py`、
 `src/axiom_flow/api/main.py`（`put_structure` 的三选一定位与几何锚换算、`edit_block` 的下标校验、
 `get_page` 的读取作用域）、`src/axiom_flow/engines/base.py`
 （`ParseEngine.parse_page`）、`src/axiom_flow/engines/mineru.py`（`_submit`/`_run` 请求字段）、
-`src/axiom_flow/orchestrator/pipeline.py`（页级解析路径）
-关联测试：`tests/unit/test_db_page_regions.py`（表不变式与仓储）、
-`tests/contract/test_api_v1_contract.py`（`TestStructureEndpoint` 写入面；区域读视图投影待实施）、
-`tests/unit/test_orchestrator.py`（每框一次调用与退化路径，待实施）、
+`src/axiom_flow/orchestrator/pipeline.py`（页级解析路径与区域驱动分支 `_handle_region_page`）
+关联测试：`tests/unit/test_db.py`（意图行的表不变式与仓储：`structure` 行 `job_id` 恒 `''`、区域 id
+派生式、缺席即撤销、跨版本存活）、
+`tests/contract/test_api_v1_contract.py`（`TestStructureEndpoint` 写入面、`TestParseJobRegionGate`
+受理框数门；区域读视图投影待实施）、
+`tests/unit/test_orchestrator.py`（`TestRegionDrivenParse` 每框一次调用、一框至多一块与退化路径）、
 `tests/contract/test_storage_conventions_governance.py` 的落盘面复用
 
 ## 背景
@@ -46,10 +49,17 @@
    几何为原页图像素 `[x0, y0, x1, y1]`、左上原点、基准 `pages/p<NNNN>.png`（与 PP-7 的 `bbox`
    同一坐标系，不引入第二套坐标约定）。该表承载的是**输入与意图**（待识别框、删除意图、合并
    意图），不是解析结果。
+   **承载随步（[ADR 0016](0016-af-family-rebuild-into-four-tables.md)）**：表族整族重建后本决定的语义
+   原样折叠为 `af_operations` 的 `op_kind='structure'`、`lifecycle='intent'` 行——`job_id` 恒 `''` 就是
+   「不进版本作用域」的现代表达，`region_id` 原值落 `target_id`（几何派生式一字未改，根侧定位键不因换表
+   失效），`op`/`bbox`/`anchor_bbox`/`members`/`kind` 落 `payload`、`note` 用实体列。不变式由
+   `tests/unit/test_db.py` 断言「`structure` 行的 `job_id` 全为 `''`」与「意图行跨版本存活」。
 2. **`af_block_edits` 的语义保持不变**：文本修正与几何修正（`corrected_text`/`corrected_bbox`）
    仍绑 `(book_id, job_id, page_no, block_index)`，即仍是"对某一次解析结果的核对结论"。两表的
    分工固定为：**页级=人的意图（跨版本），版本级=人对结果的判定（不跨版本）**。任何把页级意图
    写进版本级表、或反向的做法判为缺陷。
+   **承载随步**：现由 `af_operations` 的 `op_kind='edit'` 意图行承载，四个坐标列同名、定位与幂等改由
+   `intent_key` 唯一键保证；`job_id` 仍是编辑结论绑定的版本 ⇒ 分工一字未改。
 3. **产物文件仍是唯一正本，区域视图由服务端投影合并**：引擎块仍只落在 `versions/<job_id>/pages/`
    的产物里，库内不写第二份块数据。R3 的「当前生效区域集合」= 人工区域（页级）+ 引擎块（生效
    版本产物）在**服务端**投影成的统一视图，逐区域标出来源与状态（人工待识别 / 人工已出字 /
@@ -63,8 +73,8 @@
 5. **调和策略归本仓设计自决**：框间空隙归属、一个框内命中多个引擎块时如何归一、删除/合并意图在
    重解析后按什么规则重新命中区域，由本仓在 `parsing-pipeline.md` 成文（需求方只定义能力与消费侧
    判据）。规则变更受 PP-9 成对约束：不得使既有 `block_index` 编辑静默改指到别的块。
-6. **守护与变异复验**：实施轮新增契约断言——页级表唯一键不含 `job_id`、`af_block_edits` 唯一键
-   含 `job_id` 不变、区域视图条目数＝人工区域数 + 生效版本块数、区域驱动路径下每框恰好一次
+6. **守护与变异复验**：实施轮新增契约断言——意图行的版本无关性只由「`structure` 行的 `job_id` 恒 `''`」
+   表达、`edit` 行的 `intent_key` 里含版本坐标、区域视图条目数＝人工区域数 + 生效版本块数、区域驱动路径下每框恰好一次
    `parse_page`、无区域时走默认检测；并按 PLAN-016 的纪律逐条变异复验（每次只红对应用例）。
 7. **结构操作依赖生效版本（2026-09-29 确认裁决）**：无生效版本指针（即 legacy 根视图作用域）时，
    该页的一切结构操作（add/delete/merge）**一律拒绝**，不以根视图产物作锚定回落；旧版本目录的

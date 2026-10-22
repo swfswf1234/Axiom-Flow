@@ -7,9 +7,15 @@
 - 模型服务不可用（提交前探活失败）→ 任务 `failed`，不中断其他任务；
 - 目标页全部 `parsed` 且产物在位 → `completed`，同时激活本版本；
 - 至少一页成功但未齐备（含单页失败，重试 1 次仍失败）→ `partial`，**不激活**，失败页结构化写
-  `af_parse_jobs.failed_pages`；
+  `af_operations` parse 行的 `failed_pages`；
 - 零页成功，或整本解析异常中止 → `failed`，已解析页保留（可重跑）。
 `interrupted` 不在本管线产出，只由服务启动期归一写入（ADR 0007 决定 4）。
+
+区域驱动页（PP-21 / [ADR 0010](../../../docs/adr/0010-page-regions-are-parse-inputs.md)）：有 `op=add`
+人工框的页**逐框裁剪提交**——每框一次 `parse_page`、独立重试并先过单一占用闸门；框内块按声明坐标
+空间以裁剪图映射后平移回原页坐标系（归一化侧不知裁剪），一框至多一块、页内按阅读序 `(y0, x0)` 编排。
+单框重试后仍 `EngineError` 则**整页**记 `failed`（错误点名框序与 `region_id`，半页产物不落盘）。
+无框页回落默认路径：逐页任务单图提交；全本任务带框页剔出窗口，窗口切分只对剩余页。
 
 版本布局（PLAN-004 / REQ-080）：一次任务 = 一个解析版本，产物只写 `<book_dir>/versions/<job_id>/`，
 **不回写根视图**（根视图的页图仍由 ingest 拥有，版本目录以硬链接接入）。页状态行按
@@ -38,8 +44,8 @@ from sqlalchemy.orm import Session
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
+    OperationRepository,
     PageRepository,
-    ParseJobRepository,
 )
 from axiom_flow.engines.base import DocumentResult, EngineError, PageResult, ParseEngine
 from axiom_flow.ingest import (
@@ -57,10 +63,12 @@ from axiom_flow.ingest import (
     write_manifest,
     write_page_markdown,
 )
-from axiom_flow.normalize.blocks import blocks_to_markdown, normalize_page
+from axiom_flow.normalize.blocks import block_from_raw, blocks_to_markdown, compute_quality, normalize_page
 from axiom_flow.normalize.chunking import build_chunks, chunk_set_payload
 from axiom_flow.schemas import (
+    Block,
     BlocksPage,
+    BlockType,
     BookMeta,
     ChunkParams,
     ChunkSet,
@@ -144,15 +152,115 @@ def _write_page_artifacts(version_dir: Path, page: BlocksPage) -> None:
     write_page_markdown(version_dir, page.page, blocks_to_markdown(page.blocks))
 
 
-def _parse_page_with_retry(engine: ParseEngine, image_path: Path, page_no: int) -> PageResult:
+def _parse_payload_with_retry(engine: ParseEngine, payload: bytes, page_no: int) -> PageResult:
     last_error: EngineError | None = None
     for _ in range(PAGE_ATTEMPTS):
         try:
-            return engine.parse_page(image_path.read_bytes(), page_no)
+            return engine.parse_page(payload, page_no)
         except EngineError as exc:
             last_error = exc
     assert last_error is not None
     raise last_error
+
+
+def _parse_page_with_retry(engine: ParseEngine, image_path: Path, page_no: int) -> PageResult:
+    return _parse_payload_with_retry(engine, image_path.read_bytes(), page_no)
+
+
+def _region_frames(regions: OperationRepository, book_id: str) -> dict[int, list[tuple[str, tuple[int, int, int, int]]]]:
+    """人工待识别框按页分组（只消费 `op=add`）：`(region_id, 页图像素框)` 按阅读序 `(y0, x0)`。
+
+    `delete`/`merge` 不改解析写面——重解析后的 IoU 重锚定属读投影（ADR 0010 决定 5）。
+    """
+    frames: dict[int, list[tuple[str, tuple[int, int, int, int]]]] = {}
+    for row in regions.list_regions_for_book(book_id):
+        if row.op != "add" or not isinstance(row.bbox, (list, tuple)) or len(row.bbox) != 4:
+            continue
+        box = (int(row.bbox[0]), int(row.bbox[1]), int(row.bbox[2]), int(row.bbox[3]))
+        frames.setdefault(row.page_no, []).append((row.region_id, box))
+    for page_frames in frames.values():
+        page_frames.sort(key=lambda item: (item[1][1], item[1][0]))
+    return frames
+
+
+def _clamp_frame(bbox: tuple[int, int, int, int], image_size: tuple[int, int]) -> tuple[int, int, int, int]:
+    """框夹取到页图内并保底 1px（与 `scale_bbox` 同一套边界纪律）。"""
+    x0 = max(0, min(bbox[0], image_size[0] - 1))
+    y0 = max(0, min(bbox[1], image_size[1] - 1))
+    x1 = max(x0 + 1, min(bbox[2], image_size[0]))
+    y1 = max(y0 + 1, min(bbox[3], image_size[1]))
+    return (x0, y0, x1, y1)
+
+
+def _crop_page_image(image_bytes: bytes, frame: tuple[int, int, int, int]) -> tuple[bytes, tuple[int, int]]:
+    """按框裁剪原页图 → `(裁剪 PNG 字节, 裁剪像素尺寸)`；页图非 PNG 由 pymupdf 抛 ValueError。
+
+    框坐标是页图像素，而「图片当文档开」的页尺寸按内嵌 DPI 折算成点（同一 PDF 以 96/150 DPI
+    渲染时两个页图会不一致），故先按整幅像素宽折出点/像素比再缩放裁剪，保证逐像素对齐。
+    """
+    full = pymupdf.Pixmap(image_bytes)
+    doc = pymupdf.open("png", image_bytes)
+    with doc:
+        page = doc[0]
+        scale = page.rect.width / full.width
+        clip = pymupdf.Rect(frame[0] * scale, frame[1] * scale, frame[2] * scale, frame[3] * scale)
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(1 / scale, 1 / scale), clip=clip, alpha=False)
+    return pix.tobytes("png"), (pix.width, pix.height)
+
+
+def _normalize_frame(
+    result: PageResult, *, frame: tuple[int, int, int, int], crop_size: tuple[int, int]
+) -> tuple[list[Block], list[str]]:
+    """框内归一：原始条目按声明坐标空间以**裁剪图尺寸**映射（PP-8），再平移回原页坐标系。
+
+    平移在编排侧——归一化侧不知裁剪，`normalize/` 的坐标契约不为此扩参（PLAN-018 W1 裁决 1）。
+    框内无结构化条目只回 markdown 时整幅回退单 paragraph，与 `normalize_page` 的整页判据同构。
+    """
+    blocks: list[Block] = []
+    dropped: list[str] = []
+    for raw in result.blocks:
+        block = block_from_raw(
+            raw,
+            index=len(blocks),
+            page_size=result.page_size,
+            image_size=crop_size,
+            space=result.bbox_space,
+        )
+        if block is None:
+            dropped.append(str(raw.get("type", "")))
+        else:
+            blocks.append(block)
+    if not result.blocks and result.markdown.strip():
+        blocks = [
+            Block(
+                type=BlockType.PARAGRAPH,
+                bbox=(0, 0, crop_size[0], crop_size[1]),
+                index=0,
+                order=0,
+                text=result.markdown.strip(),
+            )
+        ]
+    shifted: list[Block] = []
+    for block in blocks:
+        b0, b1, b2, b3 = block.bbox
+        shifted.append(
+            block.model_copy(update={"bbox": (b0 + frame[0], b1 + frame[1], b2 + frame[0], b3 + frame[1])})
+        )
+    return shifted, dropped
+
+
+def _merge_frame_blocks(blocks: list[Block], *, frame: tuple[int, int, int, int]) -> Block:
+    """一框至多一块：单存活块保持原类型；多块按 markdown 渲染拼接为 `paragraph`，bbox 取并集夹在框内。"""
+    if len(blocks) == 1:
+        return blocks[0]
+    text = blocks_to_markdown(blocks).strip()
+    union = (
+        max(frame[0], min(b.bbox[0] for b in blocks)),
+        max(frame[1], min(b.bbox[1] for b in blocks)),
+        min(frame[2], max(b.bbox[2] for b in blocks)),
+        min(frame[3], max(b.bbox[3] for b in blocks)),
+    )
+    return Block(type=BlockType.PARAGRAPH, bbox=union, index=0, order=0, text=text)
 
 
 def rebuild_chunks(artifact_dir: Path, book_id: str, params: ChunkParams | None = None) -> ChunkSet:
@@ -252,7 +360,7 @@ def _fail(
     """
     if persist:
         session.commit()
-    jobs = ParseJobRepository(session)
+    jobs = OperationRepository(session)
     if progress is not None:
         jobs.update_progress(job_id, progress)
     jobs.mark_finished(job_id, status=JobStatus.FAILED, error=message, failed_pages=failed_pages)
@@ -338,7 +446,7 @@ def run_parse_job(
     单块失败只损失该块页，进度按块可见。指定页时逐页提交，不做窗口切分。
     """
     books = BookRepository(session)
-    jobs = ParseJobRepository(session)
+    jobs = OperationRepository(session)
     page_repo = PageRepository(session)
 
     book = books.get(book_id)
@@ -423,6 +531,7 @@ def run_parse_job(
     write_book_meta(version_dir, meta)
 
     geometry = _pdf_geometry(source_pdf)
+    frames_by_page = _region_frames(OperationRepository(session), book_id)
     requested_pages = list(pages) if pages else list(range(1, meta.page_count + 1))
     _inherit_page_rows(page_repo, book_id, baseline_job_id, job_id, version_dir, requested_pages)
     resumed = _resumed_pages(page_repo, book_id, job_id, version_dir, requested_pages)
@@ -493,15 +602,85 @@ def run_parse_job(
         _commit()
         _flush_progress()
 
+    def _handle_region_page(page_no: int, page_frames: list[tuple[str, tuple[int, int, int, int]]]) -> None:
+        """区域驱动页（PP-21）：逐框裁剪提交、一框至多一块；单框重试后仍失败**整页**判 `failed`。
+
+        缺框的页不满足一框一块——半页产物不落盘（PP-13 的「有页行必有产物」由此保持）。
+        """
+        nonlocal parsed
+        image_path = link_pages_into(book_dir / "pages", version_dir / "pages", page_no)
+        if image_path is None:
+            _mark_failed(page_no, "页图缺失")
+            return
+        image_bytes = image_path.read_bytes()
+        image_size = _image_size(book_dir, page_no, geometry, dpi)
+        blocks: list[Block] = []
+        dropped: list[str] = []
+        empty_frames = 0
+        total_frames = len(page_frames)
+        for ordinal, (region_id, raw_frame) in enumerate(page_frames, start=1):
+            where = f"区域驱动第 {ordinal}/{total_frames} 框（{region_id}）"
+            if not _await_model_idle(engine, interval=model_gate_interval, deadline=model_gate_deadline):
+                _mark_failed(page_no, f"{where}：{MODEL_BUSY.format(wait=model_gate_deadline)}"[:500])
+                return
+            frame = _clamp_frame(raw_frame, image_size)
+            try:
+                crop_bytes, crop_size = _crop_page_image(image_bytes, frame)
+                result = _parse_payload_with_retry(engine, crop_bytes, page_no)
+            except (EngineError, ValueError) as exc:
+                _mark_failed(page_no, f"{where}：{exc}"[:500])
+                return
+            frame_blocks, frame_dropped = _normalize_frame(result, frame=frame, crop_size=crop_size)
+            dropped.extend(frame_dropped)
+            if not frame_blocks:
+                empty_frames += 1  # 空框不出块，但按可见计数暴露，不静默丢框
+                continue
+            blocks.append(_merge_frame_blocks(frame_blocks, frame=frame))
+        final = [
+            block.model_copy(update={"index": i, "order": i})
+            for i, block in enumerate(sorted(blocks, key=lambda b: (b.bbox[1], b.bbox[0])))
+        ]
+        page = BlocksPage(
+            page=page_no,
+            image_size=image_size,
+            source=engine.name,
+            blocks=final,
+            quality=compute_quality(
+                final,
+                native_text_length=geometry.get(page_no, (None, None))[1],
+                dropped_literals=dropped,
+            ).model_copy(update={"empty_region_count": empty_frames}),
+        )
+        _write_page_artifacts(version_dir, page)  # 产物写先于页行提交（PP-13）
+        page_repo.upsert(
+            book_id,
+            job_id,
+            page_no,
+            status="parsed",
+            source=engine.name,
+            quality=page.quality.model_dump() if page.quality else None,
+        )
+        parsed += 1
+        progress["parsed"] = parsed
+        _commit()
+        _flush_progress()
+
     try:
         if pages is None:
             pdf_bytes = source_pdf.read_bytes()
-            for start, end in _page_windows(requested_pages, window_size):
+            # 带框页剔出窗口：窗口只对剩余页切分（PLAN-018 W1 裁决 4），带框页随后逐页区域驱动
+            plain_targets = [no for no in requested_pages if no not in frames_by_page]
+            for start, end in _page_windows(plain_targets, window_size):
                 if not engine.health():
                     # 块间探活失败即止：拿剩余窗口继续提交只会把挂钟按块数翻倍（僵尸任务）
-                    _mark_window_failed([no for no in target_pages if no >= start], MODEL_UNAVAILABLE)
+                    _mark_window_failed(
+                        [no for no in target_pages if no >= start and no not in frames_by_page],
+                        MODEL_UNAVAILABLE,
+                    )
                     break
-                window_pages = [no for no in target_pages if start <= no <= end]
+                window_pages = [
+                    no for no in target_pages if start <= no <= end and no not in frames_by_page
+                ]
                 if not window_pages:
                     continue  # 整窗已在本次版本解析并落盘，无需重复提交
                 try:
@@ -519,8 +698,16 @@ def run_parse_job(
                         _mark_failed(page_no, "引擎未返回该页")
                         continue
                     _handle(page_no, result)
+            for page_no in target_pages:
+                page_frames = frames_by_page.get(page_no)
+                if page_frames is not None:
+                    _handle_region_page(page_no, page_frames)
         else:
             for page_no in target_pages:
+                page_frames = frames_by_page.get(page_no)
+                if page_frames is not None:
+                    _handle_region_page(page_no, page_frames)
+                    continue
                 image_path = link_pages_into(book_dir / "pages", version_dir / "pages", page_no)
                 if image_path is None:
                     _mark_failed(page_no, "页图缺失")

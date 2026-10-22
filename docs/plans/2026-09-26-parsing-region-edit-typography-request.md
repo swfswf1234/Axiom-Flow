@@ -2,8 +2,8 @@
 
 状态：In Progress
 任务类型：B
-最后更新：2026-10-01
-关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、解析管线归本仓库；R1/R5 改动均在管线与归一化面，不触碰引擎选型）、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)（**Accepted 2026-09-29**：页框图是页级解析输入、不是版本内覆盖层——决定 R2/R3 的落库作用域与 R1 的调用形态；同批裁决 legacy 拒绝结构操作、合并归 8902）
+最后更新：2026-10-22
+关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、解析管线归本仓库；R1/R5 改动均在管线与归一化面，不触碰引擎选型）、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)（**Accepted 2026-09-29**：页框图是页级解析输入、不是版本内覆盖层——决定 R2/R3 的落库作用域与 R1 的调用形态；同批裁决 legacy 拒绝结构操作、合并归 8902）、[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（**承载随步**：`af_page_regions`／`af_block_edits` 折叠为 `af_operations` 的 `structure`／`edit` 意图行，ADR 0010 的不变式原样保留）
 关联设计：`docs/design/parsing-pipeline.md`（页解析单元与 normalize 块类型）、`docs/design/parsing-management.md`（af_* 块编辑覆盖层，R1/R2/R3 落点）；根仓库权威上下文（只读）：`QED-Engine/docs/plans/2026-09-26-req098-parsing-region-edit-typography-axiom-flow-request.md`（请求原文）、`QED-Engine/docs/design/parsing-ui.md`（消费界面现状）
 关联 Tracker：docs/trackers/todo.md（PLAN-018 行；本任务唯一台账行，根侧请求号 REQ-099 只作来源标注，不单独立行）
 归档判定：Retain（含 R1~R6 逐条回执与实施锚点，作根仓库 REQ-099 回执关闭证据）
@@ -12,6 +12,15 @@
 > 实施中的能力缺口）的承接实施计划。原请求文档随承接登记正规化为治理合规的计划形态
 > （本文件名保留请求期 slug 以维持根侧引用）。白名单/守护同步：本壳 + todo 单行（PLAN-018）即 PLAN-018
 > 承接第一步，`test_plan_governance.py` / `test_tracker_governance.py` 以本壳现状为基准。
+>
+> **承载随步（2026-10-22，[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)／PLAN-024 W7）**：
+> 本文的 `af_page_regions` 已由 `af_operations` 的 `op_kind='structure'`、`lifecycle='intent'`、
+> `job_id=''` 行逐列承接（`region_id` 原值落 `target_id`，派生式一字未改，根侧长期定位键不因换表失效）；
+> `af_block_edits` 由 `op_kind='edit'` 意图行承接，四个坐标列同名、定位与幂等改由 `intent_key` 唯一键
+> 保证。**「页级＝人的意图（跨版本）、版本级＝人对结果的判定（不跨版本）」这条分工一字未改**，
+> S1~S7 判据全部按原语义继续有效，只是承载表名换了，且 W2 的测试文件
+> `tests/unit/test_db_page_regions.py` 已随折叠并入 `tests/unit/test_db.py`。迁移链已随档 B 重置为
+> 唯一 base `20261022_0001`，本文的 `20260926_0002` 等 revision 号属当时的执行记录，不再可执行。
 
 ## 目标与成功标准
 
@@ -330,7 +339,7 @@ class RegionView(BaseModel):
 | W0 | 承接登记：本壳正规化 + todo 单行（PLAN-018，证据列带 **请求接收（根仓库）** 标记并注根侧请求号 REQ-099），契约测试绿 | 完成 2026-09-26 |
 | W0.5 | 源码勘察（K1~K5 入壳）+ [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 立稿：区域=页级解析输入、每框一次单页提交、R4 不新增枚举 | 完成 2026-09-26（ADR 待用户确认） |
 | W0.6 | 对接面梳理与契约草案入壳（本节：两侧对账 + 草案 A~F + 晋升守护 + Q1~Q5 待定口径 + 表族同步面） | 完成 2026-09-26（草案待用户审；**未晋升** architecture/ 与 design/） |
-| W1（R1） | 区域驱动页解析：按前置 1 逐框裁剪提交 `parse_page`，一框一块；含单页框数上限与受理前 422、无框时的默认检测退化路径；调和策略（空隙归属、框内多检测块归一）写入 `parsing-pipeline.md` | ADR 0010 已确认 ⇒ 待开工（依赖 W2 表） |
+| W1（R1） | 区域驱动页解析：按前置 1 逐框裁剪提交 `parse_page`，一框一块；含单页框数上限与受理前 422、无框时的默认检测退化路径；调和策略（空隙归属、框内多检测块归一）写入 `parsing-pipeline.md` | 完成 2026-10-15（六条裁决见「W1 实施前梳理与裁决定判」节；受理门与执行面交付、偏差与守护面见「W1 落地结论」；真机 S1 实测留消费侧批次，W8 确认门不改） |
 | W2（R2） | `af_page_regions`（页级、不绑 `job_id`）+ 删除/合并/新增区域 API；`af_block_edits` 语义不动；迁移 `20260926_0002` 接现 head 之后 | 完成 2026-10-01（前置：PLAN-020 于 2026-09-29 关闭放行建表，以其「新表结构与表族关联」节为准。交付面、守护、状态码定判与偏差登记见「W2 落地结论与偏差登记」节；业务库迁移待 D 类窗口） |
 | W3（R3） | 页数据返回服务端投影的区域集合（几何/来源/pending/已删除标记）；先改 `api.md` 条文再实施 | 待开始 |
 | W4（R4） | 目录以**可消费属性/分诊标记**承接（不新增 `BlockType`），归 ARCH-025 与 PLAN-009 P3 长线 | 长线（移出本壳实施） |
@@ -392,6 +401,71 @@ class RegionView(BaseModel):
   `design/parsing-pipeline.md`，ADR 0010 决定 5 要求本仓自决成文）。
 - W1：区域驱动提交 + 每框一次单页提交 + 提交面 422 + 无框退化路径；W7 未完成页能力与之同批裁决。
 - W8/S7：每页人工确认门（验收锚点的「确认好后固定版本」环节）。
+
+### 业务库 `qed` D 类窗口执行（2026-10-03）
+
+- 触发升级的理由不是排期到了，而是**在线阻塞**：PLAN-019 W2 的启动期在飞查询
+  （`ParseJobRepository.find_in_flight`）在旧库上报
+  `(1054, "Unknown column 'af_parse_jobs.parser_signature' in 'field list'")`，
+  日志末行 `ERROR: Application startup failed. Exiting.`（`logs/qed-axiom-serve.log:9823-9830`）
+  ⇒ 业务库落后两枚迁移已令 8902 起不来，`af_page_regions` 的写入面也无法在业务库上验证。
+- 执行序列（用户批准「全窗口由我跑」，C-1~C-5 逐步留痕）：停服核对（`axiom_flow_service.py status`
+  判陈旧 PID 并自清，实测无存活进程）→ 备份 `tmp/backup_qed_af_family_20261003.sql`
+  （`af_books`/`af_parse_jobs`/`af_pages`/`af_block_edits`/`alembic_version` 五对象，257888 B，
+  5 段 CREATE TABLE + `-- Dump completed on 2026-10-03 17:06:30`；`af_page_regions` 备份时尚不存在）→
+  `alembic upgrade head`（`20260926_0001 → 20260926_0002 → 20260928_0001`，两枚均纯增 DDL、不触碰存量行）→ 校验 → 起服冒烟。
+- 校验读数（只读探针 `tmp/probe_qed_schema_20261003.py`）：`alembic_version = 20260928_0001 (head)`；
+  `af_page_regions` 存在且 **0 行**；`parser_signature` 列存在，存量 6 行**全为哨兵 `''`**（未知代际，不判过时）；
+  行数 `af_books=17 / af_parse_jobs=6（4 completed, 2 partial）/ af_pages=957 / af_block_edits=0` 与迁移前一致；
+  `af_pages.job_id` 分组作用域未变；`af_books.active_job_id` 仍 15 本 NULL（存量不自动改语义）。
+- 冒烟（`trust_env=False` 直连 127.0.0.1:8902）：`/health`、`/books`、`/parse-jobs`（原 500 路）、
+  `/books/linearalgebra-b01`、`/pages`、`/pages/1`、`/versions`、`/manifest` 全 200，`pages/1` 回 4 块；
+  页读面键集仍为 `blocks/markdown/image_url/edits` ⇒ **`regions` 字段尚未落地，W3 仍待做**。
+- 回滚：`alembic downgrade 20260926_0001`（DROP 新表 + DROP 新列，新表空、新列为增量，零数据损失）；
+  数据回滚点上列 `.sql`。本窗口未产生任何区域行、未启动任何解析任务、未触碰引擎与产物目录。
+
+## W1 实施前梳理与裁决定判（2026-10-15）
+
+现状直证（文件:行号为梳理时点）：受理面 `create_parse_job`（`api/main.py:639`）已有四道不建任务行
+门槛，`AXIOM_MAX_REGIONS_PER_PAGE`＝16 已在 `config.py:91`；执行面逐页路径已走
+`parse_page(image_bytes)`（`pipeline.py:522-533`，`_parse_page_with_retry` 重试 1 次），全本路径按
+窗口 `parse_document`（`pipeline.py:497-521`）；`MinerUEngine._run` 每次提交独立 deadline
+（`mineru.py:335-349`）；`RegionRepository.list_for_page/list_for_book` 可支撑受理门与执行面读框。
+结论：草案 E／前置 1 在现有代码面可行，工作项划分不改。用户裁决 6 条，已同步晋升
+`design/parsing-pipeline.md`（PP-21 守则＋失败语义行）与 `api.md`（受理门槛顺序、「区域驱动」段、
+状态码总表 422 行）。
+
+| # | 裁决 | 直证与落点 |
+| --- | --- | --- |
+| W1-1 | bbox 映射链：裁剪与**平移回原页图坐标全部在 pipeline 侧**，`normalize_page` 不改（按裁剪图尺寸映射后加裁剪原点偏移） | 引擎回「相对所提交图」的 `normalized_1000`（`mineru.py:37-39`、PP-8）；PP-21 |
+| W1-2 | 区域驱动页块集：**只提交框内、不整页检测**，一框至多一块、框间空隙不成块；写面只消费 `op=add`，delete/merge 属读投影（W3） | ADR 0010 决定 4；S1「画 3 框→恰 3 块」；PP-21 |
+| W1-3 | 闸门粒度＝**逐框过闸门**（每框都是独立模型提交，占用可能在框间变化，与 PP-11 窗口间探活同纪律） | 前置 1「每框…各过一次闸门」原文；失败语义表新行 |
+| W1-4 | 全本（`pages` 缺省）命中带框页：**剔出解析窗口、按逐页区域驱动路由**，窗口切分只对无框页 | `pipeline.py:497-521` 两路径结构支持；`api.md` 区域驱动段 |
+| W1-5 | 与 PLAN-019 受理门接线：**W1 框数 422 门独立先挂**（插在页码越界后、引擎名解析前）；PLAN-019 W3 挂 `decide_rerun` 受理门时**必须把「目标页有人工区域意图」并入判定**——区域变化不在签名冻结输入集内，不处理则「改框后全本重解析」被 `up_to_date` 拒跑，S1 跨版本判据不可达。该相互作用登记于此，作为 PLAN-019 W3 的前置注记 | `api/main.py:639-664` 现门槛；`orchestrator/signature.py:31-37` 冻结输入集 |
+| W1-6 | 单框失败语义：重试 1 次仍 `EngineError` → **整页判 `failed`**（错误文本带框序与 `region_id`），不落缺框半页 | 与 `_mark_failed` 页级语义一致（`pipeline.py:453`）；PP-21 失败域段 |
+
+本仓自决细化（ADR 0010 决定 5 授权，成文于 PP-21）：框内归一＝单个存活块保持原类型与必需字段；
+多个存活块按阅读序拼接为一个 `paragraph`（各块 markdown 渲染拼接、公式保留定界符），bbox 取并集
+并夹在框内；空框不出块、以页质量信号可见暴露；块数组按 `(y0, x0)` 字典序排 `index`/`order`。
+裁剪工具用既有依赖 pymupdf（页 `clip` → PNG 字节），不新增图像库。
+
+## W1 落地结论（2026-10-15）
+
+- 交付两批：**W1-a** 受理门（逐页 `add` 框数超上限判在探活前 422，`api/main.py`，契约
+  `TestParseJobRegionGate` 守护）；**W1-b** 执行面（`orchestrator/pipeline.py` 区域驱动分支：
+  `_region_frames` 分组排序、`_crop_page_image` 裁剪、`_normalize_frame` 映射＋平移、
+  `_merge_frame_blocks` 归一、`_handle_region_page` 逐框闸门与页级拼装）。
+- 六条裁决对应代码：W1-1 平移只在编排侧，`normalize_page` 未改；W1-2 路由与消费都只认 `op=add`，
+  一框至多一块、框间空隙不成块；W1-3 每框各过 `_await_model_idle`（单测计「起始 1 + 每框 1」）；
+  W1-4 全本窗口只对无框页切分；W1-5 422 门独立挂载，PLAN-019 W3 并入区域判据的前置注记保留；
+  W1-6 单框重试仍败 → 整页 `_mark_failed`（文本带框序与 `region_id`），该页不落产物（PP-13）。
+- 偏差登记：① 空框可见需要载体——`QualityMetrics` 新增 `empty_region_count`（默认 0，非区域页恒 0），
+  PP-20 信号清单同批补列；② 裁剪不能走「图片当文档 + 原始像素框 `clip`」：图片文档页尺寸按内嵌 DPI
+  折算成点，小框折算成零尺寸致写图失败，改为**像素→点比例折算 + 逆向缩放**裁剪，逐像素对齐。
+- 守护面：`tests/unit/test_orchestrator.py::TestRegionDrivenParse` 11 例；PP-21/ADR 0010 的「待实施」
+  注记撤除，`code-map.md` orchestrator 两行挂 PP-21。
+- 未做（不属 W1 完成判据）：真机 S1 实测（「画 3 框→恰 3 块」经 MinerU）、`regions` 读投影（W3）、
+  W8 确认门。
 
 ## 验证与验收
 

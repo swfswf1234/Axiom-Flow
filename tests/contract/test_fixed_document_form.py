@@ -1,6 +1,7 @@
 """
-模块职责：守护固定文档的体裁化元数据、四段骨架、正文去日期化，以及契约表与运行态真源的双向对账。
+模块职责：守护固定文档的体裁化元数据、按体裁的骨架白名单、正文去日期化，以及契约表与运行态真源的双向对账。
 设计关联（DesignRef）：docs/adr/0008-fixed-doc-form-and-metadata-genres.md、
+docs/adr/0017-database-design-eight-chapter-skeleton.md、
 docs/standards/doc-governance.md「元数据」「固定文档骨架与可对账契约」
 实现状态：Current
 被测代码：docs/architecture/、docs/design/、src/axiom_flow/api/、src/axiom_flow/db/models.py
@@ -28,12 +29,30 @@ DESIGN = ROOT / "docs" / "design"
 
 CONTRACT_DOCUMENTS = ("overview.md", "api.md", "database-design.md")
 MAPPING_DOCUMENT = "code-map.md"
-DESIGN_DOCUMENTS = ("parsing-pipeline.md", "parsing-management.md", "model-integration.md")
+DATABASE_DESIGN_DOCUMENT = "database-design.md"
+FOUR_SECTION_DOCUMENTS = ("overview.md", "api.md", MAPPING_DOCUMENT)
+DESIGN_DOCUMENTS = (
+    "parsing-pipeline.md",
+    "parsing-management.md",
+    "model-integration.md",
+    "knowledge-analysis.md",
+)
 INDEX_DOCUMENTS = (ARCHITECTURE / "index.md", DESIGN / "index.md")
 
 SKELETON = ("目的与边界", "当前契约", "失败与兼容语义", "验证与追溯")
+EIGHT_CHAPTER_SKELETON = (
+    "一、前言",
+    "二、遵循的规则",
+    "三、本项目表总览",
+    "四、整体架构（本项目所需部分）",
+    "五、详细设计",
+    "六、与 QED-Engine 的交互与同步契约",
+    "七、变更与运维",
+    "八、守护与验证",
+)
 TRACE_HEADING = "## 验证与追溯"
 DESIGN_TRACE_HEADING = "## 追溯"
+DATABASE_DESIGN_TRACE_HEADING = "## 八、守护与验证"
 
 CONTRACT_METADATA = ("设计状态", "确认状态", "实现状态", "最后更新", "关联代码", "关联测试", "关联 ADR")
 MAPPING_METADATA = ("状态", "确认状态", "最后更新", "覆盖范围")
@@ -65,11 +84,19 @@ def _metadata_block(document: Path) -> list[str]:
 
 
 def _contract_body(document: Path) -> str:
-    """契约正文段：首个 H2 起、到末段追溯段之前（追溯段允许归档壳式来源引用）。"""
+    """契约正文段：首个 H2 起、到末段追溯段之前（追溯段允许归档壳式来源引用）。
+
+    追溯段的标题按体裁取——数据库设计篇用八章体的末章，其余取四段骨架的末段。
+    """
+    trace_headings = (
+        (DATABASE_DESIGN_TRACE_HEADING,)
+        if document.name == DATABASE_DESIGN_DOCUMENT
+        else (TRACE_HEADING, DESIGN_TRACE_HEADING)
+    )
     lines = _text(document).splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith("## "))
     trace = next(
-        (i for i in range(start, len(lines)) if lines[i] in (TRACE_HEADING, DESIGN_TRACE_HEADING)),
+        (i for i in range(start, len(lines)) if lines[i] in trace_headings),
         len(lines),
     )
     return "\n".join(lines[start:trace])
@@ -97,13 +124,19 @@ def test_mapping_document_declares_mapping_genre_metadata() -> None:
     assert re.search(r"^状态：(?:Current|Superseded)\s*$", body, re.M), "映射表状态取值受限"
 
 
-# ---------------------------------------------------------------- 四段骨架
+# ---------------------------------------------------------------- 骨架白名单
 
 
-@pytest.mark.parametrize("name", (*CONTRACT_DOCUMENTS, MAPPING_DOCUMENT))
+@pytest.mark.parametrize("name", FOUR_SECTION_DOCUMENTS)
 def test_architecture_documents_follow_four_section_skeleton(name: str) -> None:
     headings = tuple(H2.findall(_text(ARCHITECTURE / name)))
     assert headings == SKELETON, f"{name}: H2 = {headings}"
+
+
+def test_database_design_document_follows_eight_chapter_skeleton() -> None:
+    """数据库设计篇按章与根侧总纲对读，故改用八章编号体（ADR 0017 体裁分治）。"""
+    headings = tuple(H2.findall(_text(ARCHITECTURE / DATABASE_DESIGN_DOCUMENT)))
+    assert headings == EIGHT_CHAPTER_SKELETON, f"H2 = {headings}"
 
 
 # ---------------------------------------------------------------- 正文去日期化

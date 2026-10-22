@@ -98,7 +98,7 @@ class Verdict(StrEnum):
 
 
 class RegionOp(StrEnum):
-    """页级人工结构意图三态（`af_page_regions.op`）。"""
+    """页级人工结构意图三态（`af_operations` structure 意图行的 `payload.op`）。"""
 
     ADD = "add"
     DELETE = "delete"
@@ -211,7 +211,7 @@ class Block(BaseModel):
 
 
 class QualityMetrics(BaseModel):
-    """页质量信号（空块率/公式平均置信度/表格成功数/文本长度比 + 可见丢弃计数）。"""
+    """页质量信号（空块率/公式平均置信度/表格成功数/文本长度比 + 可见丢弃与空框计数）。"""
 
     empty_block_ratio: float = Field(ge=0.0, le=1.0)
     avg_formula_confidence: float = Field(ge=0.0, le=1.0)
@@ -226,6 +226,11 @@ class QualityMetrics(BaseModel):
     blank_page: bool = Field(
         default=False,
         description="引擎确认该页存在但未回任何内容（合法空白页）；与「解析失败」和「映射缺口」可区分",
+    )
+    empty_region_count: int = Field(
+        default=0,
+        ge=0,
+        description="区域驱动页中无识别内容的框数（PP-21 可见计数）；非区域页恒 0",
     )
 
 
@@ -394,7 +399,7 @@ class IngestResponse(BaseModel):
 
 
 class EditRecord(BaseModel):
-    """块级人工编辑记录（af_block_edits 覆盖层，绑定其所属解析版本）。"""
+    """块级人工编辑记录（`af_operations` 的 edit 意图行，绑定其所属解析版本）。"""
 
     edit_id: str
     book_id: str
@@ -436,7 +441,7 @@ class EditRequest(BaseModel):
     corrected_bbox: BBox | None = None
 
 
-# ---------- 页级结构意图（af_page_regions / PUT …/structure，ADR 0010） ----------
+# ---------- 页级结构意图（af_operations 的 structure 意图行 / PUT …/structure，ADR 0010） ----------
 
 
 class BlockLocator(BaseModel):
@@ -478,7 +483,7 @@ class StructureRequest(BaseModel):
 
 
 class RegionRecord(BaseModel):
-    """`af_page_regions` 落库行（页级人工结构意图，不绑解析版本）。
+    """structure 意图行的响应投影（页级人工结构意图，不绑解析版本）。
 
     `region_id` 由服务端按 `op` + 几何身份确定性派生：同一意图重复提交得到同一 id，跨版本不变，
     根侧可长期持有。`anchor_bbox` / `members` 是受理时从生效版本产物抓的**几何快照**，
@@ -507,7 +512,7 @@ class PageStateOut(BaseModel):
     status: PageState
     has_artifact: bool = Field(description="该页 blocks.json 在生效作用域目录内存在（磁盘事实）")
     error: str = ""
-    edit_count: int = Field(default=0, description="本版本作用域内该页的 af_block_edits 行数")
+    edit_count: int = Field(default=0, description="本版本作用域内该页的 edit 意图行数")
 
 
 class PageListOut(BaseModel):
@@ -609,14 +614,15 @@ class AdminPurgeScope(BaseModel):
 class AdminPurgeCounts(BaseModel):
     """清除计数：字段名 = `af_*` 表名，由 `AF_TABLES` 派生守护（加表必须同批加字段）。
 
+    `af_operations` 一列合计了旧三表（任务版本 + 编辑 + 结构意图）的行数：删除作用域是
+    `(book_id)`，折叠后不再有三个独立计数位。
     `dry_run` 下是**将删**计数，真删下是**已删**计数（两态形状相同）。
     """
 
     af_books: int = 0
-    af_parse_jobs: int = 0
+    af_operations: int = 0
     af_pages: int = 0
-    af_block_edits: int = 0
-    af_page_regions: int = 0
+    af_kp: int = 0
     directories: int = 0
 
 

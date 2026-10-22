@@ -17,6 +17,7 @@ CURRENT_DOCUMENTS = {
     "parsing-pipeline.md",
     "parsing-management.md",
     "model-integration.md",
+    "knowledge-analysis.md",
 }
 # 取值事实源：docs/standards/doc-governance.md「元数据」节
 IMPLEMENTATION_STATUSES = {
@@ -71,12 +72,12 @@ def test_design_directory_has_one_index_and_one_current_contract():
         assert f"]({document})" in index
 
 
-# 叙述框架（PLAN-012）：三篇同构的六段骨架，H2 顺序固定、白名单穷举。
+# 叙述框架（PLAN-012）：各篇同构的六段骨架，H2 顺序固定、白名单穷举。
 SECTION_SKELETON = ("目标与非目标", "边界与事实源", "核心设计", "失败与质量语义", "验收判据", "追溯")
 # 核心设计内的守则段统一名（2026-09-23 呈现轮：由「不变式与条文」→「已确定守则」→「确定规范」，
 # 并把篇末「条文表」并入同一张表）。
 CLAUSE_SECTION = "确定规范"
-# R2：条文编号必须在本篇内解析（`PP-n`/`PM-n`/`MI-n`），跨壳引用一律降级为「来源：PLAN-0xx（已归档）」。
+# R2：条文编号必须在本篇内解析（`PP-n`/`PM-n`/`MI-n`/`KA-n`），跨壳引用一律降级为「来源：PLAN-0xx（已归档）」。
 CROSS_SHELL_CLAUSE = re.compile(r"PLAN-\d+[^\n。]{0,16}条文")
 # R3：不做第二份契约表——列名清单与响应字段清单的事实源在 `architecture/`。
 # 必须带 MULTILINE：表头行出现在文档中部，缺该标志时 `^` 只锚定文首，守护会**恒不命中**。
@@ -89,7 +90,7 @@ def _h2_headings(document: str) -> list[str]:
 
 
 def test_design_documents_follow_six_section_skeleton():
-    """S1：三篇 H2 逐字等于六段骨架（顺序与集合都固定，小节层级不越界成 H2）。"""
+    """S1：各篇 H2 逐字等于六段骨架（顺序与集合都固定，小节层级不越界成 H2）。"""
     for document in CURRENT_DOCUMENTS:
         assert _h2_headings(document) == list(SECTION_SKELETON), document
 
@@ -112,6 +113,7 @@ def test_design_documents_declare_numbered_clauses_with_carriers():
         "PM": "parsing-management.md",
         "PP": "parsing-pipeline.md",
         "MI": "model-integration.md",
+        "KA": "knowledge-analysis.md",
     }
     for prefix, document in carriers.items():
         content = (DESIGN / document).read_text(encoding="utf-8")

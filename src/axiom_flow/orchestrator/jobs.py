@@ -15,7 +15,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from axiom_flow.db.repositories import BookRepository, PageRepository, ParseJobRepository
+from axiom_flow.db.repositories import BookRepository, OperationRepository, PageRepository
 from axiom_flow.engines.base import ParseEngine
 from axiom_flow.orchestrator.pipeline import DEFAULT_WINDOW_SIZE, ParseOutcome, run_parse_job
 from axiom_flow.schemas import JobStatus, LastParseResult, ParseStatus
@@ -66,7 +66,7 @@ class JobRunner:
         except Exception:  # noqa: BLE001 - 后台线程异常必须记录并落库，避免任务悬挂
             logger.exception("parse job %s 执行异常", job_id)
             with self._session_factory() as session:
-                ParseJobRepository(session).mark_finished(
+                OperationRepository(session).mark_finished(
                     job_id, status=JobStatus.FAILED, error="内部错误（详见服务日志）"
                 )
                 # 书目进度必须同步收敛：否则异常任务把书永久留在 `parsing`（ADR 0007 决定 3）
@@ -91,11 +91,11 @@ class JobRunner:
         误判为中断（多实例前须改为心跳 + 后台回收）。返回被归一的 `(job_id, book_id)` 列表。
         """
         with self._session_factory() as session:
-            jobs = ParseJobRepository(session)
+            jobs = OperationRepository(session)
             books = BookRepository(session)
             affected: list[tuple[str, str]] = []
             for job in jobs.reconcile_interrupted():
-                latest = jobs.list_for_book(job.book_id)
+                latest = jobs.list_versions(job.book_id)
                 is_latest = bool(latest) and latest[-1].job_id == job.job_id
                 books.mark_parse_idle(
                     job.book_id,

@@ -3,7 +3,7 @@
 守护面（docs/design/parsing-pipeline.md）：默认全本、指定页逐页、单页失败不中断、
 模型不可用任务失败、产物三件套 + chunks.json + manifest.json、进度回写；
 以及页级持久化不变式（PP-13）：产物写先于页行提交、整本/异常失败保留已解析页、
-progress 节流写入。
+progress 节流写入；区域驱动页解析（PP-21 / ADR 0010）见 TestRegionDrivenParse。
 """
 
 from __future__ import annotations
@@ -17,14 +17,17 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from axiom_flow.db.models import AfParseJob, Base
+from axiom_flow.db.models import AfOperation, Base
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
     BookSyncRow,
+    OperationRepository,
     PageRepository,
-    ParseJobRepository,
     ParseJobRow,
+    RegionIntent,
+    job_timing,
+    region_id_for,
 )
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
 from axiom_flow.ingest import ingest_book
@@ -135,7 +138,7 @@ def env(tmp_path):
 
 
 def _create_job(session: Session, *, pages: list[int] | None = None, job_id: str = "job-1") -> str:
-    ParseJobRepository(session).create(ParseJobRow(job_id=job_id, book_id="b05", engine="mineru", pages=pages))
+    OperationRepository(session).create(ParseJobRow(job_id=job_id, book_id="b05", engine="mineru", pages=pages))
     session.commit()
     return job_id
 
@@ -344,7 +347,7 @@ class TestWholeBookJob:
         assert book is not None and book.pages_done == 2
         assert book.parse_status == "pending", "进度列不表达结局（ADR 0007 决定 3）"
         assert book.last_parse_result == "completed"
-        job = ParseJobRepository(session).get(job_id)
+        job = OperationRepository(session).get(job_id)
         assert job is not None and job.status == "completed"
         assert PageRepository(session).count_parsed("b05", job_id) == 2
 
@@ -380,7 +383,7 @@ class TestWholeBookJob:
             data_root=data_root,
         )
 
-        job = ParseJobRepository(session).get(job_id)
+        job = OperationRepository(session).get(job_id)
         book = BookRepository(session).get("b05")
         assert job is not None
         assert job.source_sha256 == book.sha256 and job.source_sha256 != ""
@@ -522,8 +525,8 @@ class TestSingleOccupancyGate:
         assert "占用" in outcome.error
         assert "不可用" not in outcome.error, "占用与不可用是两种语义，不互相冒充"
         assert engine.parse_calls == 0, "占用期间不得向模型服务提交任何内容"
-        job = ParseJobRepository(session).get(job_id)
-        assert job is not None and job.started_at is None, "等待期保持 queued（started_at 为空）"
+        job = OperationRepository(session).get(job_id)
+        assert job is not None and job_timing(job)[0] is None, "等待期保持 queued（started_at 为空）"
         assert PageRepository(session).list_for_book("b05", job_id) == []
         book = BookRepository(session).get("b05")
         assert book is not None and book.active_job_id is None
@@ -581,7 +584,7 @@ class TestPerPageJob:
         """各版本写各的目录、互不覆盖；后者激活成功即删除被替换版本（REQ-097 W4）。
 
         旧契约（PLAN-004 / REQ-080）允许历史版本目录长期共存；W4 后磁盘只留生效版本，
-        历史可解释性由 af_pages/af_parse_jobs 行承载，不再依赖残留文件。
+        历史可解释性由 af_pages 与 parse 事件行承载，不再依赖残留文件。
         """
         session, data_root = env
         _ingest(session, data_root)
@@ -633,7 +636,7 @@ class TestPerPageJob:
         assert outcome.failed_pages == [2]
         assert "失败页：2" in outcome.error
         assert PageRepository(session).get("b05", job_id, 2).status == "failed"
-        job = ParseJobRepository(session).get(job_id)
+        job = OperationRepository(session).get(job_id)
         assert job is not None and job.status == "partial"
         assert job.failed_pages == [2], "失败页必须结构化落库，不只活在 error 字符串里"
         assert job.progress["failed"] == 1
@@ -761,6 +764,383 @@ class TestPerPageJob:
         assert BookRepository(session).get("b05").active_job_id == job_id
 
 
+def _seed_regions(session: Session, page_no: int, bboxes: list[list[int]], *, book_id: str = "b05") -> None:
+    """按声明序写入该页 `op=add` 人工框（区域作用域是页，不带 job_id，ADR 0010）。"""
+    OperationRepository(session).replace_page_intents(
+        book_id, page_no, [RegionIntent(op="add", bbox=list(b)) for b in bboxes]
+    )
+    session.commit()
+
+
+class _RegionEngine:
+    """区域驱动测试引擎：按 `parse_page` 调用序记录提交字节。
+
+    默认回**提交图全幅**的单 text 块（`pixels` 空间，用于验证裁剪→平移链），文本按调用序编号
+    `框N`；`results` 以调用序覆写整条 PageResult，`fail_calls` 以调用序抛 EngineError
+    （逐页重试会消耗两个序号）。`loads` 语义同 FakeEngine，供逐框闸门计数。
+    """
+
+    name = "mineru"
+
+    def __init__(
+        self,
+        *,
+        results: dict[int, PageResult] | None = None,
+        fail_calls: set[int] | None = None,
+        loads: list[ModelLoad | None] | None = None,
+    ):
+        self.calls: list[tuple[int, bytes]] = []
+        self.document_spans: list[tuple[int | None, int | None]] = []
+        self.results = dict(results or {})
+        self.fail_calls = fail_calls or set()
+        self.loads = loads
+        self.load_calls = 0
+
+    @property
+    def parse_calls(self) -> int:
+        return len(self.calls)
+
+    def crop_sizes(self, page_no: int) -> list[tuple[int, int]]:
+        return [
+            (pixmap.width, pixmap.height)
+            for no, payload in self.calls
+            if no == page_no
+            for pixmap in (pymupdf.Pixmap(payload),)
+        ]
+
+    def health(self) -> bool:
+        return True
+
+    def model_load(self) -> ModelLoad | None:
+        if self.loads is None:
+            return None
+        index = min(self.load_calls, len(self.loads) - 1)
+        self.load_calls += 1
+        return self.loads[index]
+
+    def parse_document(
+        self, pdf_bytes: bytes, filename: str, *, start_page: int | None = None, end_page: int | None = None
+    ) -> DocumentResult:
+        self.document_spans.append((start_page, end_page))
+        return DocumentResult(
+            pages=[
+                PageResult(
+                    page=1,
+                    blocks=[{"type": "text", "text": "整页检测", "bbox": [72, 96, 540, 132]}],
+                    page_size=(595.0, 842.0),
+                )
+            ]
+        )
+
+    def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult:
+        seq = len(self.calls) + 1
+        self.calls.append((page_no, image_bytes))
+        if seq in self.fail_calls:
+            raise EngineError(f"第 {seq} 次提交失败")
+        override = self.results.get(seq)
+        if override is not None:
+            return override
+        pixmap = pymupdf.Pixmap(image_bytes)
+        return PageResult(
+            page=page_no,
+            blocks=[
+                {
+                    "type": "text",
+                    "text": f"框{seq}",
+                    "bbox": [0, 0, pixmap.width, pixmap.height],
+                }
+            ],
+            page_size=(595.0, 842.0),
+            bbox_space="pixels",
+        )
+
+
+class TestRegionDrivenParse:
+    """区域驱动页解析（PP-21 / ADR 0010 决定 4/5）：一框一裁剪一提交、一框至多一块。
+
+    守护面：逐框提交且该页不整页检测、框内块以裁剪图映射后平移到原页坐标系、阅读序
+    `(y0, x0)` 编排 index/order、多块框归一为单 paragraph、空框不出块但按可见计数暴露、
+    单框重试后仍失败整页 `failed`（错误点名框序与 region_id）、无框页回落单图路径、
+    全本任务把带框页剔出窗口、逐框过单一占用闸门。
+    """
+
+    def test_one_parse_per_frame_in_reading_order(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        # 声明序故意打乱阅读序：裁剪与成块必须按 (y0, x0) 排序
+        frames = [[800, 600, 1100, 700], [50, 100, 400, 250], [200, 300, 700, 480]]
+        _seed_regions(session, 1, frames)
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine()
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1], data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        assert engine.parse_calls == 3, "一框一次提交，不多不少"
+        assert engine.document_spans == [], "区域驱动页不提交整页检测"
+        assert engine.crop_sizes(1) == [(350, 150), (500, 180), (300, 100)], "裁剪尺寸 = 框幅"
+        page = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
+        assert page.image_size == (1240, 1755), "页产物基准仍是原页图，不是裁剪图"
+        assert [block.bbox for block in page.blocks] == [
+            (50, 100, 400, 250),
+            (200, 300, 700, 480),
+            (800, 600, 1100, 700),
+        ], "bbox 平移回原页坐标系且按阅读序排列"
+        assert [block.index for block in page.blocks] == [0, 1, 2]
+        assert [block.order for block in page.blocks] == [0, 1, 2]
+        assert [block.text for block in page.blocks] == ["框1", "框2", "框3"]
+
+    def test_frame_bbox_maps_by_crop_size_then_translates(self, env):
+        """裁剪内 `normalized_1000` 逐轴按裁剪图映射，再按裁剪原点平移回原页坐标系（PP-21）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        _seed_regions(session, 1, [[100, 200, 600, 700]])
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine(
+            results={
+                1: PageResult(
+                    page=1,
+                    blocks=[{"type": "text", "text": "半框", "bbox": [0, 0, 500, 500]}],
+                    page_size=(595.0, 842.0),
+                    bbox_space="normalized_1000",
+                )
+            }
+        )
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1], data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        page = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
+        assert [block.bbox for block in page.blocks] == [(100, 200, 350, 450)]
+
+    def test_single_surviving_block_keeps_type(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        _seed_regions(session, 1, [[50, 50, 450, 150]])
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine(
+            results={
+                1: PageResult(
+                    page=1,
+                    blocks=[{"type": "title", "text": "章标题", "text_level": 2, "bbox": [0, 0, 400, 100]}],
+                    page_size=(595.0, 842.0),
+                    bbox_space="pixels",
+                )
+            }
+        )
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1], data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        page = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
+        assert len(page.blocks) == 1
+        assert page.blocks[0].type == "heading"
+        assert page.blocks[0].level == 2
+        assert page.blocks[0].bbox == (50, 50, 450, 150)
+
+    def test_multi_block_frame_merges_into_one_paragraph(self, env):
+        """框内多存活块 → 单 paragraph：markdown 渲染拼接（公式保留定界符），bbox 取并集。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        _seed_regions(session, 1, [[10, 20, 610, 520]])
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine(
+            results={
+                1: PageResult(
+                    page=1,
+                    blocks=[
+                        {"type": "text", "text": "甲", "bbox": [0, 0, 600, 100]},
+                        {"type": "text", "text": "乙", "bbox": [0, 120, 600, 280]},
+                        {"type": "equation", "latex": "$$x^2$$", "bbox": [0, 300, 590, 499]},
+                    ],
+                    page_size=(595.0, 842.0),
+                    bbox_space="pixels",
+                )
+            }
+        )
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1], data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        page = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
+        assert len(page.blocks) == 1, "一框至多一块"
+        block = page.blocks[0]
+        assert block.type == "paragraph"
+        assert block.text == "甲\n\n乙\n\n$$\nx^2\n$$"
+        assert block.bbox == (10, 20, 610, 519), "平移后各块并集（夹在框内）"
+
+    def test_empty_frame_no_block_but_visible_count(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        _seed_regions(session, 1, [[50, 100, 400, 250], [50, 400, 400, 550]])
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine(
+            results={2: PageResult(page=1, blocks=[], markdown="", page_size=(595.0, 842.0))}
+        )
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1], data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        page = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
+        assert len(page.blocks) == 1, "空框不出块"
+        assert page.quality is not None
+        assert page.quality.empty_region_count == 1, "空框必须可见（PP-9 计数暴露，不静默丢框）"
+
+    def test_markdown_only_frame_falls_back_to_paragraph(self, env):
+        """框内无结构化条目但有 markdown → 单 paragraph 铺满框（与整页回退同一判据）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        _seed_regions(session, 1, [[100, 100, 300, 200], [100, 400, 600, 700]])
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine(
+            results={
+                2: PageResult(page=1, blocks=[], markdown="框内整幅回退", page_size=(595.0, 842.0))
+            }
+        )
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1], data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        page = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
+        assert len(page.blocks) == 2
+        assert page.blocks[1].type == "paragraph"
+        assert page.blocks[1].text == "框内整幅回退"
+        assert page.blocks[1].bbox == (100, 400, 600, 700)
+        assert page.quality is not None and page.quality.empty_region_count == 0
+
+    def test_frame_failure_fails_whole_page_with_region_id(self, env):
+        """单框重试 1 次仍失败 → 整页 `failed`：错误点名框序与 region_id，半页产物不落盘（PP-21）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        frames = [[50, 100, 400, 250], [200, 300, 700, 480], [800, 600, 1100, 700]]
+        _seed_regions(session, 1, frames)
+        second_id = region_id_for("b05", 1, RegionIntent(op="add", bbox=frames[1]))
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine(fail_calls={2, 3})  # 第 2 框的首次提交与重试都失败
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1], data_root=data_root
+        )
+
+        assert outcome.status == "failed"
+        assert outcome.failed_pages == [1]
+        row = PageRepository(session).get("b05", job_id, 1)
+        assert row is not None and row.status == "failed"
+        assert "第 2/3 框" in row.error
+        assert second_id in row.error
+        assert not (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").exists(), (
+            "缺框的半页产物不落盘（PP-13：有页行必有产物）"
+        )
+
+    def test_mixed_pages_only_region_page_uses_frame_path(self, env):
+        session, data_root = env
+        _ingest(session, data_root)
+        _seed_regions(session, 1, [[50, 100, 400, 250]])
+        job_id = _create_job(session, pages=[1, 2])
+        engine = _RegionEngine()
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1, 2], data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        assert engine.parse_calls == 2, "带框页逐框提交，无框页仍单图提交"
+        assert engine.crop_sizes(2) == [(1240, 1755)], "无框页提交整页图"
+        page2 = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0002.blocks.json").read_text(encoding="utf-8")
+        )
+        assert page2.blocks[0].bbox == (0, 0, 1240, 1755)
+        assert page2.quality is not None and page2.quality.empty_region_count == 0
+
+    def test_non_add_intent_does_not_drive_parse(self, env):
+        """写面只消费 `op=add`：delete/merge 意图不改解析路径（重锚定属读投影，ADR 0010）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        OperationRepository(session).replace_page_intents(
+            "b05", 1, [RegionIntent(op="delete", anchor_bbox=[50, 100, 400, 250])]
+        )
+        session.commit()
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine()
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=[1], data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        assert engine.crop_sizes(1) == [(1240, 1755)], "非 add 意图不触发裁剪路径"
+
+    def test_whole_book_routes_region_pages_out_of_windows(self, env):
+        """全本任务：带框页剔出窗口，窗口只对剩余页切分（PLAN-018 W1 裁决 4）。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        _seed_regions(session, 2, [[300, 900, 500, 1000]])
+        job_id = _create_job(session, pages=None)
+        engine = _RegionEngine()
+
+        outcome = run_parse_job(
+            session=session, engine=engine, job_id=job_id, book_id="b05", pages=None, data_root=data_root
+        )
+
+        assert outcome.status == "completed", outcome.error
+        assert engine.document_spans == [(1, 1)], "窗口不再覆盖带框页"
+        assert engine.crop_sizes(2) == [(200, 100)]
+        page1 = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0001.blocks.json").read_text(encoding="utf-8")
+        )
+        page2 = BlocksPage.model_validate_json(
+            (_version_dir(data_root, job_id) / "pages" / "p0002.blocks.json").read_text(encoding="utf-8")
+        )
+        assert page1.blocks[0].text == "整页检测"
+        assert page2.blocks[0].bbox == (300, 900, 500, 1000)
+
+    def test_each_frame_passes_the_occupancy_gate(self, env):
+        """逐框过闸门（裁决 3 选 A）：每框都是独立提交，闸门检查次数 = 任务起始 1 + 每框 1。"""
+        session, data_root = env
+        _ingest(session, data_root)
+        _seed_regions(session, 1, [[50, 100, 400, 250], [50, 400, 400, 550]])
+        job_id = _create_job(session, pages=[1])
+        engine = _RegionEngine(loads=[ModelLoad(queued=0, processing=0)])
+
+        outcome = run_parse_job(
+            session=session,
+            engine=engine,
+            job_id=job_id,
+            book_id="b05",
+            pages=[1],
+            data_root=data_root,
+            model_gate_interval=0.0,
+            model_gate_deadline=5.0,
+        )
+
+        assert outcome.status == "completed", outcome.error
+        assert engine.load_calls == 1 + 2, "起始闸门 1 次 + 每框 1 次"
+
+
 def _file_env(tmp_path: Path, pages: int = 2):
     """文件库 + 多连接：读 Session 只看得见已提交行，复现 MySQL 的连接隔离语义。
 
@@ -793,7 +1173,7 @@ def _file_env(tmp_path: Path, pages: int = 2):
             course_id="math_analysis",
         )
         BookRepository(session).update_ingest("b05", page_count=pages, sha256="a" * 64)
-        ParseJobRepository(session).create(ParseJobRow(job_id="job-1", book_id="b05", engine="mineru"))
+        OperationRepository(session).create(ParseJobRow(job_id="job-1", book_id="b05", engine="mineru"))
         session.commit()
         return engine, session, data_root
 
@@ -896,7 +1276,7 @@ class TestWholeBookWindows:
             assert pages.get("b05", "job-1", 5).status == "parsed"
             assert pages.get("b05", "job-1", 6).status == "failed"
             assert pages.get("b05", "job-1", 12).status == "parsed"
-            job = ParseJobRepository(reader).get("job-1")
+            job = OperationRepository(reader).get("job-1")
         assert job is not None and job.failed_pages == [6, 7, 8, 9, 10]
 
     def test_progress_is_visible_per_window_from_another_connection(self, tmp_path):
@@ -1047,14 +1427,14 @@ class TestPerPagePersistence:
     def test_progress_written_every_ten_pages(self, tmp_path):
         engine, session, data_root = _file_env(tmp_path, pages=12)
         writes: list[int] = []
-        original = ParseJobRepository.update_progress
+        original = OperationRepository.update_progress
 
         def spy(self, job_id, progress):  # noqa: ANN001
             writes.append(progress["parsed"])
             return original(self, job_id, progress)
 
         monkey = pytest.MonkeyPatch()
-        monkey.setattr(ParseJobRepository, "update_progress", spy)
+        monkey.setattr(OperationRepository, "update_progress", spy)
         try:
             run_parse_job(
                 session=session,
@@ -1069,7 +1449,7 @@ class TestPerPagePersistence:
 
         assert writes == [10], "12 页快跑（未到 1s 间隔）只在每 10 页节点写一次"
         with Session(engine) as reader:
-            job = ParseJobRepository(reader).get("job-1")
+            job = OperationRepository(reader).get("job-1")
         assert job is not None and job.status == "completed"
         assert job.progress["parsed"] == 12
 
@@ -1119,7 +1499,7 @@ class TestPerPagePersistence:
         with Session(engine) as reader:
             assert PageRepository(reader).get("b05", "job-1", 1).status == "parsed"
             assert BookRepository(reader).get("b05").active_job_id is None
-            job = ParseJobRepository(reader).get("job-1")
+            job = OperationRepository(reader).get("job-1")
             book = BookRepository(reader).get("b05")
         assert job is not None and job.status == "failed"
         assert job.progress["parsed"] == 1
@@ -1193,7 +1573,7 @@ class TestStatusSemanticsAdr0007:
 
         assert outcome.status == "failed", "零页成功不是「部分成功」"
         assert outcome.failed_pages == [1, 2]
-        job = ParseJobRepository(session).get(job_id)
+        job = OperationRepository(session).get(job_id)
         assert job is not None and job.status == "failed" and job.failed_pages == [1, 2]
         book = BookRepository(session).get("b05")
         assert book is not None and book.last_parse_result == "failed" and book.parse_status == "pending"
@@ -1204,7 +1584,7 @@ class TestStatusSemanticsAdr0007:
         _ingest(session, data_root)
         job_id = _create_job(session)
 
-        ParseJobRepository(session).mark_running(job_id)
+        OperationRepository(session).mark_running(job_id)
         BookRepository(session).update_parse("b05", parse_status="parsing", pages_done=0)
         session.commit()
 
@@ -1227,7 +1607,7 @@ class TestStatusSemanticsAdr0007:
             data_root=data_root,
         )
 
-        job = ParseJobRepository(session).get(job_id)
+        job = OperationRepository(session).get(job_id)
         assert job is not None and job.status != "interrupted"
 
 
@@ -1244,7 +1624,7 @@ class TestStartupReconciliationRunner:
 
     def test_interrupted_latest_job_sets_book_result(self, tmp_path):
         engine, session, data_root = _file_env(tmp_path)
-        ParseJobRepository(session).mark_running("job-1")
+        OperationRepository(session).mark_running("job-1")
         BookRepository(session).update_parse("b05", parse_status="parsing", pages_done=1)
         session.commit()
         session.close()
@@ -1254,7 +1634,7 @@ class TestStartupReconciliationRunner:
 
         assert normalized == [("job-1", "b05")]
         with Session(engine) as reader:
-            job = ParseJobRepository(reader).get("job-1")
+            job = OperationRepository(reader).get("job-1")
             book = BookRepository(reader).get("b05")
             assert job is not None and job.status == "interrupted"
             assert book is not None and book.parse_status == "pending"
@@ -1263,7 +1643,7 @@ class TestStartupReconciliationRunner:
     def test_terminal_latest_job_keeps_its_result(self, tmp_path):
         """旧任务被归一时不得改写该书最近一次任务的结局（结局跟随最新任务）。"""
         engine, session, data_root = _file_env(tmp_path)
-        jobs = ParseJobRepository(session)
+        jobs = OperationRepository(session)
         jobs.mark_running("job-1")  # 更早的任务：上次进程被 kill 的遗留
         jobs.create(ParseJobRow(job_id="job-2", book_id="b05", engine="mineru"))
         jobs.mark_finished("job-2", status="partial", error="失败页：2", failed_pages=[2])
@@ -1281,11 +1661,11 @@ class TestStartupReconciliationRunner:
             book = BookRepository(reader).get("b05")
             assert book.parse_status == "pending", "进度收回 pending"
             assert book.last_parse_result == "partial", "结局跟随最新任务（job-2），不被更早的中断行覆盖"
-            assert reader.get(AfParseJob, "job-2").status == "partial"
+            assert reader.get(AfOperation, "job-2").status == "partial"
 
     def test_startup_reconciliation_is_idempotent(self, tmp_path):
         engine, session, data_root = _file_env(tmp_path)
-        ParseJobRepository(session).mark_running("job-1")
+        OperationRepository(session).mark_running("job-1")
         session.commit()
         session.close()
         runner = self._runner(engine, data_root)

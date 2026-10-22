@@ -22,24 +22,53 @@ from axiom_flow.api.main import create_app
 from axiom_flow.config import AdminConfigError, load_settings
 from axiom_flow.db.models import (
     AF_TABLES,
+    LIFECYCLE_EVENT,
+    LIFECYCLE_INTENT,
+    OP_KIND_PARSE,
+    OP_KIND_STRUCTURE,
     AfBook,
+    AfOperation,
     AfPage,
-    AfPageRegion,
-    AfParseJob,
     Base,
 )
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
     BookSyncRow,
-    EditRepository,
+    OperationRepository,
     PageRepository,
-    ParseJobRepository,
     ParseJobRow,
     RegionIntent,
-    RegionRepository,
 )
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
+
+
+def _parse_rows(session, *, book_id: str | None = None) -> list[AfOperation]:
+    """parse 事件行的唯一读法（旧 `select(AfParseJob)`）：契约测试断言库内侧，不看响应镜像。
+
+    折叠后「任务表」不再是独立表，行集合由 `op_kind='parse'` 且 `lifecycle='event'` 界定；
+    作用域条件只写在这一个函数里，避免各处各自拼 WHERE 而漏掉一半判据。
+    """
+    stmt = select(AfOperation).where(
+        AfOperation.lifecycle == LIFECYCLE_EVENT, AfOperation.op_kind == OP_KIND_PARSE
+    )
+    if book_id is not None:
+        stmt = stmt.where(AfOperation.book_id == book_id)
+    return list(session.scalars(stmt.order_by(AfOperation.job_id)))
+
+
+def _intent_rows(session, op_kind: str, *, book_id: str | None = None) -> list[AfOperation]:
+    """人工意图行的读法（旧 `select(AfPageRegion)`）：只取 `lifecycle='intent'` 的那一侧。
+
+    几何落在 `payload` 里，需要读几何的用例按 `row.payload[...]` 取——直接写属性名会静默拿到
+    `None`，让「落库了没有」的断言退化成恒真。
+    """
+    stmt = select(AfOperation).where(
+        AfOperation.lifecycle == LIFECYCLE_INTENT, AfOperation.op_kind == op_kind
+    )
+    if book_id is not None:
+        stmt = stmt.where(AfOperation.book_id == book_id)
+    return list(session.scalars(stmt.order_by(AfOperation.page_no, AfOperation.target_id)))
 
 
 class FakeEngine:
@@ -224,7 +253,7 @@ def _parsed_book(client: TestClient) -> None:
 def _add_region(session_factory, book_id: str, page_no: int = 1) -> None:
     """经仓储落一条人工区域行（结构端点归 `TestStructureEndpoint`，这里只喂删除面与跨版本存活判据）。"""
     with session_factory() as session:
-        RegionRepository(session).replace_page(
+        OperationRepository(session).replace_page_intents(
             book_id, page_no, [RegionIntent(op="add", bbox=[72, 900, 600, 1010])]
         )
         session.commit()
@@ -560,7 +589,7 @@ class TestStructureEndpoint:
                 row["region_id"] for row in first
             )
             with session_factory() as session:
-                assert len(session.scalars(select(AfPageRegion)).all()) == 2
+                assert len(_intent_rows(session, OP_KIND_STRUCTURE)) == 2
 
     def test_declaration_is_scoped_to_one_page(self, tmp_path, monkeypatch):
         """缺席即撤销只作用于**本页**：他页人工框不受本次声明影响。"""
@@ -574,14 +603,12 @@ class TestStructureEndpoint:
 
             assert [row["bbox"] for row in after] == [[30, 30, 40, 40]]
             with session_factory() as session:
-                rows = session.scalars(
-                    select(AfPageRegion).order_by(AfPageRegion.page_no)
-                ).all()
-                assert [(row.page_no, row.bbox) for row in rows] == [
+                rows = _intent_rows(session, OP_KIND_STRUCTURE)
+                assert [(row.page_no, row.payload["bbox"]) for row in rows] == [
                     (1, [30, 30, 40, 40]),
                     (2, [72, 900, 600, 1010]),
                 ]
-                assert rows[1].region_id == kept[0]["region_id"]
+                assert rows[1].target_id == kept[0]["region_id"]
 
     def test_delete_by_block_index_anchors_to_artifact_geometry(self, client):
         """下标 → 几何的中间换算：`anchor_bbox` 必须等于生效版本产物里该块的 bbox。"""
@@ -718,7 +745,7 @@ class TestStructureEndpoint:
             assert response.status_code == 400, response.text
             assert "每页上限" in response.json()["detail"], response.text
             with session_factory() as session:
-                assert session.scalars(select(AfPageRegion)).all() == []
+                assert _intent_rows(session, OP_KIND_STRUCTURE) == []
 
     def test_page_beyond_book_is_404_before_write(self, tmp_path, monkeypatch):
         """页码域按 `af_books.page_count` 在受理前判：只有两页的书不能声明第 3 页的人工框。
@@ -737,7 +764,106 @@ class TestStructureEndpoint:
             assert response.status_code == 404, response.text
             assert "页不存在" in response.json()["detail"], response.text
             with session_factory() as session:
-                assert session.scalars(select(AfPageRegion)).all() == []
+                assert _intent_rows(session, OP_KIND_STRUCTURE) == []
+
+
+class TestRegionDrivenSubmission:
+    """`POST /api/v1/parse-jobs` 区域驱动受理门（PLAN-018 W1 / ADR 0010 决定 4）：框数判在受理前。
+
+    状态码分档：声明面（`PUT …/structure`）超上限是取值违规 → 400；提交面超上限会把成本
+    （每框一次单页提交）打到模型 → 422 且**不创建任务行**。本类守受理面；执行面「每框一次
+    调用」由编排单测守护（PP-21）。
+    """
+
+    LIMIT = 2
+
+    @staticmethod
+    def _seed(session_factory, page_no: int, *, adds: int, deletes: int = 0) -> None:
+        intents = [
+            RegionIntent(op="add", bbox=[10 + 60 * i, 900, 60 + 60 * i, 1000]) for i in range(adds)
+        ]
+        intents += [
+            RegionIntent(op="delete", anchor_bbox=[72, 96 + 20 * i, 540, 132 + 20 * i])
+            for i in range(deletes)
+        ]
+        with session_factory() as session:
+            OperationRepository(session).replace_page_intents("mathanalysis-b05", page_no, intents)
+            session.commit()
+
+    @staticmethod
+    def _job_rows(session_factory) -> int:
+        with session_factory() as session:
+            return len(_parse_rows(session))
+
+    def test_over_limit_rejected_422_without_job_row(self, tmp_path, monkeypatch):
+        test_client, session_factory = _build(tmp_path, monkeypatch, max_regions_per_page=self.LIMIT)
+        with test_client as client:
+            _parsed_book(client)
+            self._seed(session_factory, 1, adds=self.LIMIT + 1)
+            before = self._job_rows(session_factory)
+
+            response = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [1]}
+            )
+
+            assert response.status_code == 422, response.text
+            assert "第 1 页" in response.text and "上限" in response.text
+            assert self._job_rows(session_factory) == before
+
+    def test_whole_book_submission_checks_every_page(self, tmp_path, monkeypatch):
+        """`pages` 缺省＝全本：所有目标页都进框数检查，越限页码写进 detail。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch, max_regions_per_page=self.LIMIT)
+        with test_client as client:
+            _parsed_book(client)
+            self._seed(session_factory, 2, adds=self.LIMIT + 1)
+
+            response = client.post("/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"})
+
+            assert response.status_code == 422, response.text
+            assert "第 2 页" in response.text
+
+    def test_regions_on_unrequested_page_do_not_block(self, tmp_path, monkeypatch):
+        """门只查**目标页**：第 2 页 3 框不拒第 1 页的任务。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch, max_regions_per_page=self.LIMIT)
+        with test_client as client:
+            _parsed_book(client)
+            self._seed(session_factory, 2, adds=self.LIMIT + 1)
+
+            response = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [1]}
+            )
+
+            assert response.status_code == 202, response.text
+
+    def test_only_add_intents_count_toward_limit(self, tmp_path, monkeypatch):
+        """删除/合并意图不产生模型提交，不计入框数上限（成本口径＝提交数）。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch, max_regions_per_page=self.LIMIT)
+        with test_client as client:
+            _parsed_book(client)
+            self._seed(session_factory, 1, adds=self.LIMIT, deletes=3)
+
+            response = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [1]}
+            )
+
+            assert response.status_code == 202, response.text
+
+    def test_over_limit_judged_before_model_probe(self, tmp_path, monkeypatch):
+        """非法请求连探活都不做：服务已不可用时框数越限仍判 422 而非 503（门槛顺序守护）。"""
+        engine = FakeEngine()
+        test_client, session_factory = _build(
+            tmp_path, monkeypatch, max_regions_per_page=self.LIMIT, engine_factory=lambda name: engine
+        )
+        with test_client as client:
+            _parsed_book(client)
+            self._seed(session_factory, 1, adds=self.LIMIT + 1)
+            engine.healthy = False
+
+            response = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05", "pages": [1]}
+            )
+
+            assert response.status_code == 422, response.text
 
 
 class TestChunksEndpoint:
@@ -918,7 +1044,7 @@ class TestParseJobsEndpoints:
                 assert response.status_code == 422, pages
                 assert "页码越界" in response.json()["detail"], pages
             with session_factory() as session:
-                assert session.scalars(select(AfParseJob)).all() == []
+                assert _parse_rows(session) == []
 
     def test_job_missing_book_returns_404(self, client):
         assert client.post("/api/v1/parse-jobs", json={"book_id": "nope"}).status_code == 404
@@ -948,7 +1074,7 @@ class TestParseJobsEndpoints:
                     )
                 ]
             )
-            jobs = ParseJobRepository(session)
+            jobs = OperationRepository(session)
             jobs.create(ParseJobRow(job_id="ghost", book_id="mathanalysis-b05", engine="mineru"))
             jobs.mark_running("ghost")
             BookRepository(session).update_parse(
@@ -985,7 +1111,7 @@ class TestParseJobListEndpoint:
         failed_pages: list[int] | None = None,
     ) -> None:
         with session_factory() as session:
-            jobs = ParseJobRepository(session)
+            jobs = OperationRepository(session)
             jobs.create(ParseJobRow(job_id=job_id, book_id=book_id, engine="mineru"))
             if status != "queued":
                 jobs.mark_finished(job_id, status=status, error=error, failed_pages=failed_pages)
@@ -1087,7 +1213,7 @@ class TestParseJobListEndpoint:
             self._seed_job(session_factory, job_id, status="completed")
         with session_factory() as session:
             for job_id in ("aaa", "bbb", "ccc"):
-                ParseJobRepository(session).get(job_id).created_at = same
+                OperationRepository(session).get(job_id).created_at = same
             session.commit()
         with test_client as client:
             ids = [row["id"] for row in client.get("/api/v1/parse-jobs?limit=2").json()["jobs"]]
@@ -1226,7 +1352,7 @@ class TestPageListEndpoint:
                 "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit", json={"verdict": "ok"}
             ).status_code == 200
             with session_factory() as session:
-                EditRepository(session).upsert("mathanalysis-b05", "other-version", 2, 0, verdict="bad")
+                OperationRepository(session).upsert_edit("mathanalysis-b05", "other-version", 2, 0, verdict="bad")
                 session.commit()
 
             body = client.get("/api/v1/books/mathanalysis-b05/pages").json()
@@ -1484,7 +1610,7 @@ class TestEngineDispatch:
             assert created.status_code == 202, created.text
             assert created.json()["engine"] == "mineru"
             with session_factory() as session:
-                job = ParseJobRepository(session).get(created.json()["id"])
+                job = OperationRepository(session).get(created.json()["id"])
             assert job is not None and job.engine == "mineru"
 
     def test_payload_engine_wins_over_config(self, tmp_path, monkeypatch):
@@ -1508,7 +1634,7 @@ class TestEngineDispatch:
             assert created.status_code == 400, created.text
             assert "尚未实现" in created.json()["detail"]
             with session_factory() as session:
-                assert session.scalars(select(AfParseJob)).all() == []
+                assert _parse_rows(session) == []
 
     def test_unimplemented_payload_engine_returns_400(self, tmp_path, monkeypatch):
         test_client, _ = _build(tmp_path, monkeypatch)
@@ -1545,7 +1671,7 @@ class TestSubmitTimeHealthProbe:
             assert created.status_code == 503, created.text
             assert "模型服务不可用" in created.json()["detail"]
             with session_factory() as session:
-                assert session.scalars(select(AfParseJob)).all() == []
+                assert _parse_rows(session) == []
 
     def test_read_only_endpoints_unaffected_by_model_down(self, tmp_path, monkeypatch):
         test_client, _ = _build(
@@ -1614,7 +1740,7 @@ class TestIngestIdempotency:
             _add_region(session_factory, "mathanalysis-b05", page_no=2)
             _ingest(client)  # 重复 ingest：只原子替换根视图，人工框跨版本存活（ADR 0010 决定 1）
             with session_factory() as session:
-                assert len(session.scalars(select(AfPageRegion)).all()) == 1
+                assert len(_intent_rows(session, OP_KIND_STRUCTURE)) == 1
 
             book = client.get("/api/v1/books/mathanalysis-b05").json()
             assert book["parse_status"] == "pending"
@@ -1644,9 +1770,9 @@ class TestIngestIdempotency:
             assert client.delete("/api/v1/books/mathanalysis-b05?purge=true").status_code == 200
             with session_factory() as session:
                 assert session.scalars(select(AfPage)).all() == []
-                assert len(session.scalars(select(AfParseJob)).all()) == 1
+                assert len(_parse_rows(session)) == 1
                 # 删书带走人工框：书行没了区域就是无主行，留着会在重建同 id 书时凭空复活旧框
-                assert session.scalars(select(AfPageRegion)).all() == []
+                assert _intent_rows(session, OP_KIND_STRUCTURE) == []
 
 
 PURGE_URL = "/api/v1/admin/purge"
@@ -1720,7 +1846,7 @@ class TestAdminPurgeEndpoint:
 
     def _add_job(self, session_factory, book_id: str, job_id: str, status: str) -> None:
         with session_factory() as session:
-            ParseJobRepository(session).create(
+            OperationRepository(session).create(
                 ParseJobRow(job_id=job_id, book_id=book_id, engine="mineru", status=status)
             )
             session.commit()
@@ -1789,10 +1915,11 @@ class TestAdminPurgeEndpoint:
             assert self._book_root(tmp_path, "mathanalysis-b05").is_dir()
 
     def test_book_scope_purge_deletes_table_family_and_dir(self, tmp_path, monkeypatch):
-        """按书目清除：表族每一张表的行一起走（含 `af_parse_jobs` 与 `af_page_regions`），他书完好。
+        """按书目清除：表族每一张表的行一起走（`af_operations` 带走 parse 事件行与 edit/structure 意图行），他书完好。
 
-        `af_page_regions` 是 S5 删除面同构的判据行：区域按 `(book_id, page_no)` 作用域、不绑版本，
-        因此删书必须显式带走它，否则人工框会变成无主行永久残留。
+        structure 意图行是 S5 删除面同构的判据行：人工框按 `(book_id, page_no)` 作用域、不绑版本，
+        折进 `af_operations` 之后它与 parse 行同表异 `op_kind`，因此删书必须整表按书清，否则人工框
+        会变成无主行永久残留。
         """
         test_client, session_factory = _admin_build(tmp_path, monkeypatch)
         with test_client as client:
@@ -1816,10 +1943,9 @@ class TestAdminPurgeEndpoint:
             assert response.status_code == 200, response.text
             assert response.json()["deleted"] == {
                 "af_books": 1,
-                "af_parse_jobs": 1,
+                "af_operations": 3,
                 "af_pages": 2,
-                "af_block_edits": 1,
-                "af_page_regions": 1,
+                "af_kp": 0,
                 "directories": 1,
             }
             assert not self._book_root(tmp_path, "mathanalysis-b05").exists()
@@ -1829,19 +1955,12 @@ class TestAdminPurgeEndpoint:
                     session.scalars(select(AfBook).where(AfBook.book_id == "mathanalysis-b05")).all()
                     == []
                 )
-                assert (
-                    session.scalars(
-                        select(AfParseJob).where(AfParseJob.book_id == "mathanalysis-b05")
-                    ).all()
-                    == []
-                )
-                assert len(session.scalars(select(AfParseJob)).all()) == 2
-                b05_regions = session.scalars(
-                    select(AfPageRegion).where(AfPageRegion.book_id == "mathanalysis-b05")
-                ).all()
+                assert _parse_rows(session, book_id="mathanalysis-b05") == []
+                assert len(_parse_rows(session)) == 2
+                b05_regions = _intent_rows(session, OP_KIND_STRUCTURE, book_id="mathanalysis-b05")
                 assert b05_regions == []
                 # 他书人工框不随本清除消失：区域按 book_id 作用域，与解析版本无关
-                assert len(session.scalars(select(AfPageRegion)).all()) == 1
+                assert len(_intent_rows(session, OP_KIND_STRUCTURE)) == 1
 
     def test_in_flight_in_scope_returns_409(self, tmp_path, monkeypatch):
         """S5：自己作用域内有 `queued`/`running` ⇒ 409 且零删除（不留半删状态）。"""
@@ -1886,7 +2005,8 @@ class TestAdminPurgeEndpoint:
 
             assert first.status_code == 200, first.text
             assert first.json()["deleted"]["af_books"] == 2
-            assert first.json()["deleted"]["af_page_regions"] == 1
+            # 5 = 2 个 parse 事件行 + 2 个 edit 意图行 + 1 个 structure 意图行（整族扫尾按表清，不分 op_kind）
+            assert first.json()["deleted"]["af_operations"] == 5
             assert self._counts(session_factory) == {table.name: 0 for table in AF_TABLES}
             # 磁盘作用域 = 书目目录；空的 domain/course 父级不裁剪（operations.md 同一口径）
             assert not self._book_root(tmp_path, "mathanalysis-b05").exists()
@@ -1897,10 +2017,9 @@ class TestAdminPurgeEndpoint:
             assert second.json()["failures"] == []
             assert second.json()["deleted"] == {
                 "af_books": 0,
-                "af_parse_jobs": 0,
+                "af_operations": 0,
                 "af_pages": 0,
-                "af_block_edits": 0,
-                "af_page_regions": 0,
+                "af_kp": 0,
                 "directories": 0,
             }
 

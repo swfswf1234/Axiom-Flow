@@ -2,11 +2,11 @@
 
 设计状态：Accepted
 确认状态：已确认
-实现状态：Verified（既有端点真机取证；结构声明端点 Implemented，待真机窗口）
-最后更新：2026-10-01
+实现状态：Implemented（读取面已在真库重建窗口按空窗读数复验；写入面未在新形状上跑真机）
+最后更新：2026-10-22
 关联代码：`src/axiom_flow/api/main.py`、`src/axiom_flow/api/admin.py`（管理面）、`src/axiom_flow/schemas.py`（响应结构单一事实源）、`scripts/axiom_flow_service.py`（生命周期脚本）
 关联测试：`tests/contract/test_api_v1_contract.py`、`tests/contract/test_fixed_document_form.py`、`tests/unit/test_service_scripts.py`
-关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)
+关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)、[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)
 
 ## 目的与边界
 
@@ -138,12 +138,21 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
   30s）。已运行时报 `already running`，幂等退出 0。成功输出 `pid: <n>` 与 `log: <path>`。
 - `stop`：优雅停止（CTRL_BREAK）→ 5s 宽限（`_proc_alive` 判活）→ taskkill 强杀整树再等
   5s → 复核仍存活报 `stop failed` 并退出 1（PID 文件保留现场）；确认终止后清理 PID 文件，
-  强杀兜底生效时输出 `stopped (forced)`；无 PID/进程已死时清理残留并幂等退出 0。
-- `restart`：先 stop 后 start，透传 `--wait`。
+  强杀兜底生效时输出 `stopped (forced)`；PID 文件陈旧（进程已死）时清理残留并幂等退出 0。
+- `stop` 的**无 PID 文件分诊**：端口不通＝真未运行，输出 `not running (no pid file)` 并幂等
+  退出 0；端口仍在监听＝该 8902 实例非本脚本启动，脚本按 `netstat -ano` 反查监听 PID（只读、
+  只认 TCP LISTENING 且本地地址以 `:端口` 结尾）后**走同一条停止链真停它**，成功输出
+  `stopped (unmanaged listener pid <n>)`（强杀兜底时带 `forced`）并以 0 退出；反查不到监听 PID
+  时不终止任何进程，输出「未终止任何进程」并以 **3** 回报「无从处置」。脚本对 8902 端口有属主
+  身份，故在此执行真停；8900 控制中心对同一形态只检测不杀（根仓库
+  `docs/design/service-hosting.md`「停止后端口复核」，其 `_stop_via_script` 把 0 与 3 一并交端口复核）。
+- `restart`：先 stop 后 start，透传 `--wait`；`stop` 返回非 0 即中止并原样返回该码
+  （回显 `restart aborted`，停止失败不再拉起第二实例）。
 - `status`：PID 存活 / 端口探测（socket 预检 + HTTP 健康确认）双路径，输出
   `running (pid <n>)` / `running (port probe <port>)` / `stopped`，信息型恒退出 0。
 - `--port` 优先级：`--port` > `QED_AXIOM_URL` > `AXIOM_PORT` > 8902。
-- 退出码：`0` 成功或幂等；`1` 运行失败（spawn 失败、`--wait` 健康超时、stop 无法终止）；`2` 参数错误。
+- 退出码：`0` 成功或幂等（含按端口真停的外部实例）；`1` 运行失败（spawn 失败、`--wait` 健康超时、
+  stop 无法终止）；`2` 参数错误；`3` 端口由非本脚本启动的进程监听且反查不到监听 PID。
 - **无模式开关**：解析始终直连模型服务（ADR 0004），配置由 `config.py` 向上走查 `.env` 自读；
   脚本不注入密钥、不接受「本地/网关」二选一参数。
 
@@ -152,9 +161,10 @@ python scripts/axiom_flow_service.py {start|stop|restart|status} [--port PORT] [
 
 ### ② 数据查询（af_*）
 
-af_* 表（`af_books` / `af_parse_jobs` / `af_pages` / `af_block_edits` / `af_page_regions`）为 Axiom-Flow
-私有（qed 库
-af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](database-design.md)。
+af_* 表（`af_books` / `af_operations` / `af_pages` / `af_kp`）为 Axiom-Flow 私有（qed 库 af_* 命名空间，
+Alembic 独立建表），表结构见 [database-design.md](database-design.md)。
+`af_kp` 是分析模块（知识点梳理）的存储形状，**本轮没有任何公开端点读写其内容**——只有管理面
+`POST /api/v1/admin/purge` 会连它的行一起清（见「非公开管理面」节）；通路设计仍在承接计划内待评审。
 `GET /api/v1/books`、`GET /api/v1/books/{book_id}` 读 `af_books`，读取面**纯 DB 驱动**：空表即
 空列表 / 404，**不回落文件系统 `book.json`**（根视图只保留 `pages/p*.png`，`af_books` 是书目元数据
 唯一事实源；书目录仅在其行存在且目录在位时可达）。路径参数 `book_id` 受安全路径段约束（违规 422）。
@@ -179,11 +189,11 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 
 #### DELETE /api/v1/books/{book_id}
 
-删除 `af_books` 行、该书**全部解析版本**的 `af_pages` 页行与 `af_block_edits` 编辑行，以及该书的
-`af_page_regions` 区域行（人工框随书消失：区域行只在「全量声明缺席 / 删书与清除」两种情形下消失，
+删除 `af_books` 行、该书**全部解析版本**的 `af_pages` 页行与 `af_operations` 的 `edit` 意图行，以及该书的
+`structure` 意图行（人工框随书消失：意图行只在「全量声明缺席 / 删书与清除」两种情形下消失，
 版本更替不删它）；`?purge=true` 时同时删除 `parsed/` 产物目录，含 `versions/` 子树。
-`af_parse_jobs` 历史行保留为审计，不随删除清理——**唯一例外**是管理面 `POST /api/v1/admin/purge`
-（见「非公开管理面」节，它按书目或全项目连任务行一起清除）。**错误：** 404。
+`af_operations` 的 parse 事件行保留为审计，不随删除清理——**唯一例外**是管理面 `POST /api/v1/admin/purge`
+（见「非公开管理面」节，它按书目或全项目连事件行一起清除）。**错误：** 404。
 
 #### POST /api/v1/books/sync
 
@@ -210,7 +220,7 @@ af_* 命名空间，Alembic 独立建表），表结构见 [database-design.md](
 版本不因重新 ingest 失明）。DB 侧回置
 `active_job_id=NULL`（生效指针回到根视图）、`parse_status=pending`、`pages_done=0`，并只清空
 `job_id='legacy'` 的 `af_pages` 行（真实版本作用域的页行保留）；`last_parse_result` **不回置**——
-它记录「最近一次任务的结局」，ingest 不是任务。`af_parse_jobs` 历史与 `af_block_edits` 全部保留。
+它记录「最近一次任务的结局」，ingest 不是任务。`af_operations` 的 parse 事件行与意图行全部保留。
 
 **错误：** 404 书目不存在 / 源 PDF 缺失。
 
@@ -256,7 +266,7 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 | `status` | `"parsed"` \| `"failed"` \| `"pending"` | `af_pages.status` **原值透传**；**`pending` = 该版本没有这一页的页行**（管线从不写 `pending` 页行，列默认值只是约束） |
 | `has_artifact` | bool | 该页 `pages/p<NNNN>.blocks.json` 在**生效作用域目录**内存在（磁盘事实，独立于页行取） |
 | `error` | str | 页行 `error` 原值（写入时已截断至 500 字符）；无页行时为 `""` |
-| `edit_count` | int | 该页在**本版本作用域**内的 `af_block_edits` 行数（块编辑存在性，供前端标「已人工核对」） |
+| `edit_count` | int | 该页在**本版本作用域**内的 `edit` 意图行数（块编辑存在性，供前端标「已人工核对」） |
 
 **两条判据（客户端只需实现这两条）**：
 
@@ -300,14 +310,16 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 
 #### PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit
 
-块编辑 upsert（落 `af_block_edits`，**唯一键含生效版本 `job_id`**，同版本同块重复编辑覆盖更新）。
+块编辑 upsert（落 `af_operations` 的 `op_kind='edit'`、`lifecycle='intent'` 行，**幂等键 `intent_key`
+含生效版本 `job_id`**，同版本同块重复编辑覆盖更新）。
 请求：`{verdict?: "ok"|"bad", note?: string, corrected_text?: string, corrected_bbox?:
 [x0,y0,x1,y1]}`；响应：编辑记录（`EditRecord`，含 `job_id`）。编辑绑定其核对时的版本：块下标 `index`
 只在版本内有意义，换版本后旧编辑不自动套用。**错误：** 400 块下标越界 / 404。
 
 #### PUT /api/v1/books/{book_id}/pages/{page_no}/structure
 
-页结构意图**全量声明**（落 `af_page_regions`，**页级作用域、不绑解析版本**，
+页结构意图**全量声明**（落 `af_operations` 的 `op_kind='structure'`、`lifecycle='intent'` 行，
+**页级作用域、`job_id` 恒 `''` 即不绑解析版本**，
 [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 1）：新框（`add`）、删块（`delete`）、
 并块（`merge`）一次说清，**缺席即撤销**——本次未列出的意图行随之删除，所以重复提交同一组意图结果不变
 （幂等，不需要 undo 端点）。本端点不调模型服务：画框先于解析，模型不可用时也必须能声明意图。
@@ -365,8 +377,8 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 提交解析任务。请求：`{book_id, pages?, engine?}`（`pages` 缺省 = 全部页，走**全本解析**；指定页 =
 逐页页图重解析；`engine` 为 `mineru`/`paddleocr-vl`/`qwen-vl` 之一，**缺省回落
 `AXIOM_OCR_ENGINE`**，未实现的槽位返回 400、非法字面值返回 422，**绝不回落到其他引擎**）。
-202 返回 `ParseJob`（状态机见下表），任务落 `af_parse_jobs`（`engine` 存**解析后的实际引擎名**）
-并由后台执行。
+202 返回 `ParseJob`（状态机见下表），任务落 `af_operations` 的 `op_kind='parse'` 事件行
+（`engine` 存**解析后的实际引擎名**）并由后台执行。
 
 每个任务即**一个解析版本**：产物只写 `parsed/.../<book_id>/versions/<job_id>/`，并在任务开始时记录
 `source_sha256`/`page_count` 自证（版本 ↔ 源 PDF 快照对应）。失败页跳过不中断：`failed_pages` 给出
@@ -378,10 +390,21 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 `failed` 或中断**不激活**，产物保留不删（自然回滚 = 指针从未动过）。
 
 **受理前门槛**（顺序固定）：书目存在 → 已 ingest 校验 → **`pages` 越界 422**（逐页判
-`1 ≤ p ≤ af_books.page_count`；若放行越界页，会在 `af_pages` 写出指向不存在页图的幽灵行）→ 引擎名
-解析 → 模型服务探活（不可用 503，**不创建任务行**）；**越界判在探活之前**，非法请求不打模型。
+`1 ≤ p ≤ af_books.page_count`；若放行越界页，会在 `af_pages` 写出指向不存在页图的幽灵行）→
+**目标页人工框数超每页上限 422**（逐页判 `add` 框数 ≤ `AXIOM_MAX_REGIONS_PER_PAGE`，见下「区域驱动」）→
+引擎名解析 → 模型服务探活（不可用 503，**不创建任务行**）；**越界与框数违规都判在探活之前**，非法请求不打模型。
 
 **受理后不并行打模型**：执行前经单一占用闸门等待（见「单占用与排队」）。
+
+**区域驱动（目标页存在人工待识别框时）**：`pages` 指定的每一页以 `structure` 意图行当前 `add` 框为
+识别单元，管线侧框内裁剪、每框一次单页提交（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)
+决定 4），一框至多一块。**请求体不新增区域字段**——框图必须先经 `PUT …/pages/{page_no}/structure`
+落库，提交时由服务端读取，不在任务入参与库内留两处真相。人工框数超 `AXIOM_MAX_REGIONS_PER_PAGE`
+（默认 16）时受理前 422：每框独立计 `AXIOM_OCR_TIMEOUT` 且各过一次单一占用闸门，最坏挂钟随框数
+线性增长，成本必须在受理前可见。**全本提交（`pages` 缺省）**下有人工框的页同样剔出解析窗口、走
+逐页区域驱动，窗口切分只对剩余页（串行提交纪律同 [PP-11](../design/parsing-pipeline.md)）；
+无人工框的页回落引擎默认检测（现状路径，即回滚面）。裁剪提交形态、bbox 回映射、框内归一与
+失败域守则见 [PP-21](../design/parsing-pipeline.md)。
 
 #### 任务状态机（ADR 0007 决定 1）
 
@@ -431,10 +454,10 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 
 - **六态原值透传**：`status` 不做任何「看起来更好」的归并与改写（`interrupted` 就是 `interrupted`，
   不并入 `failed`）。读取面一旦加工，就把语义分歧冻结给了前端（ADR 0004 不做静默兼容层）。
-- **不读产物**：作业行事实全在 `af_parse_jobs`，因此本端点**不经** `_read_scope`——那是 per-book 的
+- **不读产物**：作业行事实全在 `af_operations` 的 parse 事件行，因此本端点**不经** `_read_scope`——那是 per-book 的
   产物作用域解析，跨书列表没有单一作用域，硬套会造出第二套作用域语义。`active` 经 `af_books` 联结
   取得，仍然只是数据库读、不摸磁盘，与「只读端点不依赖模型服务与凭据」一致。
-- **含已删书的审计行**：`DELETE /api/v1/books/{book_id}` 保留 `af_parse_jobs` 历史行（见 ② 该节），
+- **含已删书的审计行**：`DELETE /api/v1/books/{book_id}` 保留 parse 事件行（见 ② 该节），
   全局列表**不排除**它们，其 `active` 恒为 `false`。故不带 `book_id` 过滤时 `total` 可能大于现存书目
   的作业数——这是审计留痕的预期结果，不是脏数据。
 
@@ -490,7 +513,7 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 | 字段 | 类型 | 默认 | 语义 |
 | --- | --- | --- | --- |
 | `scope.all` | bool | `false` | `true` = 全项目：`af_*` 表族**全部行** + `parsed/` 下所有书目录（含每个版本子树） |
-| `scope.book_ids` | str[] | — | 按书目：清这些书在 af_* 表族的行（**含全部解析版本**，也含 `af_parse_jobs` 审计行）与其磁盘目录；每项须为安全路径段（违规 422） |
+| `scope.book_ids` | str[] | — | 按书目：清这些书在 af_* 表族的行（**含全部解析版本**，也含 parse 审计事件行）与其磁盘目录；每项须为安全路径段（违规 422） |
 | `dry_run` | bool | **`true`** | 缺省即演练：响应给清单与计数，磁盘与库**零改动** |
 | `confirm` | str | `""` | 仅 `dry_run:false` 时校验，须逐字为 `"PURGE"` |
 
@@ -553,6 +576,7 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
 | **无生效解析版本时声明结构意图** | 404 `无生效解析版本，拒绝结构操作：{book_id}`（legacy 根视图无可锚定的块，add/delete/merge 一并拒绝，ADR 0010 决定 7） |
 | **生效版本产物目录缺失** | 404 `生效版本产物缺失：{book_id} @ {job_id}`（指针所指版本目录被外部删除等；**不回落根视图**，ADR 0004 无自动兜底） |
 | 入参 schema 违规（安全路径段、引擎字面值、`file_path` 形态、**`pages` 页码越界**、未知字段） | 422 |
+| **`POST /api/v1/parse-jobs` 目标页人工框数超每页上限**（`AXIOM_MAX_REGIONS_PER_PAGE`） | 422（受理前判，**不打模型、不创建任务行**；与 `PUT …/structure` 的 400 分档——提交面防成本打到模型，声明面是取值违规） |
 | **列表端点**查询参数违规（`status` 不在六态内、`limit` 非 `1..200`、`offset` 为负、`book_id` 非法路径段） | 422 |
 | `GET /api/v1/parse-jobs?book_id=<不存在的书>` | **200 + 空 `jobs`**（列表过滤不判资源存在性；单本读取面仍是 404） |
 | 模型服务不可用（**提交期探活失败**，MinerU 未起等） | 503（提示经 8900 `/models/{slot}` 启停模型或检查 `QED_OCR_MODEL_URL`（5002））；**不创建任务行** |

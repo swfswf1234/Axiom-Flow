@@ -1,9 +1,9 @@
 # ADR 0008：固定文档的体裁化元数据、统一骨架与可对账契约表
 
 状态：Accepted
-最后更新：2026-09-23
+最后更新：2026-10-22
 关联代码：`docs/standards/doc-governance.md`、`docs/architecture/`、`docs/design/`
-关联测试：`tests/contract/test_fixed_document_form.py`（体裁元数据、四段骨架、正文去日期化）、
+关联测试：`tests/contract/test_fixed_document_form.py`（体裁元数据、按体裁的骨架白名单、正文去日期化）、
 `tests/contract/test_architecture_documents.py`（端点与列清单对账）
 
 ## 背景
@@ -34,9 +34,12 @@
    - **目录索引类**（各目录 `index.md`）：只声明 `状态` 与 `最后更新`，纯导航、无正文事实。
 2. **固定文档统一四段骨架**，与 `design/` 的六段对称：`## 目的与边界` / `## 当前契约` /
    `## 失败与兼容语义` / `## 验证与追溯`。H2 顺序固定、白名单穷举，缺段即守护转红。
+   **适用范围后经 [ADR 0017](0017-database-design-eight-chapter-skeleton.md) 改为按体裁分治**：
+   `database-design.md` 改用与根仓库总纲按章对读的八章编号体，其余三篇仍用本决定的四段体。
 3. **正文去日期化**：固定文档的**契约正文段**（`architecture/` 与 `design/` 中除末段追溯段以外的
    全部段落）不得出现任务编号（`REQ-`/`PLAN-`/`ARCH-`/`DEFECT-`）与具体日期；来源与判例一律降级到
-   末段追溯段（`architecture/` 的 `## 验证与追溯`、`design/` 的 `## 追溯`）。追溯段沿用既有的
+   末段追溯段（`architecture/` 的 `## 验证与追溯`、`design/` 的 `## 追溯`；
+   八章体的 `database-design.md` 取末章 `## 八、守护与验证`，规则本身不变，只换锚点）。追溯段沿用既有的
    「来源：PLAN-0xx（已归档）」写法并链接 `docs/history/` 归档壳，但**不得**指向已归档壳的条文编号
    （[PLAN-012](../history/plans/2026-09/2026-09-23-design-narrative-framework.md) 的 R2 裁决不变）。
    日期化过程的事实源仍是 `trackers/completed.md` 与承载计划。
@@ -68,3 +71,7 @@
 本决定只补它欠定义的「体裁」维度并细化「版本末期整理」的判据。承接本决定的标准正文是
 [文档治理规范](../standards/doc-governance.md)「元数据」「固定文档骨架与可对账契约」「版本末期文档整理」
 三节；执行承载是 [PLAN-014](../history/plans/2026-09/2026-09-23-arch010-v01-architecture-form-normalization.md)。
+
+**被部分收窄（不是被取代）**：决定 2 的「统一四段骨架」与决定 3 的追溯段锚点，其**适用范围**经
+[ADR 0017](0017-database-design-eight-chapter-skeleton.md) 改为按体裁分治（`database-design.md` 用
+八章编号体，追溯段随之换成该篇第八章）；本 ADR 的状态仍是 Accepted，其余五项决定全部有效。

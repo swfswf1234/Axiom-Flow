@@ -1,8 +1,8 @@
 # ADR 0004：解析管线归位与模型直连（对齐根仓库 ADR 0014）
 
 状态：Accepted
-最后更新：2026-09-17
-关联代码：`src/axiom_flow/engines/`（待实现，规划）、`src/axiom_flow/orchestrator/`、`src/axiom_flow/ingest/`
+最后更新：2026-10-22
+关联代码：`src/axiom_flow/engines/`、`src/axiom_flow/orchestrator/`、`src/axiom_flow/ingest/`
 关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_design_documents.py`
 
 ## 背景
@@ -16,8 +16,8 @@ v0.1 模型形态（[ADR 0002](0002-pending-design-location.md) 承接的
 2. 模型调用/预处理/后处理跨两仓库，解析效果调试无法一端闭环；
 3. 模型选择写进 Axiom-Flow 业务调用链，换模型（MinerU / PaddleOCR-VL）需改动业务代码。
 
-根仓库同轮立 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)
-（2026-09-14，Accepted）：**模型生命周期归 8900，解析管线归 Axiom-Flow**。
+根仓库同轮立其 ADR 0014（纯路径 `QED-Engine/docs/adr/0014-parsing-ownership-and-model-boundary.md`，
+2026-09-14，Accepted）：**模型生命周期归 8900，解析管线归 Axiom-Flow**。
 
 ## 决定
 
@@ -51,4 +51,4 @@ v0.1 模型形态（[ADR 0002](0002-pending-design-location.md) 承接的
 取代：无（部分修订 [ADR 0002](0002-pending-design-location.md) 承接的 `model-mode-config.md`
 中「MinerU 仅经 8900 网关可达」的解析路径，该设计文档归档 `history/design/`）。
 被取代：无。
-来源：根仓库 [ADR 0014](https://github.com/QED-Engine/qed-engine/blob/main/docs/adr/0014-parsing-ownership-and-model-boundary.md)（同轮对齐）。
+来源：根仓库 `QED-Engine/docs/adr/0014-parsing-ownership-and-model-boundary.md`（同轮对齐）。

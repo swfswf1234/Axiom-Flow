@@ -1,7 +1,7 @@
 # 运维指南
 
 状态：Current
-最后更新：2026-09-23
+最后更新：2026-10-22
 
 ## 8902 API 服务生命周期
 
@@ -30,9 +30,17 @@
 - 判活用内核句柄探测（`_proc_alive`，探测失败不再误判为「已死」）；优雅信号（CTRL_BREAK）
   未生效由 taskkill 强杀兜底成功时回显 `stopped (forced)`——正常现象，conda run 等跨
   console 语境常见，无需处理。
+- **无 PID 文件时按端口分诊（REQ-126，2026-10-20）**：端口不通＝真未运行，幂等退出 0；
+  端口仍在监听＝该 8902 实例非本脚本启动（PID 文件丢失或被移走），脚本按 `netstat -ano` 反查
+  监听 PID 并走同一条「优雅停止 → 强杀兜底 → 存活复核」链**真停**它，成功回显
+  `stopped (unmanaged listener pid <n>)`。本脚本是 8902 端口的生命周期属主，所以在这里执行真停；
+  8900 控制中心对同一形态只检测不杀（根仓库 `docs/design/service-hosting.md`「停止后端口复核」）。
+  反查不到监听 PID（netstat 不可用）时不终止任何进程，退出码 **3** 回报「无从处置」。
 - 优雅+强杀后仍存活则退出码 1 显式报 `stop failed`（绝不假 stopped）：按提示手动
   `taskkill /PID <pid> /T /F`，确认进程退出后重试 `stop` 清理 PID 文件。
-- 退出码：`0` 成功/幂等、`1` 运行失败（含 stop 无法终止）、`2` 参数错误。
+- `restart` 取回 `stop` 的返回码：非 0 即中止并回显 `restart aborted`（停止失败不再拉起第二实例）。
+- 退出码：`0` 成功或幂等（含按端口真停外部实例）、`1` 运行失败（含 stop 无法终止）、`2` 参数错误、
+  `3` 端口由非本脚本启动的进程监听且反查不到监听 PID。
 
 ## 推理基础设施（根仓库托管）
 
@@ -78,37 +86,89 @@
 `pages/p<NNNN>.{md,blocks.json}` 与 `chunks.json` 直接可读），因此重解析前的窗口内 8900/8903
 功能不中断。
 
-## af_* 迁移单窗口 runbook（PLAN-004 / REQ-080，**D 类：执行前须用户批准**）
+## af_* 整族重建单窗口 runbook（PLAN-024 W8，**D 类：执行前须用户批准**）
 
-`20260920_0002` 改四表结构（生效指针 + `job_id` 作用域），且**必须与新代码同窗口发布**——ORM 声明了
-`active_job_id` 而库未迁移时读列即故障。顺序固定为 B（本地全绿）→ C（单窗口）→ D（版本布局上单次
-重解析），**不在旧布局上重复真机解析**（避免解析完即被回填成 `legacy` 而失效）：
+档 B＝**DROP 现役 `af_*` 全部表 + 迁移链重置**后由唯一 base 迁移 `20261022_0001_af_family_rebuild` 重建
+四表形状，且**必须与新代码同窗口发布**——ORM 已声明四表列集，库未按新形状重建时读列即故障。旧链六枚
+迁移（`20260917_0001`…`20260928_0001`）随重置**已从仓库删除**，任何写死旧 revision 号的操作指令都不再可执行；
+历史窗口的执行读数在 [trackers/completed.md](../trackers/completed.md)。顺序固定为 B（本地全绿）→ C（单窗口）
+→ D（逐本重新 ingest + 解析），**不在旧布局上重复真机解析**（避免解析完即被回填成 `legacy` 而失效）：
 
 ```powershell
 # C-0 窗口排他（本机 GPU 只容得下一个解析；与 8900 侧约定静默后再开工）
 #   **占用判据以模型侧计数为准**：GET http://127.0.0.1:5002/health → queued_tasks + processing_tasks == 0
-#   本机侧只判 af_parse_jobs 有无 `queued` 行；服务重启后遗留的 `running` 行是**无人推进的孤儿**
+#   本机侧只判 `af_operations` 的 parse 事件行有无 `queued` 行；服务重启后遗留的 `running` 行是**无人推进的孤儿**
 #   （DEFECT-007），不阻塞窗口、只登记取证（2026-09-21 R1 实证：孤儿空闲 106683 秒）。
 #   **PLAN-006 起此类孤儿行由冷启动的启动期归一自动改判 `interrupted`**（见下节），窗口脚本
 #   仍把 `queued` 当作占用信号——只有真正在排队的任务才算占用
 #   窗口期间不得经 8900 重启/换起 vision 槽位（2026-09-21 R1 实证：重启令排队与在飞任务同时判死）
 # C-1 停服（避免运行中写库）
 & D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py stop
-# C-2 备份 af_* 表族（含 alembic_version），例：导出到带日期的 .sql 后核对行数
-& mysqldump --single-transaction qed af_books af_parse_jobs af_pages af_block_edits alembic_version > af_backup_YYYYMMDD.sql
-# C-3 迁移（仓库根目录，读 .env 的 QED_DB_*）
-& D:\software\anaconda3\envs\QED_env\python.exe -m alembic upgrade 20260920_0002
-# C-4 校验：版本行 + 存量作用域 + 生效指针恒 NULL（存量不自动改语义）
-#   alembic_version = 20260920_0002；SELECT DISTINCT job_id FROM af_pages;（预期 legacy 或单书唯一 job）
-#   SELECT book_id, active_job_id FROM af_books;（预期全 NULL）
-# C-5 清理 af_pages 幽灵行（第 999 页等无产物行）——**2026-09-21 取消**：D 步 re-ingest 按 V8
-#     只作废 legacy 一批（`reset_legacy`），取证由窗口脚本 S1_before.json 承担，不手工 DELETE
+# C-2 备份 af_* 表族（含 alembic_version），导出到带日期的 .sql 后核对行数、按 sha256 留档
+#   表清单以 AF_TABLES 为准（现四表：af_books/af_operations/af_pages/af_kp）
+#   mysqldump 不在 PATH，用 Program Files 全路径；**必须显式 -h/-P/-u**，缺省会拿当前系统用户名连
+#   （2026-10-03 实测报 `1045 Access denied for user 'ODBC'@'localhost'`）；口令只经 MYSQL_PWD 注入，
+#   不写 -p（会进命令行与历史）。`af_kp` 本轮无任何写者、备份时通常是空表，仍逐名列出以保证还原面完整。
+& $env:ProgramFiles\MySQL\MySQL Server 8.0\bin\mysqldump.exe -h 127.0.0.1 -P 3306 -u root --single-transaction --no-tablespaces qed af_books af_operations af_pages af_kp alembic_version > af_backup_YYYYMMDD.sql
+# C-3 整族重建（仓库根目录，读 .env 的 QED_DB_*）：先 DROP 现役 af_* 全部表（含退役的 af_parse_jobs/
+#   af_block_edits/af_page_regions）与 alembic_version，再由唯一 base 建新形状。**只 DROP af_* 与
+#   alembic_version，禁止 DROP DATABASE**（`qed` 是共享库）；DROP 前逐表 SHOW CREATE TABLE 留档
+#   执行驱动＝`tmp/w8_rebuild.py <schema> ...`：逐库 DROP 自有表 → 跑唯一 base → 复核「恰四张 +
+#   版本＝base + 四表行数全 0」并打印 `VERDICT=PASS|FAIL`，证据落 `tmp/window-20261022/rebuild_<schema>.txt`。
+#   裸 `-m alembic upgrade head` 只在空库成立：旧链已删，而现役库里还留着退役表，它不会替你 DROP。
+& D:\software\anaconda3\envs\QED_env\python.exe tmp/w8_rebuild.py qed qed_test
+# C-4 校验：SHOW TABLES LIKE 'af\_%' 恰四张；alembic_version = 20261022_0001
+#   SELECT COUNT(*) FROM af_operations;（预期 0）；SELECT COUNT(*) FROM af_books;（预期 0）
+# C-5 空窗可见后果留档（本轮必测，档 B 四件必答③）：`GET /books` 返回**空列表**而非报错（读取面纯 DB
+#     驱动）、书目详情/页清单/分块 404、8900 透传层如实上抛、8903 显示「暂无书目」空态；并向运维留一行
+#     「af_* 已清空，逐本重新 ingest + 解析前解析管理面无数据」
 # C-6 起服并只读冒烟
 & D:\software\anaconda3\envs\QED_env\python.exe scripts/axiom_flow_service.py start --wait
-# C-7 窗口前置取证（不写不解析：就绪轮询 + 部署自证 + 越界 422 门槛复验）
+# C-7 书目回填（PM-2 幂等，起服后即可）：POST /api/v1/books/sync 批量 upsert af_books
+# C-8 窗口前置取证（不写不解析：就绪轮询 + 部署自证 + 越界 422 门槛复验）
 & D:\software\anaconda3/envs\QED_env\python.exe tmp/live_reparse_b01_pages.py --check-only
 ```
 
+**2026-10-22 窗口的实测读数（PLAN-024 W8 执行完，档 B 四件必答③就此了结）**
+
+- **C-3／C-4**：`qed` 与 `qed_test` 两库各 `VERDICT=PASS`——`af_*` 恰四张（`af_books`／`af_operations`／
+  `af_pages`／`af_kp`）、`alembic_version`＝`20261022_0001`、四表行数全 0。真库列数逐张等于设计篇的列清单
+  （22／27／12／23），`af_operations` 的索引实读＝`PRIMARY` + `uq_af_operations_intent` +
+  `ix_af_operations_book` + `ix_af_operations_version` + `ix_af_operations_sig`。DROP 前逐表
+  `SHOW CREATE TABLE` 与 mysqldump 双份留档（`qed` 备份 sha256 `29bb119e…`、`qed_test` `519d4da0…`）。
+  **附带面零受损**＝非 `af_*` 表集合与 DROP 前逐名相等且行数不变（`qed` 9 张 `qed_*`/`qt_*`、
+  `qed_test` 20 张含 `qe_*` 学习面镜像），判据脚本 `tmp/w8_collateral_check.py`。
+- **C-5 空窗读数**：本机 8902 按 `.env` 的 `QED_DB_NAME` 指向 `qed_test`，故读数即在测试库上取（读取面纯
+  DB 驱动，业务库同形）。`GET /books`＝**200 `[]`**、`GET /books/<原在册 id>`＝404「书目不存在」、
+  `/manifest`／`/pages`／`/pages/1`／`/chunks`＝404「书目不存在或产物缺失」、`/versions`＝404、
+  `GET /parse-jobs`＝200 `{"jobs":[],"total":0}`、未知 `job_id`＝404
+  ⇒ 空窗对 8900/8903 是**空态而不是故障**：透传层如实上抛，界面显示「暂无书目」。
+- **C-7 书目回填**：`POST /api/v1/books/sync` 17 本 → `synced=17, updated=0`；同批重放 →
+  `synced=0, updated=17`（PM-2 幂等成立）。回读的 17 本 `parse_status=pending`、`active_job_id=NULL`、
+  `page_count=NULL`、`ingest_status=none` ⇒ 回填只恢复**书目面**，页行与版本按四件必答②必须重新
+  ingest + 解析才回来（本次窗口按用户裁决**不重解析**）。
+- **业务库 `qed` 的书目回填不在本窗口内**：本机 `.env` 的 `QED_DB_NAME` 指 `qed_test`，故 C-6/C-7 的起服与
+  回灌只作用在测试库；`qed` 现为**新形状四表全空**（`af_books` 0 行、`alembic_version`＝`20261022_0001`）。
+  业务面恢复的下一步＝把 `QED_DB_NAME` 指回 `qed` 后起服，`POST /api/v1/books/sync` 回灌（17 本的 payload 已留档
+  `tmp/window-20261022/sync_payload_qed.json`），或由根侧首次同步触发；页行与产物仍须逐本重新 ingest＋解析。
+- **两条顺序硬约束（本窗口实证到的坑）**：
+  ① `QED_TEST_MYSQL=1` 的夹具在每条用例后**清空 `qed_test` 的 `af_*` 与 `alembic_version` 且不重建**
+  （`tests/support/mysql.py` 的 `isolated_mysql_store`），跑完 MySQL 层后该库是零 `af_*` 状态；
+  **必须先 `python tmp/w8_rebuild.py qed_test` 重上 base，再起 8902**，否则启动期归一的 SELECT 撞
+  `1146 Table 'qed_test.af_operations' doesn't exist` 而 `Application startup failed`。
+  C-4/C-5 的校验与空窗读数因此排在测试层**之前**取。
+  ② 8902 与集成夹具指向同一个 `qed_test`：服务在跑时夹具会抽掉它正在用的表，池内旧语句与读数都不可信
+  ⇒ 跑 MySQL 层前先 `scripts/axiom_flow_service.py stop`，跑完重建再起。
+- **当前库面口径（2026-10-22 根侧确认后的运维判读）**：业务库 `qed` **保持为空**直到用户明确说「同步 OK」，
+  验证与演示一律在 `qed_test`（其 17 本 `af_books` 是在用演示数据）⇒ 本批**禁跑 `QED_TEST_MYSQL=1`**：
+  夹具 teardown 会清空 `qed_test` 的 `af_*` 且不重建（上一条①），跑一次就抹掉演示书目并触发启动失败。
+  默认门禁不连库，照常跑。**读数判据**：若服务读回 `af_books` 为空且本机并未跑过 MySQL 层，先查 `.env`
+  的 `QED_DB_NAME` 是否指向了 `qed`——业务库的空态正是「错连到正式库」的信号，不是数据丢失。
+- **列注释滞后不是形状漂移**：R1（`gen_status` 闭集删 `adopted`）与 R2（`op_kind` 扩 `kp`）只改**应用层常量**，
+  MySQL 侧零 ALTER、零新迁移，因此两库 `SHOW CREATE TABLE` 里这两列的**注释文本**仍写着重建当日的旧枚举。
+  没有任何守护比较注释，闭集的正本以 `src/axiom_flow/db/models.py` 的常量与
+  [database-design.md](../architecture/database-design.md) 的列行为准。自愈路径＝`qed_test` 在
+  `python tmp/w8_rebuild.py qed_test` 重上 base 时随 DDL 更新，`qed` 在下一次整族重建／回灌窗口随 base 更新。
 - **窗口工具一律直连本机端口（`trust_env=False`）**：Windows 注册表代理开启后**不豁免** `127.0.0.1`，
   `httpx` 默认跟随环境代理会让 5002/8902 的探活全部变 **502**（同刻 `curl` 直连仍 200），窗口可因此
   空转到截止。适配器侧的同一条不变式见 [model-integration](../design/model-integration.md) 的
@@ -119,9 +179,10 @@
   轮询截止只有 15s（`web-ui/src/stores/runtime.ts`），超时即显示「失败」但容器仍在起。判据用
   `GET http://127.0.0.1:5002/health` **轮询到 200**（窗口脚本已内置，默认 300s 截止）。
 
-- **回滚**：`python -m alembic downgrade 20260917_0001` 是**有损**操作（旧结构无法表达多版本，按
-  `(书, 页)`/`(书, 页, 块)` 只保留 `job_id` 最小的一行），因此回滚优先用 C-2 的备份还原；产物文件
-  不随迁移删除，DB 与文件解耦。
+- **回滚**：新链只有 base 一枚，`alembic downgrade base` 等于 **DROP 四表**（数据全失，不做部分回滚），
+  所以窗口内的回滚口径是：按 C-2 的备份 SQL 还原 `af_*` + 从 git 取回旧链六枚迁移文件后再
+  `alembic upgrade head`。产物文件不随迁移删除，DB 与文件解耦——回滚库不需要重渲染页图，但页行必须
+  重新 ingest + 解析才能回来（档 B 四件必答②：不提供从盘上产物反向灌页行的脚本）。
 - **D 步（单次重解析）**：`python tmp/live_reparse_b01_pages.py 1 20` —— 脚本**只经 8902 API**
   驱动（提交期门槛、生效指针、只读端点一并取证），先按需 re-ingest 补齐根视图页图（**根仓库
   2026-09-21 已清空 `dataset/parsed/` 的 4 本旧代际产物，故页图必须重渲染；`af_pages` 里的旧
@@ -165,16 +226,16 @@
 ## 单实例前提与启动期归一（PLAN-006 / ADR 0007）
 
 **部署边界（显式承担，不是疏漏）**：8902 按**单实例**运行。任务是后台线程内的单 worker 队列，
-`af_parse_jobs.status` 的 `queued`/`running` 只描述「本进程在推进它」；一旦起第二个实例，
+`af_operations` 的 parse 事件行 `status` 的 `queued`/`running` 只描述「本进程在推进它」；一旦起第二个实例，
 它的启动期归一会把第一个实例**正在跑**的任务一并判成 `interrupted`。要多实例必须先重开这条
 裁决（引入心跳/租约，`queued`/`running` 需可证活）。
 
 - **归一时刻**：`api/main.py` 的 lifespan 在**受理首个请求之前**调用 `runner.reconcile_on_startup()`，
   把上次进程遗留的 `queued`/`running` 任务行改写为 `interrupted`（`error` 写「服务重启中断，可重跑」，
-  置 `finished_at`），书目侧进度回 `pending`。**结局只在该书最新一次任务时置 `interrupted`**——更早的
+  终态时刻写在 `progress.finished_at`），书目侧进度回 `pending`。**结局只在该书最新一次任务时置 `interrupted`**——更早的
   中断行不得覆盖后来的真实结局（`last_parse_result` 语义）。
 - **可观测**：归一发生时会打 `WARNING 启动期归一：N 个遗留活动任务改写为 interrupted`；N=0 时静默。
-  只想确认现状不必起服：`SELECT job_id, status FROM af_parse_jobs WHERE status IN ('queued','running')`。
+  只想确认现状不必起服：`SELECT op_id, status FROM af_operations WHERE op_kind = 'parse' AND status IN ('queued','running')`。
 - **`interrupted` 的续跑语义 = 同一 `job_id` 重放**，不新建版本：版本作用域是 `(book_id, job_id)`，
   已 `parsed` 且产物在位的页跳过引擎调用，只补剩余页；重放前**不需要**手工清行、也不需要删版本目录。
   **但重放入口目前只有代码路径**（`orchestrator.run_parse_job(job_id=…)`，`tmp/` 窗口脚本按此
@@ -184,7 +245,8 @@
   要么经脚本重放、要么重新提交为一版（旧版保留不删）。
   **定位待重放任务不必再猜 id**：`GET /api/v1/parse-jobs?status=interrupted&status=partial` 直接给出
   清单（含 `failed_pages`），`GET /api/v1/books/{id}/pages` 给出该作用域逐页形态（PLAN-008 / REQ-088）。
-- **`20260921_0001` 迁移窗口**（D 类，执行前须用户批准）：停服 → 备份 `af_*` 四表 →
+- **`20260921_0001` 迁移窗口**（D 类，执行前须用户批准；**该 revision 已随 PLAN-024 档 B 迁移链重置不存在**，
+  本条只留作历史执行记录，不可再照做）：停服 → 备份 `af_*` 四表 →
   `python -m alembic upgrade 20260921_0001` → 校验 `alembic_version` 与
   `SELECT book_id, parse_status, last_parse_result FROM af_books`（预期进度全 `pending`、
   存量终态值平移进 `last_parse_result`）→ 起服。**降级有损**：`partial` 在旧结构无对应值，
@@ -196,19 +258,19 @@
 
 `DELETE /books/{book_id}` 是 D 类数据操作（不可逆），演练判据（合成 5 页探针书，真实书目零改动）：
 
-- **删除**：`af_pages` 页行、`af_block_edits` 编辑行、`af_books` 书行，以及整棵书目录
+- **删除**：`af_pages` 页行、`af_books` 书行、`af_operations` 的 **`intent` 行**（`edit` + `structure`），以及整棵书目录
   （`versions/` 全部版本 + 根视图页图）；`GET /books/{id}` 随后 404。
-- **保留（审计）**：`af_parse_jobs` 的历史任务行**不删**，`GET /parse-jobs/{id}` 删除后仍 200 ——
+- **保留（审计）**：`af_operations` 的 parse **事件行**不删，`GET /parse-jobs/{id}` 删除后仍 200 ——
   任务历史是跨书目的运营留痕，不随书目生命周期消失。
 - **不裁剪空父级目录**：如 `parsed/probe/d3-20260922/` 删除后其父 `parsed/probe/` 留在盘上。
   契约只承诺书目录，空目录不算残留缺陷；若要裁剪须先改 `design/parsing-management.md` 的删除契约。
 - **回滚**：无「撤销删除」路径，只能按备份还原 `af_*` + 重新 ingest/解析重建产物；执行前必须先
-  导出 `af_*` 表族（`af_books`、`af_parse_jobs`、`af_pages`、`af_block_edits`，与 `AF_TABLES` 同源）并核对行数。
+  导出 `af_*` 表族（`af_books`、`af_operations`、`af_pages`、`af_kp`，与 `AF_TABLES` 同源）并核对行数。
 
 ## 管理面一键清除 runbook（`POST /api/v1/admin/purge`）
 
 契约与不变式见 [api.md「非公开管理面」节](../architecture/api.md)（PLAN-010 / ARCH-024）。这里只写
-操作口径。**它与 `DELETE /books/{id}` 的分工**：后者是面向消费方的常规删除，保留 `af_parse_jobs`
+操作口径。**它与 `DELETE /books/{id}` 的分工**：后者是面向消费方的常规删除，保留 parse 事件行作审计；
 审计行；前者是「先清后建」的运维重置，**连任务行一起清**、可按书目或全项目，且默认不挂载。
 
 1. **启用**：`.env` 加 `QED_ADMIN_ENABLED=1` 与 `QED_ADMIN_TOKEN=<自行生成的长随机串>`，重启服务。

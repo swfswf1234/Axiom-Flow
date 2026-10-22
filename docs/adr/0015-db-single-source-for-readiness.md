@@ -25,7 +25,8 @@
 ## 决定
 
 1. **就绪事实源唯一**：一本书「哪一版可读」＝`af_books.active_job_id`；一个任务/版本「是否齐备」
-   ＝`af_pages` 页行状态集合与 `af_parse_jobs` 终态；页级可读性＝该版本作用域 `(book_id, job_id,
+   ＝`af_pages` 页行状态集合与 `af_operations` 的 `op_kind='parse'` 行终态（2026-10-22 整族重建后
+   `af_parse_jobs` 退役为这些行，见 [ADR 0016](0016-af-family-rebuild-into-four-tables.md)）；页级可读性＝该版本作用域 `(book_id, job_id,
    page_no)` 的 `af_pages.status`。三者之外不存在就绪判据源。
 2. **单判据不变式保留**：`completed` 与版本激活仍共用同一函数、同一判据（ADR 0007 决定 1 的骨架
    不变，「`completed` 但未激活」仍结构上不可能），本决定只把该判据的**输入源**从文件系统改为 DB。

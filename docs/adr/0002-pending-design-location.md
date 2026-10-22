@@ -1,13 +1,14 @@
 # ADR 0002：待评审设计的目录流转（Draft 设计先入 plans/，确定后落 design/）
 
 状态：Accepted
-最后更新：2026-08-23
+最后更新：2026-10-22
 关联代码：无
 关联测试：`tests/contract/test_adr_governance.py`
 
 ## 背景
 
-QED-Engine 根仓库经 [ADR 0011](https://github.com/QED-Engine/qed-engine/blob/main/docs/history/adr/v0.1/0011-pending-design-location.md) 裁决（范本，
+QED-Engine 根仓库经其 ADR 0011 裁决（范本，纯路径
+`QED-Engine/docs/history/adr/v0.1/0011-pending-design-location.md`，
 同 [ADR 0001](0001-v2-exploration-direction.md) 对齐根仓库 ADR 0010 的模式）：待评审的设计
 内容（接口契约草案、流程方案等）不再直接进入 `design/`，一律随计划在 `plans/` 承载，经用户
 评审完全确定后以稳定名称迁入 `design/` 或合并固定文档；`design/` 目录本身即「已确定」可信度
@@ -32,5 +33,5 @@ QED-Engine 根仓库经 [ADR 0011](https://github.com/QED-Engine/qed-engine/blob
 ## 取代
 
 取代：无（新增规则，细化 [文档治理规范](../standards/doc-governance.md) 的 design/plans 分类边界）。
-被取代：无。来源范本：QED-Engine 根仓库
-[ADR 0011](https://github.com/QED-Engine/qed-engine/blob/main/docs/history/adr/v0.1/0011-pending-design-location.md)。
+被取代：无。来源范本＝根仓库
+`QED-Engine/docs/history/adr/v0.1/0011-pending-design-location.md`（跨仓引用只写纯路径，不猜 URL）。

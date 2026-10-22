@@ -24,8 +24,8 @@ from axiom_flow.db.models import AF_TABLES
 from axiom_flow.db.repositories import (
     BookRepository,
     BookSyncRow,
+    OperationRepository,
     PageRepository,
-    ParseJobRepository,
     ParseJobRow,
 )
 from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
@@ -121,7 +121,7 @@ def _seed_book(writer: sessionmaker[Session], data_root: Path, *, pages: int = 3
 
 def _create_job(writer: sessionmaker[Session], *, pages: list[int] | None) -> str:
     with writer() as session:
-        ParseJobRepository(session).create(
+        OperationRepository(session).create(
             ParseJobRow(job_id=JOB_ID, book_id=BOOK_ID, engine="mineru", pages=pages)
         )
         session.commit()
@@ -149,7 +149,7 @@ class _ProbeEngine:
     def _probe(self) -> None:
         with self.reader() as session:
             self.parsed_snapshots.append(PageRepository(session).count_parsed(BOOK_ID, JOB_ID))
-            job = ParseJobRepository(session).get(JOB_ID)
+            job = OperationRepository(session).get(JOB_ID)
         self.progress_snapshots.append(int((job.progress if job else {}).get("parsed", 0)))
 
     def parse_page(self, image_bytes: bytes, page_no: int) -> PageResult:
@@ -288,7 +288,7 @@ class TestProgressPersistence:
             f"运行中从未观察到中间进度（节流写失效或整任务末才提交）：{samples}"
         )
         with reader() as watching:
-            job = ParseJobRepository(watching).get(JOB_ID)
+            job = OperationRepository(watching).get(JOB_ID)
         assert job is not None and job.status == "completed"
         assert job.progress["parsed"] == 12
 
@@ -357,7 +357,7 @@ class TestFailurePersistence:
 
         assert outcome.status == "failed" and "落盘失败" in outcome.error
         with reader() as watching:
-            job = ParseJobRepository(watching).get(JOB_ID)
+            job = OperationRepository(watching).get(JOB_ID)
             book = BookRepository(watching).get(BOOK_ID)
             assert PageRepository(watching).get(BOOK_ID, JOB_ID, 1).status == "parsed"
         assert job is not None and job.status == "failed"
