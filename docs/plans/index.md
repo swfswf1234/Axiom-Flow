@@ -1,7 +1,7 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-09-30
+最后更新：2026-10-23
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
@@ -178,3 +178,13 @@
   [completed.md](../trackers/completed.md) PLAN-022 行。
   **壳的路径已变更**：凡引用 `docs/plans/2026-09-30-ledger-row-three-elements.md` 处须改指上述归档位置
   （本批已同步 `docs/adr/0013` 与 `docs/trackers/*`）。
+- PLAN-023 服务停止脚本的端口兜底真停（Axiom-Flow，B 类，承载根侧请求 REQ-126）已完成（2026-10-23，
+  W1~W4 全绿且「承载 REQ-126」回执正文登记后关闭），计划按立项判定 **`Retain`** 归档至
+  [history/plans/2026-10](../history/plans/2026-10/2026-10-18-service-stop-port-fallback.md)（保留停止分诊
+  五形态口径表与「本脚本对 8902 端口有属主身份 ⇒ 与根侧 8900/8903 脚本「只检测不杀」有意不同」的判据理由、
+  真机三形读数、REQ-126 回执全文与「需根侧随步一处＝退出码 3 的处置口径」、7 枚回归用例的 TDD 先红读数）；
+  运行时事实源不在壳内，而以 [api.md ① 生命周期与健康](../architecture/api.md)（停止与退出码契约）与
+  [operations.md「停止可靠性语义」](../guides/operations.md) 为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-023 与 REQ-126 两行。实现锚点 `637bdaa`（脚本＋测试整文件）。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-10-18-service-stop-port-fallback.md` 处须改指上述归档位置
+  （本批已同步 `docs/trackers/todo.md` 的 `ARCH-021` 行与 `docs/trackers/project-status.md`）。

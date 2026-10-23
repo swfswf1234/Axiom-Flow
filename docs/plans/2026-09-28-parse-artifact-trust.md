@@ -2,7 +2,7 @@
 
 状态：In Progress
 任务类型：B
-最后更新：2026-10-22
+最后更新：2026-10-23
 关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0007](../adr/0007-parse-status-semantics.md)（`completed` 与激活同一判据——P2 的 DB 单口径必须与之对齐）、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)（**就绪与激活判据的 DB 单源**，取代 ADR 0007 决定 1 的「产物在位」子句；S3/W5 的立法依据）、[ADR 0009](../adr/0009-data-root-must-be-explicit.md)（数据根 fail-closed，W6 残骸清点只读不自动创建）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型版本探针归 8900 侧能力，P1 只消费 `/health` 读数）、[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（**承载随步**：`af_parse_jobs` 折叠为 `af_operations` 的 `op_kind='parse'` 事件行，本壳语义与判据一字未改）
 关联设计：[parsing-pipeline.md](../design/parsing-pipeline.md)（blocks 归一与分块规则）、[parsing-management.md](../design/parsing-management.md)（af_* 表族与版本生命周期）、[database-design.md](../architecture/database-design.md)、[api.md](../architecture/api.md)
 关联 Tracker：docs/trackers/todo.md（PLAN-019 镜像行；承载 ARCH-022，自 PLAN-009 转入；入站请求 REQ-123 同壳承接，见「承载 REQ-123」节）
@@ -248,8 +248,8 @@ R4 的程序约束在此了结：签名是否含模型版本，**以实际回文
 | W7 | 过时清点（裁决 ①，作用域已裁 R1；删除时机 Q2＝沿用 REQ-097 判例、执行面 Q7＝扩 `admin/purge` dry-run）：只读清点——正本配对唯一性、孤儿任务行、孤儿版本目录、`.tmp-`/`.old-` 三式残骸、**页图物理保留例外与硬链接自证**；清理执行顺序与安全边界成文（先磁盘后库、重跑幂等判例沿用 PLAN-010）；**执行另批 D 类批准** | W2/W6 | 待开始 |
 | W8 | 文档晋升：`api.md`（C2/C3 小节与总表，随挂载同批；C4 随 PLAN-018）、`database-design.md` 列清单、`parsing-pipeline/management` 口径、`project-status` 刷新；**同批核对**（2026-10-01 复核：原更正对象「业务库升迁移属窗口前置」在活文档已无载体——ARCH-011 承载节 2026-09-30 关闭时已记项①执行、`history/` 冻结面按规则不追改 ⇒ 本项从「更正」降为「核对」：W8 只确认活文档不再把业务库迁移写成窗口前置） | W3~W7 | 待开始 |
 | W9 | 门禁与真机：默认门禁全绿 + `QED_TEST_MYSQL=1` 迁移往返 + 变异复验（撤签名门 ⇒ 对应用例转红；撤确认门用例归 PLAN-018）；真机面按前置 6 另批 D 类窗口（原 ARCH-011 窗口 2026-09-30 已关闭，读数改挂本壳 W9） | W8 | 待开始 |
-| W10 | REQ-123 R1：重新摄取路径书级结局复位口径定档并实施（含回归用例） | W2 | 待开始（2026-10-17 移交入壳） |
-| W11 | REQ-123 R2：`af_books` 三列跨库分叉只读对账 + 归一口径入 `database-design.md` | W5 | 待开始（2026-10-17 移交入壳） |
+| W10 | REQ-123 R1：重新摄取路径书级结局复位口径定档并实施（含回归用例） | W2 | **已裁撤**（并案入 PLAN-024 后由用户裁决「关闭且不记欠账」⇒ 不实施、不建跟踪行；答卷见「回执」节 R1） |
+| W11 | REQ-123 R2：`af_books` 三列跨库分叉只读对账 + 归一口径入 `database-design.md` | W5 | **已并入并案了结**（对账对象随档 B 整族重建消失；归一口径以「单一事实源」落 `database-design.md`／ADR 0015；答卷见「回执」节 R2） |
 
 ## W2 落地结论与偏差登记（2026-10-01）
 
@@ -331,6 +331,17 @@ R4 的程序约束在此了结：签名是否含模型版本，**以实际回文
 
 按[跨项目协作流程](../standards/cross-project-collaboration.md)，回执正文写本节之下（落地／推后／拒绝三选一，
 逐条对 R1/R2），由根仓库自读登记并据此关闭其 `REQ-123` 行；本仓库不写根仓库文件。
+
+### 回执（终态答卷，2026-10-23 收口批）
+
+| 项 | 终态 | 答卷与证据 |
+| --- | --- | --- |
+| R1 重新摄取复位时 `last_parse_result` 归零 | **拒绝（裁撤，不记欠账）** | 复位口径已定为设计事实而非缺陷：**ingest 不是任务**，故 `last_parse_result` 不回置（正本＝`api.md`「重复 ingest 幂等且版本安全」段 PM-16），复位信号只有 `active_job_id=NULL` ∧ `parse_status=pending` ∧ `pages_done=0`。请求稿举证的自相矛盾行（结局 `completed` ∧ 指针为空 ∧ 页行成百上千）已随 PLAN-024 档 B 整族重建**结构性消失**＝两库 `af_*` 重建后各表 0 行、`qed_test` 仅 `books/sync` 回灌的 17 本、`af_pages` 空。用户裁决「关闭且不记欠账」⇒ W10 裁撤，本壳与 todo 均不留跟踪行。 |
+| R2 两库三列与页行只读对账＋归一口径 | **并案达成（由 PLAN-024 代偿）** | 对账对象不再存在＝`qed`／`qed_test` 两库 `af_*` 均由唯一 base `20261022_0001` 整族重建，旧五表（含 `af_parse_jobs`）在两库消失，结构上不存在分叉行。归一口径以**单一事实源**表达并落权威文档：生效指针唯一在 `af_books.active_job_id`、就绪唯一在 `af_pages.status`（`artifacts` 不作判据）、意图唯一在 `af_operations` 的 `intent` 行（[ADR 0015](../adr/0015-db-single-source-for-readiness.md) 的改判随 PLAN-024 W7）。读数与判据正本＝PLAN-024 壳「W9 回执」R4 行。 |
+
+**并案说明**：REQ-123 两项于并案轮随根侧综合请求 REQ-136 并入 PLAN-024（形状判据＝其「承载 REQ-136」节
+R4），本壳自此只保留**承接登记与这份答卷**，实施与守护一面全在 PLAN-024 侧。todo 的 `REQ-123` 支线行与
+本壳 W10/W11 同批收口，行迁 `completed.md`。
 
 
 ## 验证与验收

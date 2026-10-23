@@ -1,11 +1,11 @@
 # 服务停止脚本的端口兜底真停（service-stop-port-fallback）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-10-20
+最后更新：2026-10-23
 关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）
 关联设计：[api.md](../architecture/api.md) ① 生命周期与健康（停止与退出码契约正本）、[operations.md](../guides/operations.md)（服务启停操作口径）、[overview.md](../architecture/overview.md)（8902 与 8900 的托管边界）
-关联 Tracker：docs/trackers/todo.md（PLAN-023 镜像行；入站请求 REQ-126 同壳承接，见「承载 REQ-126」节）
+关联 Tracker：docs/trackers/todo.md（收口批已移出）→ docs/trackers/completed.md 的 PLAN-023 与 REQ-126 两行（2026-10-23 同批关闭；入站请求回执见「承载 REQ-126」节）
 归档判定：Retain（含停止契约的改判依据，关闭时按当时判据归档）
 
 ## 目标与成功标准
@@ -63,6 +63,24 @@
 的 R2 项）由本壳承接；执行方＝本仓库 agent 或开发者，评审方＝用户；完成或改期时回根仓库 todo
 更新请求行并留回执。
 
+### 回执（本仓侧成文，根侧自登）
+
+按[跨项目协作流程](../standards/cross-project-collaboration.md)「回执」条：本仓库**不写根仓库文件**，
+回执正文只留在本节、由用户转达，根仓库自行读取并更新其 REQ-126 行。
+
+| 项 | 根侧判据（原文口径） | 本仓终态 | 证据锚点 |
+| --- | --- | --- | --- |
+| R1 | 「无 PID 文件但 8902 端口在听」时按端口反查监听 PID，并走既有「优雅停止 → 强杀兜底 → 存活复核」链**真停** | 达成 | `cmd_stop` → `_stop_unmanaged()`；真机读数＝反查到监听 PID 后回显 `stopped (unmanaged listener pid 230000)`、退出码 `0`、端口释放、该进程已终止（本篇「过程与证据」真机验收行） |
+| R2 | 真停／无从处置／停不住三形在退出码与输出上可判定，供 8900 停止复核原因引用 | 达成 | 五形态三退出码表（本篇「停止分诊口径」）：真停两形 `0`、停不下来 `1`、无从处置 `UNMANAGED_LISTENER_EXIT = 3`；3 形**零终止调用** |
+| 顺带项（超出 REQ-126 字面） | — | 达成 | W4＝`cmd_restart` 取回停止码，非 0 打印 `restart aborted` 并原样返回，不再拉起第二实例（与根侧 DEFECT-020 S2 同形） |
+
+- **需根侧随步＝一处**：8900 控制中心对**退出码 3** 的处置口径。现口径可继续成立（0/3 一并交端口复核：
+  已释放→ `stopping`，仍监听→ 409 并引用本脚本输出），根侧无须改码；本仓只声明 3 形的语义。
+- **契约不变承诺**＝8902 的 HTTP 契约、`/health` 与解析接口零改动；改动面只有 `scripts/axiom_flow_service.py`
+  的停止路径、其定向测试与本篇／`operations.md`／`api.md` ① 的停止口径随步。
+- **提交锚点**＝`637bdaa`（脚本与测试整文件）；本壳与三枚文档随步的收口批另见其关闭登记。
+- 验收判据逐条正文的正本仍在根仓库 todo 的 REQ-126 行（发起方行内），本节只做终态答卷，不复制其措辞。
+
 ## 验证与验收
 
 - `pytest tests -q` 全绿 + `ruff check src tests` 无错误（本仓库门禁即本地门禁）。
@@ -88,3 +106,11 @@
 
 W1~W3 全部达成且回执登记后关闭（`关闭结果` 按达成取值），归档判定 Retain；被否决或改期时
 按 Rejected / Not Applicable 关闭并把残余退回根仓库 REQ-126 行。
+
+**关闭结论（2026-10-23 收口批执行）**：上列关闭条件的两面均已成立——W1~W4 四工作项全部「已完成」，
+且「承载 REQ-126」节的**回执正文已登记**（R1 真停／R2 三形可判定／顺带项三条逐条给答）。
+`关闭结果＝Achieved`、终态 `Completed`。残余＝零：无未接写者、无未落文档、无待裁项；
+唯一移交根侧的是「8900 对退出码 3 的处置口径」这一**通知项**（根侧现口径已成立，无须改码），
+不构成本壳欠账。`REQ-126` 与 `PLAN-023` 两枚 todo 行同批迁 `completed.md`，`ARCH-021` 聚合行的
+入站请求列举随之收缩。壳按 **Retain** 移出 `docs/plans/` ⇒ `docs/history/plans/2026-10/`，
+去处登记见 `docs/plans/index.md`；实现锚点 `637bdaa`（脚本＋测试），收口锚点见本批提交。

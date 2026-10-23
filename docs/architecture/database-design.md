@@ -1,9 +1,9 @@
 # 数据库设计（Axiom-Flow af_* 命名空间）
 
 设计状态：Accepted（四表形状的方向与列清单已经确认，列由守护与 ORM 逐列对账）
-确认状态：已确认（解析模块 `af_books`／`af_operations`／`af_pages`）／暂定（分析模块 `af_kp` 的消费通路，判据见「af_kp 列清单」节末）
-实现状态：Implemented（四表代码与迁移 base 已落；两库真库整族重建已执行完毕）
-最后更新：2026-10-22
+确认状态：已确认（四表形状、两模块的通路判据与 `links` 越闸例外均已终审；分析模块 `af_kp` 有判据而暂无写者，见「af_kp 列清单」节末）
+实现状态：Implemented（四表代码与迁移 base 已落；两库真库整族重建已执行完毕；`af_kp` 的消费通路零实现）
+最后更新：2026-10-23
 关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
 关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_table_family_governance.py`、`tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py`、`tests/integration/test_concurrency_criteria.py`、`tests/contract/test_api_v1_contract.py`、`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -31,9 +31,11 @@
 - **本篇的章体与总纲同形**（八章编号体：前言／规则／表总览／整体架构／详细设计／同步契约／变更运维／
   守护），使同一库的两篇设计文档可按章对读；章内小节标题仍承载对账锚点（`### <table> 列清单`）。
   体裁改判由 [ADR 0017](../adr/0017-database-design-eight-chapter-skeleton.md) 立法。
-- **`af_kp` 仍为暂定的原因**：表与列都已落在代码与迁移 base 里，未成形的只有分析模块的**消费通路**——
-  ① `af_kp.links` 越过 JSON 列反向闸的例外与其转表判据待终审；② 梳理作业、复核端点与提升作业尚未立项，
-  故 `af_kp` 有形状而没有写者。两处了结前，`af_kp` 可被引用为设计依据，**不得**当作「已有能力」向根侧承诺。
+- **`af_kp` 的现状＝形状与判据都定、通路未实现**：表与列都已落在代码与迁移 base 里，`links` 越过 JSON 列
+  反向闸的例外与其转表判据已终审追认（[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)），
+  梳理作业／复核端点／提升作业的通路判据已成篇（[knowledge-analysis.md](../design/knowledge-analysis.md)）
+  并另有实现批在册；未成形的只有**实现本身**——本表至今有形状、有判据而没有写者。因此向根侧承诺的口径是
+  「可按 `KA-n` 对接设计」，**不是**「已有梳理能力」。
 - 库内换形状属 D 类人工窗口（逐表备份留指纹 → 用户批准 → 执行），本篇不安排执行。
 
 ### 三类登记面
@@ -411,15 +413,16 @@ JSON 取值，既违「只读不筛」纪律，也让 JSON 反向闸失去意义
 键与索引：`ix_af_kp_book(book_id, node_kind, gen_status)`、`ix_af_kp_parent(parent_id)`、
 `ix_af_kp_batch(gen_batch)`、`ix_af_kp_norm(book_id, node_kind, norm_key)`（普通索引，服务端查重）。
 
-**本轮范围（这就是 `af_kp` 仍暂定的全部含义）**：表与列随新 base 一次建齐，仓储读写面（`KpRepository`）
-与删除面（删书、管理面整族清除）已就位，但**没有梳理作业、没有对外端点、没有提升作业**。因此有四条
-计数恒 0 的守护断言：① 非空 `embedding_signature`；② `op_kind='index'`；③ `op_kind` 其余五个无写者值
-（`kp`／`confirm`／`ingest`／`sync`／`purge`）；④ `gen_status` 的**域外值**（闭集
+**当前范围（这就是「有形状有判据、暂无写者」的全部含义）**：表与列随新 base 一次建齐，仓储读写面
+（`KpRepository`）与删除面（删书、管理面整族清除）已就位，但**没有梳理作业、没有对外端点、没有提升作业**。
+因此有四条计数恒 0 的守护断言：① 非空 `embedding_signature`；② `op_kind='index'`；③ `op_kind` 其余五个
+无写者值（`kp`／`confirm`／`ingest`／`sync`／`purge`）；④ `gen_status` 的**域外值**（闭集
 `draft`/`candidate`/`rejected` 三值之外——域内没有「人已采纳」这一档，人工终态只由 `confirmed` 表达）。
 ②③把仓储层全部生产插入腿（`OperationRepository.create`／`upsert_edit`／`replace_page_intents`）
 跑一遍再计数，故「任何路径不得写出」是可执行判据而不是口头约定。
-消费通路的形状（批次作业、复核端点、提升幂等锚）属分析模块设计篇，其立项与 `links` 越闸终审一并了结后，
-本节才升为**已确认**。
+消费通路的形状（批次作业、复核端点、提升幂等锚）已定为 [knowledge-analysis.md](../design/knowledge-analysis.md)
+的 `KA-1~KA-28`，其立项与 `links` 越闸终审均已了结 ⇒ **本节按已确认对待**：列语义、不变式与并发形态可直接
+作为实现与跨仓对接的依据。计数恒 0 的四条断言不因本节转正而放松，它们随实现批逐条改判并各留反向判据。
 
 ### 服务端不变式（DDL 表达不了的）
 
@@ -548,7 +551,7 @@ SQLite 上 `with_for_update()` 是空操作，因此锁类判据（意图 upsert
 | 守则 | 四表形状的答卷 |
 | --- | --- |
 | 新表准入三判据 | `af_operations`＝①②③全中（意图身份跨版本、`intent_key` 唯一键、事件流按坐标与签名做 SQL 集合检索）；`af_kp`＝①②③全中（节点身份跨版本、`node_id` 唯一、按书/类/态集合检索）。两件合并为一次评审 |
-| JSON 列反向闸 | **明文越闸一次**：`af_kp.links` 承载的正是「需要反向集合检索的身份关系」——按对端反查「哪些点以 X 为先修」只能全表扫 JSON。采纳理由＝关系要求「一张表、简单写」，且当前消费现场（展开一册书的图）是正向读。**转表触发判据**＝一旦出现「按对端反查是主屏读法」或「需要 DAG 完整性集合校验」，`links` 即升关系边表，届时走独立加表评审。这条例外必须留在本节正文，否则反向闸退化成建议；其终审与 `af_kp` 转正同批 |
+| JSON 列反向闸 | **明文越闸一次**：`af_kp.links` 承载的正是「需要反向集合检索的身份关系」——按对端反查「哪些点以 X 为先修」只能全表扫 JSON。采纳理由＝关系要求「一张表、简单写」，且当前消费现场（展开一册书的图）是正向读。**转表触发判据**＝一旦出现「按对端反查是主屏读法」或「需要 DAG 完整性集合校验」，`links` 即升关系边表，届时走独立加表评审。这条例外必须留在本节正文，否则反向闸退化成建议。**例外与转表判据均已由用户终审追认（裁决⑲），与本节转正同批了结** |
 | 不建块正文表 | 触发转建判据成文一次：只有当出现**一条必须用 SQL 跨页检索块文本才能在服务端完成**的梳理／抽题需求，且经产物文件逐页读取的通路其吞吐被真机演练否证时，才评审块正文表；判据触发前的任何一次「读起来慢」都按现有通路优化（批量端点、单次多页），不建表。`artifacts.block_count` 与 `quality` 给出「不读正文也能计数」的那一半需求，这正是把该方案挡在门外的原因 |
 
 ### 承载力审计（四表够不够：能力与规划能力逐条落点）
