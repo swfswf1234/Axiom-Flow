@@ -1,7 +1,7 @@
 # ADR 索引
 
 状态：Current
-最后更新：2026-10-22
+最后更新：2026-10-23
 
 本目录登记影响长期约束的决定。编号从 0001 重新开始（v2 新纪元，v1 决策已归档至
 `docs/history/v1-20260814/adr/`）。规则见 [ADR 治理](../standards/adr-governance.md)。
@@ -35,5 +35,6 @@
 | [0015](0015-db-single-source-for-readiness.md) | 就绪与激活判据以 DB 为唯一事实源（`af_pages` 页行＋`af_books.active_job_id`＋版本终态（现为 `af_operations` 的 parse 行）之外无判据源；fs 只作完整性披露与清点输入；抗崩溃由提交序承担，不引入 manifest-last；取代 ADR 0007 决定 1 的「产物在位」子句） | Accepted |
 | [0016](0016-af-family-rebuild-into-four-tables.md) | `af_*` 表族整族重建为四表（`af_books`／`af_operations`／`af_pages`／`af_kp`；`lifecycle` 分事件与意图两态、当前态只有四个来源、幂等由 `intent_key` 部分唯一索引承担、档 B 迁移链重置为一条 base、检索索引版本以「一值一列」并入且本轮无写者、`af_kp.links` 越 JSON 反向闸的例外与转表判据） | Accepted |
 | [0017](0017-database-design-eight-chapter-skeleton.md) | 数据库设计篇改用根侧八章编号体（骨架体裁分治：四段体为默认、`database-design.md` 用八章；追溯段随体裁移动、可对账锚点与章号解耦；部分取代 ADR 0008 决定 2 与决定 3 的适用范围） | Accepted |
+| [0018](0018-task-column-bound-and-progress-ban.md) | 台账「任务」列的列界与进度措辞禁词（≤600 字、禁 `已执行`／`已落地`／`已完成`／`当前在`／`进度＝`／`已了结`／`待裁` 与 `裁决[①-⑳]` 序号引用；把 ADR 0013「不写进度」由措辞升为可判据，不改三列语义） | Accepted |
 
-下一个可用编号：0018
+下一个可用编号：0019

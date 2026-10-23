@@ -1,13 +1,14 @@
 """
-模块职责：验证任务 ID、活跃计划镜像（承载列单指针）、三列语义与列界（成功标准终态、承载列唯一
-承载文档指针、文档链接不出现在其他列）、行内禁日期、并发上限、关闭证据和无状态路线图保持一致。
+模块职责：验证任务 ID、活跃计划镜像（承载列单指针）、三列语义与列界（成功标准终态、任务列范围
+不含进度措辞、承载列唯一承载文档指针、文档链接不出现在其他列）、行内禁日期、并发上限、关闭证据和
+无状态路线图保持一致。
 设计关联（DesignRef）：docs/standards/task-lifecycle.md、docs/adr/0006-ledger-plan-carrier-contract.md、
-docs/adr/0013-ledger-row-three-elements.md
+docs/adr/0013-ledger-row-three-elements.md、docs/adr/0018-task-column-bound-and-progress-ban.md
 实现状态：Current
 被测代码：docs/trackers、docs/plans
 守护面：计划与任务治理
-失效后果：任务 ID 复用、计划镜像断裂、任务无承载、台账行混入现状与日期化流水、成功标准退化为验收
-流程措辞、并发超限
+失效后果：任务 ID 复用、计划镜像断裂、任务无承载、台账行混入现状叙述与裁决史、任务列无界膨胀、
+日期化流水、成功标准退化为验收流程措辞、并发超限
 """
 
 import re
@@ -33,6 +34,9 @@ POINTER_SEPARATORS = re.compile(r"[\s、,，；;]+")
 POINTER_LINKS_EXACT = 1
 SUCCESS_BANNED = ("门禁", "收口", "全绿", "成文")
 SUCCESS_BANNED_RE = re.compile(r"S\d+~S\d+")
+TASK_LIMIT = 600
+TASK_BANNED = ("已执行", "已落地", "已完成", "当前在", "进度＝", "已了结", "待裁")
+TASK_BANNED_RE = re.compile(r"裁决[①-⑳]")
 MAX_BRANCH_IN_PROGRESS = 3
 
 
@@ -137,6 +141,16 @@ def _expand_ids(text: str) -> set[str]:
         prefix, numbers = match.group(1), match.group(2).split("/")
         ids.update(f"{prefix}-{number}" for number in numbers)
     return ids
+
+
+def test_task_column_is_scope_only_and_bounded():
+    """ADR 0018：「任务」列＝按工作项列范围，≤600 字，禁进度措辞与裁决序号引用。"""
+    for row in _todo_rows():
+        cell = row["任务"]
+        assert len(cell) <= TASK_LIMIT, f"{row['ID']}: 任务列 {len(cell)} 字超界（范围列表应留壳内）"
+        hits = [word for word in TASK_BANNED if word in cell]
+        assert not hits, f"{row['ID']}: 任务列含进度措辞 {hits}（进度只写承载文档）"
+        assert not TASK_BANNED_RE.search(cell), f"{row['ID']}: 任务列引用裁决序号（裁决史只写承载文档）"
 
 
 def test_success_criteria_are_concrete_and_bounded():
