@@ -682,11 +682,12 @@ MySQL DDL 在门禁里就被真实执行一次。迁移的运维执行步骤与�
   [trackers/completed.md](../trackers/completed.md)。
 - **形状裁决与三类登记面的承载**：登记面 A/B/C 的切法、前身五表 → 四表的**逐列去向**、并发
   写入形态的反向判据、整族重建（档 B）四件必答、`af_kp.links` 越闸例外的采纳过程，正本在
-  [PLAN-024 壳](../plans/2026-10-21-af-table-family-rebuild.md)（在冊），该壳同时承接根侧入站请求
+  [PLAN-024 归档壳](../history/plans/2026-10/2026-10-21-af-table-family-rebuild.md)（2026-10-23 关闭归档，去处见
+  [plans/index.md](../plans/index.md)），该壳承接根侧入站请求
   REQ-136（并入原 REQ-123／REQ-129）。代码批与**库内整族重建窗口**（档 B，`qed`＋`qed_test` 两库）已于 2026-10-22 执行完毕，
-  真机 DDL 逐列对账与空窗读数的留档见 [operations.md runbook](../guides/operations.md)；只有**根侧同步**待 W9 回执；
+  真机 DDL 逐列对账与空窗读数的留档见 [operations.md runbook](../guides/operations.md)；**根侧同步**由根仓库按其自读口径执行（该壳「W9 回执」节列出需根侧随步的六处，本仓不代改根侧文件）；
   全库通则与共享表列级正本在根仓库总纲 `QED-Engine/docs/architecture/database-design.md`（跨仓纯路径）。
 - **章体改判**：本篇原用本仓四段骨架（[ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)
   决定 2），2026-10-22 按用户点名改为根侧八章编号体，以与总纲按章对读；改判立法、体裁分治的守护
   随步与零丢失复验见 [ADR 0017](../adr/0017-database-design-eight-chapter-skeleton.md) 与
-  [PLAN-024 壳](../plans/2026-10-21-af-table-family-rebuild.md) 的 W14 节。
+  [PLAN-024 壳](../history/plans/2026-10/2026-10-21-af-table-family-rebuild.md) 的 W14 节。

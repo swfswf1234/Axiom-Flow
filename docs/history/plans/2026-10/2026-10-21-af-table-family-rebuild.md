@@ -1,8 +1,8 @@
 # af_* 表族整族重建设计（af-table-family-rebuild）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-10-22
+最后更新：2026-10-23
 关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型边界与管线归属，本案不动）、
 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（集成测试白名单逐名枚举，加/删表必改）、
 [ADR 0007](../adr/0007-parse-status-semantics.md)（进度与结局分列、六态语义——本案换承载表不换语义）、
@@ -20,8 +20,8 @@
 [parsing-management.md](../design/parsing-management.md)（PM-3/5/6/8/9/10/11/16/17/18 随步）、
 [parsing-pipeline.md](../design/parsing-pipeline.md)（PP-14/17/21 随步）、
 [api.md](../architecture/api.md)（端点形状不变、字段来源改）、[code-map.md](../architecture/code-map.md)
-关联 Tracker：docs/trackers/todo.md（PLAN-024 镜像行；入站请求 REQ-136 由本行单行承载（ADR 0011），
-并入根侧已取消 ID 的 REQ-123／REQ-129 两行，见「承载 REQ-136」节）
+关联 Tracker：docs/trackers/todo.md（收口批已移出）→ docs/trackers/completed.md 的 PLAN-024 行
+（2026-10-23 关闭；入站请求 REQ-136 的答卷见「承载 REQ-136」节与「W9 回执」节，REQ-139 的承载节已改由 PLAN-025 承载）
 归档判定：Retain（四表逐列形状、折叠映射、并发写入判据与稳定期改判属不可替代决策证据）
 
 > **本壳只动文档**（W1 立项时的边界）：零 `src`、零迁移、零库内 DDL。档 B 的代码批（W7）与真机重建窗口（W8）
@@ -692,12 +692,36 @@ W4／W6 已把 7 处全部改完，S7 的复算判据＝`rg -n "github\.com" doc
 - 关闭条件＝S1~S10 逐条达成（判据正本在本壳与台账行；S8/S9 对应 W11 设计与 W12 晋升，S10 对应裁决⑮⑯
   的落地）；W7/W8/W10 各自另批立项或另批批准，
   不以本壳关闭代替其完成。
+- **关闭读数（2026-10-23，S1~S10 逐条对账；证据位置一律指本壳正文与「工作项」表末列，不复述过程）**：
+
+| S | 关闭读数 |
+| --- | --- |
+| S1 | 达成：四表进入 `database-design.md` 的表清单与逐列清单（22／27／12／23 列），列↔ORM 与约束索引两条对账随 W7 转绿、真库逐张列数相等随 W8 `VERDICT=PASS`；「暂定」外壳随裁决⑲ 转正，现役五表的 `### <table> 列清单` 逐字保持为代码事实后被 W7 改挂四表 |
+| S2 | 达成：「折叠映射」节逐列指名接收，节内零「其他／待定」（`待定` 二字在本壳只出现在本条判据文本自身） |
+| S3 | 达成：CW 反向判据落 `tests/unit/test_db.py`（含 `if_rev` 冲突形＝`test_stale_if_rev_is_a_conflict_not_a_miss`）与 `tests/integration/test_concurrency_criteria.py` 4 例（CW-3／CW-4／CW-6 双会话，`QED_TEST_MYSQL=1` 层窗口内 12 passed），三处机制逐个撤除变异复验 3/3 转红后按 sha256 还原 |
+| S4 | 达成：稳定期读法与 ARCH-023 第六表预留位由 [ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md) 决定 8 明文改判；`links` 越闸例外与转表触发判据写在 `database-design.md` 的准入守则节正文（非脚注），并经裁决⑲ 终审追认 |
+| S5 | 达成：「档 B 重建批次」节四件必答逐条给答，迁移链重置采（唯一 base `20261022_0001`，拒绝留旧链的理由各一句），D 类窗口的备份／回滚判据按 C-1~C-7 逐件留档（两库 `mysqldump`＋逐表 DDL 双份，sha256 前缀 `29bb119e…`／`519d4da0…`，读数在 `tmp/window-20261022/`） |
+| S6 | 达成：todo 一枚 PLAN-024 镜像行单行承载 REQ-136（ADR 0011），REQ-123／REQ-129 两行按并案口径处置并在「承载 REQ-136」节留处置记录；「事实错更正」节的三处（① 库内 head 自陈落后、② 「local 模式直写 `qed_llm_calls`」超前于实现、③ PM-3 的 `BlockEditRepository` 类名）按实读更正 |
+| S7 | 达成：`database-design.md` 的 H2 等于八章编号体白名单（立法＝[ADR 0017](../adr/0017-database-design-eight-chapter-skeleton.md)），A／B／C 三登记面成立且共享 `qed_*` 与 `qt_*` 小节零列清单零索引名，通则只以指针出现，跨仓引用 7 处 URL 全改纯路径；表级变更（5→4 与新 head）已按总纲 6.2 通知根并留「W9 回执」节 |
+| S8 | 达成：目标形状节逐表标明解析／分析归属并写清「分析模块在现役库内无表」；`确认状态＝暂定` 未漂移，于裁决⑲ 转正（原因与三项评审项一直在 header＋blockquote 双处，未新增元数据键）；分析模块未反向改动解析表形状 |
+| S9 | 达成：通路判据晋升为 [knowledge-analysis.md](../design/knowledge-analysis.md)（`KA-1~KA-28`，验收判据 13 条），两处结构请求与四项开放裁决分别落 `KA-27`／`KA-24~KA-26` 与「目标 6」；消费闭环另立 PLAN-025 |
+| S10 | 达成：`af_books.meta` 使四表扩展槽对称且同步写者与人工写者列域不重叠（反向判据＝同步重跑后 `meta` 键集合不变）；`embedding_signature` 与 `op_kind='index'`／`'kp'` 建值不建写者，四条「计数恒 0」守护随 W7 落地、W8 收尾批补全并各挂变异反向判据；索引行语义在两篇权威文档与本壳均**未定义**＝检索面边界未越 |
+
+- **未达成即关闭的项＝零**：W8 的「重建后首本全链路」一项按用户裁决**不在本轮**，其判据位已随 PLAN-025 W9
+  转移，不构成本壳欠账（见「验证与验收」真机批末句）。
+- **W9 的根侧未终态不在本壳关闭面内**：回执正文（R1~R5 终态答卷＋需根侧随步的六处＋契约不变承诺）已写入
+  「W9 回执」节并交用户转达；根仓库文件的改动由根仓库自身执行（AGENTS.md 工作区边界，口头指令不豁免），
+  故本壳关闭**不等**根侧回执落档。本仓侧 W1~W14 全部为「已执行」，其中 W9＝本仓交付完成、W10＝已移出。
 - **待用户逐条了结项＝零**：裁决①~⑳ 已全部落地（末两项＝⑲ 越闸例外追认与 `af_kp` 节转正＋W10 另立
   PLAN-025、⑳ 原 REQ-123 R1 裁撤不记欠账），无未裁例外残留。
 - **进度单源**：本案的逐项状态、裁决史与真机读数只落本壳「工作项」表、「用户裁决」表与「W9 回执」节，
   台账行按 `standards/task-lifecycle.md`「任务台账与承载」只保范围，不跟现状。
 - 归档判定 **Retain**：四表逐列形状、折叠映射、越闸例外与转表触发判据、档 B 四件必答、
-  会红守护清单属不可替代决策证据，关闭后按当时里程碑留档在 `docs/plans/`（或移 `history/plans/` 并保持活链接）。
+  会红守护清单属不可替代决策证据。关闭即**移出 `docs/plans/`**（`test_plan_governance.py` 不许非
+  `Accepted/In Progress/Blocked` 的壳在册）落 `docs/history/plans/2026-10/2026-10-21-af-table-family-rebuild.md`，
+  去处与保留理由同时登记在 `plans/index.md` 与 `history/plans/2026-10/index.md`；活链接改指面＝
+  `adr/0016` 两处、`adr/0017` 两处、`database-design.md` 两处、`knowledge-analysis.md` 一处与台账四件。
+  壳内相对链接按 `test_markdown_links.py` 的 `history` 过滤不再受检，故不重排（与 PLAN-023 归档壳同一处置）。
 - 残余移交：① 8903/8900 侧因形状变更需做的适配由根仓库自行承担（本壳只发回执，不代改）；
   ② 长文文件布局（`af_kp.narrative_ref` 指向的路径规范）需在 `parsing-pipeline.md` 或新篇设计里定档，
   本案只声明「落数据根、相对路径、禁绝对路径与越根」；③ `af_operations` 是否补回 `started_at`/`finished_at`
@@ -709,6 +733,10 @@ W4／W6 已把 7 处全部改完，S7 的复算判据＝`rg -n "github\.com" doc
   一律以本条为准读作「已裁撤」（回执 R4 行保留发回执时的口径并就地加注，不回改正文）。这一残余自此刻意留在库里（ingest 端点继续只回写四列快照），读侧若需要「版本已复位」
   的表达，须另立请求重开形状讨论，不在本案与 PLAN-025 之内。
   ⑥ **W10 已移出本案**（裁决⑲）＝另立 PLAN-025 承载，本壳只留指针；`af_kp` 节的转正与它的实现状态无关。
+  ⑦ **入站请求 REQ-139 的承载节随收口一并移出本壳**＝改由 PLAN-025 的「承载 REQ-139」节承载（其「待判」
+  条目一条未改成已判，判定与排期仍在需求承接侧）。理由两件：支线行的「承载」必须指向**在册**计划
+  （`test_tracker_governance.py`），归档壳不能承接活行；该请求要的是 `KA-n` 条文的增补与归一，与本壳
+  「四表形状封闭」的交付面不同轴。
 
 ## 承载 REQ-136
 

@@ -184,7 +184,7 @@ sequenceDiagram
   `links` 越闸的例外与转表触发判据、扩展槽与「建值不建写者」的代价条款）、
   [ADR 0015](../adr/0015-db-single-source-for-readiness.md)（就绪唯一源）、
   [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)（人工结构意图跨版本存活的先例）。
-- **承载沿革**：本篇正文由 `docs/plans/2026-10-21-af-table-family-rebuild.md` 的「分析模块设计」节晋升而来，
+- **承载沿革**：本篇正文由 `docs/history/plans/2026-10/2026-10-21-af-table-family-rebuild.md` 的「分析模块设计」节晋升而来，
   `KA-1~KA-23` 编号原样保留；`KA-24~KA-28` 是该壳内两项结构请求与四项开放裁决了结后新增的条文，
   裁决原文与判定过程只留在那枚计划壳的「用户裁决」表（⑰⑱ 两行）。本篇正文不引用计划壳条文编号。
 - **实现批**：`af_kp` 的写入路径、只读导出端点、8903 确认界面与 8900 拉取式提升作业为同一批交付

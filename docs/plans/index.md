@@ -188,3 +188,16 @@
   [completed.md](../trackers/completed.md) 的 PLAN-023 与 REQ-126 两行。实现锚点 `637bdaa`（脚本＋测试整文件）。
   **壳的路径已变更**：凡引用 `docs/plans/2026-10-18-service-stop-port-fallback.md` 处须改指上述归档位置
   （本批已同步 `docs/trackers/todo.md` 的 `ARCH-021` 行与 `docs/trackers/project-status.md`）。
+- PLAN-024 `af_*` 表族整族重建设计（Axiom-Flow，B 类，承载根侧请求 REQ-136，并入原 REQ-123／REQ-129）已完成
+  （2026-10-23，W1~W14 全执行、S1~S10 逐条达成、裁决①~⑳ 清零后关闭），计划按立项判定 **`Retain`** 归档至
+  [history/plans/2026-10](../history/plans/2026-10/2026-10-21-af-table-family-rebuild.md)（保留四表逐列形状与三表
+  折叠映射的逐列去向、并发写入七条判据 CW-1~CW-7 各挂的反向判据、`af_kp.links` 越闸例外的采纳过程与转表触发
+  判据、档 B 重建四件必答与两库真机窗口读数、承载力审计与十二步流程落点、W9 回执正文）；运行时事实源不在壳内，
+  而以 [database-design.md](../architecture/database-design.md)（四表列级正本）、
+  [ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（形状决策）、
+  [knowledge-analysis.md](../design/knowledge-analysis.md)（分析模块通路判据）与守护
+  `tests/contract/test_db_table_family_governance.py`＋`tests/unit/test_db.py` 为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-024 行。实现锚点 `8db415a`／`5c8042d`／`dd79cef`。
+  **壳的路径已变更**：凡引用 `docs/plans/2026-10-21-af-table-family-rebuild.md` 处须改指上述归档位置
+  （本批已同步 `docs/adr/0016`、`docs/adr/0017`、`docs/architecture/database-design.md`、
+  `docs/design/knowledge-analysis.md` 与 `docs/trackers/*`）。

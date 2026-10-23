@@ -22,7 +22,7 @@
 3. 根仓库 REQ-136 要的「一张表写明所有事件」与「结果索引表只要一张」是同一件事的两面：版本身份与
    操作流水本来就是一件事的两面，分表存即同一事实两处存。
 
-形状由用户在 [PLAN-024](../plans/2026-10-21-af-table-family-rebuild.md) 的裁决①~⑯定档，
+形状由用户在 [PLAN-024](../history/plans/2026-10/2026-10-21-af-table-family-rebuild.md) 的裁决①~⑯定档，
 2026-10-22 用户批准动代码与真库（档 B）。
 
 ## 决定
@@ -99,7 +99,7 @@
 明文改判：PLAN-020 归档壳的「表族进入只加列不张表的稳定期」与「唯一潜在第六表来源＝ARCH-023」两条读法
 （见决定 8）。
 关联：[database-design.md](../architecture/database-design.md)（四表列级正本）、
-[PLAN-024](../plans/2026-10-21-af-table-family-rebuild.md)（形状、折叠映射与档 B 批次的正本承载）、
+[PLAN-024](../history/plans/2026-10/2026-10-21-af-table-family-rebuild.md)（形状、折叠映射与档 B 批次的正本承载）、
 [ADR 0005](0005-mysql-integration-test-isolation.md)（`qed_test` 白名单随 `AF_TABLES` 同步）；
 跨仓只读引用：根仓库 REQ-136 与总纲 `QED-Engine/docs/architecture/database-design.md`
 （表级 5→4 与迁移 head 读数由根侧随步）。
