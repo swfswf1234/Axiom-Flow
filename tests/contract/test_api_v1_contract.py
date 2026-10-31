@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,28 +20,52 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from axiom_flow.api.main import create_app
-from axiom_flow.config import AdminConfigError, load_settings
+from axiom_flow.config import AdminConfigError, Settings, load_settings
+from axiom_flow.db.llm_ledger import LlmCallIdentity
 from axiom_flow.db.models import (
     AF_TABLES,
     LIFECYCLE_EVENT,
     LIFECYCLE_INTENT,
+    OP_KIND_KP,
     OP_KIND_PARSE,
     OP_KIND_STRUCTURE,
     AfBook,
+    AfKp,
     AfOperation,
     AfPage,
     Base,
 )
 from axiom_flow.db.repositories import (
+    KP_PAYLOAD_KEYS,
+    KP_RESULT_KEYS,
     LEGACY_JOB_ID,
     BookRepository,
     BookSyncRow,
+    KpNodeRow,
+    KpRepository,
     OperationRepository,
     PageRepository,
     ParseJobRow,
     RegionIntent,
 )
-from axiom_flow.engines.base import DocumentResult, EngineError, ModelLoad, PageResult
+from axiom_flow.engines.base import (
+    DocumentResult,
+    EngineError,
+    ModelLoad,
+    OutlineEntry,
+    PageResult,
+    SectionPoints,
+    TocPagePick,
+)
+from axiom_flow.engines.factory import build_text_engine
+from axiom_flow.engines.kp_gateway import KP_SLOT_NAME
+from axiom_flow.orchestrator.knowledge import norm_key_for
+from axiom_flow.schemas import KP_REVIEW_NOTE_MAX_CHARS, NARRATIVE_MAX_CHARS, BlockType
+from tests.support.llm_ledger_schema import create_ledger_table, read_ledger_rows
+
+#: 梳理调用账的身份三列：契约层只关心「有没有接线」，取值本身给桩值。
+#: `mode='local'` 时 `provider` 按根侧 DDL 注释是 runtime 名（不是厂商名），桩就叫桩的 runtime。
+_TEST_LLM_IDENTITY = LlmCallIdentity(mode="local", provider="stub-runtime", model="stub-text-model")
 
 
 def _parse_rows(session, *, book_id: str | None = None) -> list[AfOperation]:
@@ -150,6 +175,35 @@ class _WindowedEngine(FakeEngine):
         )
 
 
+class _RepeatedHeaderEngine(FakeEngine):
+    """每页同一高度一条**类型未判**的段落眉＋纵向错开的正文：只有线维认得出它（AF-T6 乙半边）。"""
+
+    def parse_document(
+        self, pdf_bytes: bytes, filename: str, *, start_page: int | None = None, end_page: int | None = None
+    ) -> DocumentResult:
+        return DocumentResult(
+            pages=[
+                PageResult(
+                    page=no,
+                    blocks=[
+                        {
+                            "type": "text",
+                            "text": "PRINCIPLES OF MATHEMATICAL ANALYSIS",
+                            "bbox": [72, 58, 540, 80],
+                        },
+                        {
+                            "type": "text",
+                            "text": f"正文 {no}",
+                            "bbox": [72, 200 + no * 90, 540, 236 + no * 90],
+                        },
+                    ],
+                    page_size=(595.0, 842.0),
+                )
+                for no in range(1, 5)
+            ]
+        )
+
+
 def _make_pdf(path: Path, pages: int = 2) -> Path:
     doc = pymupdf.open()
     try:
@@ -173,11 +227,20 @@ def _build(
     max_regions_per_page: int | None = None,
     admin_enabled: bool = False,
     admin_token: str | None = "",
+    kp_engine: str = "",
+    knowledge_engine_factory=None,
+    kp_call_identity=_TEST_LLM_IDENTITY,
+    background_jobs: bool = False,
 ):
     """隔离数据根 + SQLite 内存库 + 假引擎；返回 (client, session_factory)。
 
     管理面两参数**始终显式传入**（缺省 `admin_enabled=False`）：不传就会读到开发者 `.env` 里的
-    `QED_ADMIN_*`，同一份测试在两台机器上语义不同。
+    `QED_ADMIN_*`，同一份测试在两台机器上语义不同。`kp_engine` 同理**恒显式传入**（缺省空＝槽位
+    未接入），否则 `AXIOM_KP_ENGINE` 会从环境漏进用例，把「未接入即 503」的门变成环境依赖。
+    `kp_call_identity` 是梳理调用账的三枚身份列（`KA-23`／R6 甲案）：缺省给一个桩身份让批次能跑，
+    传 `None` 就是「接了引擎没接身份」那一条形，端点面应 503 且零写入。
+    `background_jobs` 缺省 `False`（内联执行，用例不必和线程抢库）；只有「受理到落行之间」那一窗
+    判据（`KA-40`）必须让批次真的跑在别人手里，才由那一条显式打开后台 worker。
     """
     monkeypatch.chdir(tmp_path)
     data_root = tmp_path / "data"
@@ -191,6 +254,7 @@ def _build(
         max_regions_per_page=max_regions_per_page,
         admin_enabled=admin_enabled,
         admin_token=admin_token,
+        kp_engine=kp_engine,
     )
     db_engine = create_engine(
         "sqlite+pysqlite://",
@@ -198,12 +262,16 @@ def _build(
         poolclass=StaticPool,
     )
     Base.metadata.create_all(db_engine)
+    # 梳理调用账的表在测试库里也要在位：缺表时写入器只降级告警，端点面就再也看不见自己写的行
+    create_ledger_table(db_engine)
     session_factory = sessionmaker(bind=db_engine, future=True)
     app = create_app(
         settings,
         session_factory=session_factory,
         engine_factory=engine_factory or (lambda name: FakeEngine()),
-        background_jobs=False,
+        knowledge_engine_factory=knowledge_engine_factory,
+        kp_call_identity=kp_call_identity,
+        background_jobs=background_jobs,
     )
     return TestClient(app), session_factory
 
@@ -455,7 +523,8 @@ class TestPagesAndManifest:
         response = client.get("/api/v1/books/mathanalysis-b05/pages/1")
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert set(payload) == {"blocks", "markdown", "image_url", "edits"}
+        assert set(payload) == {"blocks", "markdown", "image_url", "edits", "furniture_blocks"}
+        assert payload["furniture_blocks"] == []
         assert payload["blocks"]["page"] == 1
         assert payload["blocks"]["source"] == "mineru"
         assert payload["blocks"]["image_size"][0] > 0
@@ -540,6 +609,219 @@ class TestPagesAndManifest:
             json={"verdict": "ok"},
         )
         assert response.status_code == 400
+
+    # ---------- REQ-142 W2／PLAN-026 W2：人工改判块类型（corrected_type） ----------
+
+    def test_corrected_type_is_echoed_and_snapshot_stays(self, client):
+        """改判键与快照键分职：`block_type` 仍是产物原类型，`corrected_type` 才是人工结论。"""
+        _parsed_book(client)
+
+        response = client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "ok", "corrected_type": "header"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["block_type"] == "paragraph"
+        assert response.json()["corrected_type"] == "header"
+
+        edits = client.get("/api/v1/books/mathanalysis-b05/pages/1/edits").json()
+        assert edits[0]["corrected_type"] == "header"
+
+    def test_absent_corrected_type_means_no_relabel(self, client):
+        """没改判＝载荷里这一枚是 null，不是空串——回放腿要能分辨「没判」与「判成某种」。"""
+        _parsed_book(client)
+
+        response = client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "bad", "corrected_text": "正文（修正）"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["corrected_type"] is None
+
+    @pytest.mark.parametrize("block_type", sorted(item.value for item in BlockType))
+    def test_all_ten_block_types_are_accepted(self, client, block_type):
+        """标注集＝`BlockType` 十枚全集（闭集本身不另写一份名字表，用例直取枚举）。"""
+        _parsed_book(client)
+
+        response = client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "ok", "corrected_type": block_type},
+        )
+        assert response.status_code == 200, f"{block_type} → {response.status_code} {response.text}"
+        assert response.json()["corrected_type"] == block_type
+
+    def test_corrected_type_outside_closed_set_is_422(self, client):
+        _parsed_book(client)
+
+        response = client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "ok", "corrected_type": "title"},
+        )
+        assert response.status_code == 422, response.text
+
+    def test_free_payload_key_is_422(self, client):
+        """闭集外的请求键当场拒：静默吞键会让「什么操作可声明」失去定义（同 `database-design.md` 的禁自由键条）。"""
+        _parsed_book(client)
+
+        response = client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "ok", "block_type": "header"},
+        )
+        assert response.status_code == 422, response.text
+
+    def test_relabel_is_overwritten_not_duplicated(self, client):
+        """同块重复改判走同一条 upsert：行数恒 1，后判覆盖前判。"""
+        _parsed_book(client)
+
+        client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "ok", "corrected_type": "header"},
+        )
+        again = client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "ok", "corrected_type": "page_number"},
+        )
+        assert again.status_code == 200, again.text
+        edits = client.get("/api/v1/books/mathanalysis-b05/pages/1/edits").json()
+        assert len(edits) == 1
+        assert edits[0]["corrected_type"] == "page_number"
+
+
+    # ---------- REQ-142 W3／PLAN-026 W3：读侧回放（改判覆盖产物类型，只改判别维） ----------
+
+    def test_relabel_is_replayed_onto_the_page_blocks(self, client):
+        """`GET /pages/{no}` 的块序列读到的是改判后的类型；`edits[]` 仍留产物原类型快照。"""
+        _parsed_book(client)
+        edited = client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/0/edit",
+            json={"verdict": "ok", "corrected_type": "header"},
+        )
+        assert edited.status_code == 200, edited.text
+
+        page = client.get("/api/v1/books/mathanalysis-b05/pages/1")
+        assert page.status_code == 200, page.text
+        blocks = page.json()["blocks"]["blocks"]
+        assert blocks[0]["type"] == "header"
+        assert blocks[0]["text"] == "第 1 章"
+        assert page.json()["edits"][0]["block_type"] == "heading"
+
+    def test_relabel_does_not_backfill_a_field_the_artifact_lacks(self, client):
+        """改判只改判别维、不补内容字段：判成 formula 而产物无 latex 时照样读得出，不 500。"""
+        _parsed_book(client)
+        client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "ok", "corrected_type": "formula"},
+        )
+
+        page = client.get("/api/v1/books/mathanalysis-b05/pages/1")
+        assert page.status_code == 200, page.text
+        block = page.json()["blocks"]["blocks"][1]
+        assert (block["type"], block["latex"], block["text"]) == ("formula", None, "正文一")
+
+    def test_blocks_are_unchanged_without_a_relabel(self, client):
+        """反向断言一：没有改判行时块读数与改前逐字相等——回放腿不给未核对的页带来任何漂移。"""
+        _parsed_book(client)
+        before = client.get("/api/v1/books/mathanalysis-b05/pages/1").json()["blocks"]
+
+        client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/1/edit",
+            json={"verdict": "bad", "note": "文字错", "corrected_text": "正文（修正）"},
+        )
+        after = client.get("/api/v1/books/mathanalysis-b05/pages/1").json()["blocks"]
+
+        assert after == before, "改判之外的编辑键不动块序列：corrected_text 属意图行，不写回产物"
+
+    def test_relabel_from_another_version_is_not_replayed_onto_blocks(self, tmp_path, monkeypatch):
+        """反向断言二：改判绑在它所属的解析版本上，生效版的块读数回到产物原类型。"""
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _parsed_book(client)
+            with session_factory() as session:
+                OperationRepository(session).upsert_edit(
+                    "mathanalysis-b05",
+                    "job-not-the-active-one",
+                    1,
+                    0,
+                    block_type="heading",
+                    verdict="ok",
+                    corrected_type="header",
+                )
+                session.commit()
+
+            blocks = client.get("/api/v1/books/mathanalysis-b05/pages/1").json()["blocks"]["blocks"]
+
+        assert blocks[0]["type"] == "heading"
+
+
+class TestPageFurnitureMarks:
+    """页数据读投影的家具标记（PLAN-026 W12 ③；根侧 REQ-143 W20／第八令 Q4 乙）。
+
+    标记是**读时派生**：类型维吃回放后的 `type`，线维吃整本重复线（`furniture_hints`）；产物文件与
+    `markdown` 一字不改（`KA-19` 的「对照视图按原文判」不破）。输出块下标，屏侧不必自算跨页线
+    （第二处事实源，禁）。
+    """
+
+    def _book_dir(self, tmp_path) -> Path:
+        return tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05"
+
+    def test_typed_furniture_is_marked_only_in_the_read_projection(self, client, tmp_path):
+        _parsed_book(client)
+        url = "/api/v1/books/mathanalysis-b05/pages/1"
+        before = client.get(url).json()
+
+        response = client.put(
+            f"{url}/blocks/1/edit", json={"verdict": "ok", "corrected_type": "header"}
+        )
+        assert response.status_code == 200, response.text
+
+        payload = client.get(url).json()
+        assert payload["furniture_blocks"] == [1]
+        assert payload["markdown"] == before["markdown"]
+        job_id = client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"]
+        artifact = json.loads(
+            (self._book_dir(tmp_path) / "versions" / job_id / "pages" / "p0001.blocks.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert artifact["blocks"][1]["type"] == "paragraph", "改判不写回产物：标记只活在读投影里"
+
+    def test_untyped_repeated_line_is_marked_on_every_carrying_page(self, tmp_path, monkeypatch):
+        test_client, _ = _build(
+            tmp_path, monkeypatch, book_pages=4, engine_factory=lambda name: _RepeatedHeaderEngine()
+        )
+        with test_client as client:
+            _parsed_book(client)
+
+            for page_no in range(1, 5):
+                payload = client.get(f"/api/v1/books/mathanalysis-b05/pages/{page_no}").json()
+                assert payload["furniture_blocks"] == [0], f"第 {page_no} 页的眉未被标记"
+                assert payload["blocks"]["blocks"][0]["type"] == "paragraph", "线维不改类型"
+                assert (
+                    "PRINCIPLES OF MATHEMATICAL ANALYSIS" in payload["markdown"]
+                ), "markdown 原样：剔除不发生在页数据投影"
+
+    def test_a_book_without_furniture_reports_an_empty_list(self, client):
+        _parsed_book(client)
+
+        assert client.get("/api/v1/books/mathanalysis-b05/pages/1").json()["furniture_blocks"] == []
+        assert client.get("/api/v1/books/mathanalysis-b05/pages/2").json()["furniture_blocks"] == []
+
+    def test_relabel_and_revert_take_effect_across_reads(self, client):
+        """缓存失效判据：先读两次（第二次命中缓存），改判与撤回后的下一次读必须跟着变。"""
+        _parsed_book(client)
+        url = "/api/v1/books/mathanalysis-b05/pages/1"
+        assert client.get(url).json()["furniture_blocks"] == []
+        assert client.get(url).json()["furniture_blocks"] == []
+
+        changed = client.put(f"{url}/blocks/1/edit", json={"verdict": "ok", "corrected_type": "header"})
+        assert changed.status_code == 200, changed.text
+        assert client.get(url).json()["furniture_blocks"] == [1]
+
+        reverted = client.put(
+            f"{url}/blocks/1/edit", json={"verdict": "ok", "corrected_type": "paragraph"}
+        )
+        assert reverted.status_code == 200, reverted.text
+        assert client.get(url).json()["furniture_blocks"] == []
 
 
 PAGE1_BLOCK_URL = "/api/v1/books/mathanalysis-b05/pages/1"
@@ -1091,6 +1373,47 @@ class TestParseJobsEndpoints:
         assert "服务重启中断" in ghost["error"]
         assert book["parse_status"] == "pending"
         assert book["last_parse_result"] == "interrupted"
+
+    def test_startup_rejects_leftover_kp_draft_batches(self, tmp_path, monkeypatch):
+        """梳理批次的中断归一与解析同一条启动通路（`KA-9`）：残留 `draft` 在首次响应前整批判 `rejected`。
+
+        不处置就没有下一次：那批行会让 `KA-4` 的在飞判据永久为真，这本书再发不出新批次。
+        """
+        client, session_factory = _build(tmp_path, monkeypatch)
+        with session_factory() as session:
+            repo = KpRepository(session)
+            repo.create(
+                KpNodeRow(
+                    node_id="afkp-ghost",
+                    book_id="mathanalysis-b05",
+                    name="中断批次的点",
+                    norm_key="中断批次的点",
+                    gen_status="draft",
+                    gen_batch="afkp-aaaaaaaaaaaa",
+                )
+            )
+            endorsed = repo.create(
+                KpNodeRow(
+                    node_id="afkp-kept",
+                    book_id="mathanalysis-b05",
+                    name="人已背书的点",
+                    norm_key="人已背书的点",
+                    gen_status="candidate",
+                    gen_batch="afkp-bbbbbbbbbbbb",
+                )
+            )
+            kept_id = endorsed.node_id
+            repo.set_confirmed(kept_id, confirmed=True)
+            session.commit()
+
+        with client:  # 进入 TestClient 上下文才触发 lifespan（启动期归一发生在此）
+            assert client.get("/api/v1/health").status_code == 200
+
+        with session_factory() as session:
+            assert session.get(AfKp, "afkp-ghost").gen_status == "rejected"
+            kept = session.get(AfKp, kept_id)
+            assert (kept.gen_status, kept.confirmed) == ("candidate", 1)
+            assert KpRepository(session).find_draft_batch("mathanalysis-b05") is None
 
 
 class TestParseJobListEndpoint:
@@ -1775,6 +2098,1040 @@ class TestIngestIdempotency:
                 assert _intent_rows(session, OP_KIND_STRUCTURE) == []
 
 
+# --------------------------------------------------------------------------- ④ 知识点梳理端点面
+
+
+class _StubKpEngine:
+    """梳理引擎桩：目录三条腿各记一次名，知识点每节一个点；`healthy` 只影响提交期探活那一条分支。
+
+    目录腿的桩取值刻意走「判页挑中第一页、整理回一条 `depth=1`」这一形：端点面要证的是**调用形状**
+    （判页一次＋逐页整理每页一次、`stage=outline` 时知识点腿零调用），而不是抽取质量——抽取判据的
+    守护在 `tests/unit/test_knowledge_pipeline.py`。页码留 `None` 是把核对腿关在门外：坏行只取带
+    印刷页码的那些，桩给了页码就会多出一条与端点面无关的核对调用。
+    """
+
+    name = "fake-text"
+
+    def __init__(self, *, healthy: bool = True) -> None:
+        self.healthy = healthy
+        self.closed = False
+        self.outline_calls: list[tuple[str, object]] = []
+        self.section_calls: list[object] = []
+
+    def health(self) -> bool:
+        return self.healthy
+
+    def close(self) -> None:
+        self.closed = True
+
+    def toc_pages(self, samples):
+        self.outline_calls.append(("toc_pages", tuple(sample.page_no for sample in samples)))
+        first = samples[0].page_no if samples else 1
+        return TocPagePick(toc_pages=(first,))
+
+    def toc_entries(self, page_no, text):
+        self.outline_calls.append(("toc_entries", page_no))
+        return [OutlineEntry(level=1, printed_page=None, name="第 1 章")]
+
+    def toc_verify(self, items):
+        self.outline_calls.append(("toc_verify", tuple(item.name for item in items)))
+        return []
+
+    def points(self, section):
+        self.section_calls.append(section)
+        return SectionPoints(
+            [
+                {
+                    "name": f"{section.title} 的点",
+                    "type": "concept",
+                    "summary": "一句话总结",
+                    "anchors": [{"page": section.page_start, "block_indexes": [0], "snippet": "回指正文"}],
+                }
+            ],
+            f"{section.title} 这一讲讲的是什么。",
+        )
+
+
+class _BlockingKpEngine(_StubKpEngine):
+    """把批次停在「已受理、一行未落」那一窗的桩：整理腿进去就阻塞，收到释放信号才出行。
+
+    真机连吃 19 枚 404 的正是这一窗（`KA-40` 的原证）——判页与逐页整理都发生在落第一行之前，
+    而批次号由受理方发在 202 里。批次结束的信号取 `close`：它是执行体 `finally` 的最后一手，
+    流水行已经写完，用例因此不必靠轮询或睡眠判「跑完了」。
+
+    但 `close` 不止执行体一家会按：**提交期探活**（`_probe_model_service` 的 `finally`）在受理当口
+    就把同一枚桩关一次。信号因此只认「释放之后」的那一次关——释放前的一枚 close 属于探活，那时
+    批次连整理腿都还没进。
+    """
+
+    def __init__(self, *, entered: threading.Event, release: threading.Event) -> None:
+        super().__init__()
+        self.entered = entered
+        self.release = release
+        self.finished = threading.Event()
+
+    def toc_entries(self, page_no, text):
+        self.entered.set()
+        assert self.release.wait(5), "用例没释放：批次不该永远停在落行之前"
+        return super().toc_entries(page_no, text)
+
+    def close(self) -> None:
+        super().close()
+        if self.release.is_set():
+            self.finished.set()
+
+
+def _kp_build(
+    tmp_path, monkeypatch, *, engine=None, kp_engine: str = "fake-text", knowledge_engine_factory=None, **kwargs
+):
+    """④ 面的装配：文本引擎桩＋槽位名（`kp_engine=""` 即槽位未接入）。返回 `(client, sf, stub)`。
+
+    `knowledge_engine_factory` 是留给闭集守护的口子：桩接受任何名字，只有换上真工厂才测得到
+    「配了一个没登记的名字」那一条形——桩替不了真登记表，正如它替不了 `KA-22` 的回落纪律。
+    """
+    stub = engine if engine is not None else _StubKpEngine()
+    client, session_factory = _build(
+        tmp_path,
+        monkeypatch,
+        kp_engine=kp_engine,
+        knowledge_engine_factory=knowledge_engine_factory or (lambda name: stub),
+        **kwargs,
+    )
+    return client, session_factory, stub
+
+
+class TestKpCurationEndpoints:
+    """④ 梳理端点面：受理门零写入、流水与在飞判据分列、背书与确认的并发次序、整批目录与导出序。"""
+
+    BOOK = "mathanalysis-b05"
+
+    def _live(self, tmp_path, monkeypatch, **kwargs):
+        """sync → ingest → 全本解析：给出「有生效版本且逐页有产物」的书（受理门的最简前置）。"""
+        client, session_factory, stub = _kp_build(tmp_path, monkeypatch, **kwargs)
+        _parsed_book(client)
+        return client, session_factory, stub
+
+    def _submit(self, client, **extra) -> str:
+        response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK, **extra})
+        assert response.status_code == 202, response.text
+        return response.json()["gen_batch"]
+
+    def _kp_count(self, session_factory) -> int:
+        with session_factory() as session:
+            return int(
+                session.scalar(select(func.count()).select_from(AfKp).where(AfKp.book_id == self.BOOK)) or 0
+            )
+
+    def _ledger_count(self, session_factory) -> int:
+        with session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(AfOperation)
+                    .where(AfOperation.book_id == self.BOOK, AfOperation.op_kind == OP_KIND_KP)
+                )
+                or 0
+            )
+
+    def _call_rows(self, session_factory) -> list[dict]:
+        """`qed_llm_calls` 的读法：共享表不在 `Base.metadata` 里，只能按原始行读回。"""
+        return read_ledger_rows(session_factory.kw["bind"])
+
+    def _seed(self, session_factory, *, node_id: str, name: str, **fields) -> None:
+        """直填一行（喂门与导出面的对手集合）：走机器腿 `create`，其余列取 `KpNodeRow` 默认。"""
+        with session_factory() as session:
+            KpRepository(session).create(
+                KpNodeRow(
+                    node_id=node_id,
+                    book_id=self.BOOK,
+                    name=name,
+                    norm_key=norm_key_for(name),
+                    **fields,
+                )
+            )
+            session.commit()
+
+    def _workspace(self, client) -> dict:
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp")
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def _node(self, client, *, kind: str = "point") -> dict:
+        rows = [node for node in self._workspace(client)["nodes"] if node["node_kind"] == kind]
+        assert rows, f"工作区里没有 {kind} 行"
+        return rows[0]
+
+    # ---------------------------------------------------------------- 受理门
+
+    def test_submission_lands_one_candidate_batch_and_one_ledger_row(self, tmp_path, monkeypatch):
+        client, session_factory, stub = self._live(tmp_path, monkeypatch)
+        accepted = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+        assert accepted.status_code == 202, accepted.text
+        body = accepted.json()
+        assert body["status"] == "queued"
+        assert body["gen_batch"].startswith("afkp-")
+        assert body["page_start"] == 1 and body["page_end"] == 2
+
+        progress = client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{body['gen_batch']}")
+        assert progress.status_code == 200, progress.text
+        reading = progress.json()
+        assert reading["in_flight"] is False
+        assert reading["counts"]["candidate"] >= 1
+        assert reading["counts"]["outline"] >= 1
+        ledger = reading["ledger"]
+        assert ledger["status"] == "ok"
+        assert ledger["gen_batch"] == body["gen_batch"]
+        assert ledger["job_id"] == body["evidence_job_id"]
+        assert set(ledger["result"]) <= set(KP_RESULT_KEYS)
+        assert ledger["result"]["candidate_rows"] == reading["counts"]["candidate"]
+        assert ledger["created_at"] is not None
+        # 目录阶段以模型为正腿（`KA-35` 改判）：判页一次＋逐页整理每页一次，知识点每节一次；跑完照常关闭
+        assert [name for name, _ in stub.outline_calls] == ["toc_pages", "toc_entries"]
+        assert len(stub.section_calls) >= 1
+        assert stub.closed is True
+        assert self._kp_count(session_factory) == reading["counts"]["candidate"]
+
+    def test_review_note_rides_the_request_and_comes_back_on_the_progress_face(
+        self, tmp_path, monkeypatch
+    ):
+        """AF-T5 甲・备注通道：受理收下人工评审意见、批次流水存档、进度面回显——零新列。
+
+        备注落在 `payload`（这一批的**入参**）而不是 `note` 实体列：后者的语义是人工意图行的批注，
+        与「这一批是照着哪句意见跑的」不是一回事。缺省空串而非缺键，读侧只维护一种形状。
+        """
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        note = "第 3 章的节标题把书眉粘进来了，剔掉"
+        accepted = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK, "review_note": note})
+        assert accepted.status_code == 202, accepted.text
+        gen_batch = accepted.json()["gen_batch"]
+
+        reading = client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{gen_batch}").json()
+        assert reading["ledger"]["review_note"] == note
+        with session_factory() as session:
+            row = OperationRepository(session).find_kp_batch(self.BOOK, gen_batch)
+            assert row.payload["review_note"] == note
+
+        plain = self._submit(client)
+        assert client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{plain}").json()["ledger"]["review_note"] == ""
+
+        # 超长＝422 且当场拒（排在受理门之前，与页区间同一条纪律：非法请求不打模型也不落账）
+        before = self._ledger_count(session_factory)
+        over = client.post(
+            "/api/v1/kp-jobs",
+            json={"book_id": self.BOOK, "review_note": "长" * (KP_REVIEW_NOTE_MAX_CHARS + 1)},
+        )
+        assert over.status_code == 422
+        assert self._ledger_count(session_factory) == before
+
+    def test_stage_outline_runs_the_outline_leg_only(self, tmp_path, monkeypatch):
+        """`KA-34`：`stage=outline` ⇒ 知识点阶段整条不发起（零点次调用、零点行），目录行照常落库。
+
+        这一枚入参存在的原因＝人工要在屏上先看目录：知识点阶段每节一次调用，整本按几十到上百节估，
+        没有只目录入参就得等整本跑完，或把页区间划窄——划窄得到的是一份不完整的目录。
+        """
+        client, session_factory, stub = self._live(tmp_path, monkeypatch)
+        gen_batch = self._submit(client, stage="outline")
+
+        reading = client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{gen_batch}").json()
+        assert stub.section_calls == [], "只目录批次不许碰知识点阶段"
+        steps = [row["step"] for row in self._call_rows(session_factory)]
+        assert steps == ["toc_pages", "toc_entries"], "调用账只含目录步（`KA-34`／`KA-35`）：知识点腿零笔"
+        assert stub.closed is True, "收尾照跑、引擎照常回收"
+        assert {node["node_kind"] for node in self._workspace(client)["nodes"]} == {"outline"}
+        assert reading["counts"]["point"] == 0
+        assert reading["counts"]["draft"] == 0, "三态不因 stage 分叉：本批照样翻到 candidate"
+        assert reading["counts"]["candidate"] >= 1
+        assert reading["ledger"]["stage"] == "outline"
+        assert reading["ledger"]["review_note"] == ""
+        with session_factory() as session:
+            row = OperationRepository(session).find_kp_batch(self.BOOK, gen_batch)
+        assert set(row.payload) == set(KP_PAYLOAD_KEYS), "入参闭集四键扩五键，不多不少（`KA-27`）"
+        assert row.payload["stage"] == "outline", "受理值原样进 payload，读侧回声不是缺省值回填"
+
+    def test_stage_defaults_to_full_and_rejects_values_out_of_the_closed_set(
+        self, tmp_path, monkeypatch
+    ):
+        """缺省＝两腿全跑（既有调用方与用例不改期望）；域外值 422 且**零写入**（形状闸先于受理门）。"""
+        client, session_factory, stub = self._live(tmp_path, monkeypatch)
+        plain = self._submit(client)
+        assert stub.section_calls, "缺省 `full` 逐字同旧行为"
+        assert client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{plain}").json()["ledger"]["stage"] == "full"
+
+        before_rows = self._kp_count(session_factory)
+        before_ledger = self._ledger_count(session_factory)
+        rejected = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK, "stage": "point"})
+        assert rejected.status_code == 422
+        assert self._kp_count(session_factory) == before_rows
+        assert self._ledger_count(session_factory) == before_ledger
+
+    def test_acceptance_gates_write_nothing(self, tmp_path, monkeypatch):
+        client, session_factory, stub = _kp_build(tmp_path, monkeypatch)
+        _sync_book(client)
+        _ingest(client)
+        assert client.post("/api/v1/kp-jobs", json={"book_id": "nope-not-here"}).status_code == 404
+        # 有书目、有页图，但**无生效解析版本**：锚点将无处解释（KA-1），判 422 而不是回落根视图
+        unparsed = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+        assert unparsed.status_code == 422
+        assert "生效解析版本" in unparsed.text
+        # 请求体点名引擎＝绕过「未接入就拒」这道门，`extra="forbid"` 在 schema 层拒掉
+        assert client.post(
+            "/api/v1/kp-jobs", json={"book_id": self.BOOK, "engine": "gpt"}
+        ).status_code == 422
+        assert self._kp_count(session_factory) == 0
+        assert self._ledger_count(session_factory) == 0
+        assert stub.outline_calls == []
+
+    def test_page_range_must_come_in_pairs_and_stay_inside_the_book(self, tmp_path, monkeypatch):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        for payload in (
+            {"page_start": 1},
+            {"page_end": 2},
+            {"page_start": 1, "page_end": 99},
+            {"page_start": 2, "page_end": 1},
+        ):
+            response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK, **payload})
+            assert response.status_code == 422, f"{payload} 应判页区间违规：{response.text}"
+            assert "页区间" in response.text or "起止页" in response.text
+        assert self._kp_count(session_factory) == 0
+        assert self._ledger_count(session_factory) == 0
+
+    def test_in_flight_batch_blocks_a_second_submission(self, tmp_path, monkeypatch):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._seed(session_factory, node_id="afkp-draft9", name="残留草稿", gen_status="draft",
+                   gen_batch="afkp-batch9")
+        response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+        assert response.status_code == 409, response.text
+        assert "afkp-batch9" in response.text
+        assert self._kp_count(session_factory) == 1
+        assert self._ledger_count(session_factory) == 0
+
+    def test_unconfigured_text_slot_is_503_and_creates_no_batch(self, tmp_path, monkeypatch):
+        """T1 甲随步：槽位默认值是内置实名，文案不再教人「请配置 `AXIOM_KP_ENGINE`」。
+
+        清空默认值仍是 503（不回落成任何引擎），只是把话说回「服务侧接线」这一边。
+        """
+        client, session_factory, stub = self._live(tmp_path, monkeypatch, kp_engine="")
+        response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+        assert response.status_code == 503, response.text
+        assert "未接入" in response.text
+        assert "请配置" not in response.text
+        assert self._kp_count(session_factory) == 0
+        assert self._ledger_count(session_factory) == 0
+        assert stub.outline_calls == []
+
+    def test_an_unknown_slot_name_is_503_as_well_and_creates_no_batch(self, tmp_path, monkeypatch):
+        """闭集收在 `engines/factory.py`，端点不另写一份名字表：拿**真工厂**接线才证得到那条门。
+
+        桩工厂替不了它——桩接受任何名字，误配就读成 202。HTTP 面仍是门槛表登记的那一个 503：
+        请求体没有 `engine` 字段，误配的是服务侧环境，不该读成调用方的 400。
+        """
+        probe = _StubKpEngine()
+        client, session_factory, stub = self._live(
+            tmp_path,
+            monkeypatch,
+            kp_engine="gpt-4o",
+            engine=probe,
+            knowledge_engine_factory=lambda name: build_text_engine(name, Settings(data_dir=Path())),
+        )
+        response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+        assert response.status_code == 503, response.text
+        assert "gpt-4o" in response.text
+        assert self._kp_count(session_factory) == 0
+        assert self._ledger_count(session_factory) == 0
+        assert stub.outline_calls == []
+
+    def test_the_default_wiring_reaches_the_slot_factory(self, tmp_path, monkeypatch):
+        """缺省装配面：不注入 `knowledge_engine_factory` 时，端点走 `create_app` 里的那一条 `or` 分支。
+
+        ④ 面其余用例恒注入桩工厂，正好把默认分支遮住——线上起服跑的却就是这条分支，少一个 import
+        名字照样能在读回 202 之前一声不响。这里把真工厂换成**同签名**的假工厂，只证两件事：默认
+        分支被接上、且它收到的是槽位名本身（不是别的什么）。
+        """
+        stub = _StubKpEngine()
+        seen: list[str] = []
+
+        def fake_build_text_engine(name, _settings):
+            seen.append(name)
+            return stub
+
+        monkeypatch.setattr("axiom_flow.api.main.build_text_engine", fake_build_text_engine)
+        client, session_factory = _build(tmp_path, monkeypatch, kp_engine=KP_SLOT_NAME)
+        _parsed_book(client)
+
+        response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+
+        assert response.status_code == 202, response.text
+        assert seen and set(seen) == {KP_SLOT_NAME}  # 探活一枚、执行体一枚：两次都走默认分支
+        assert stub.section_calls != []
+        assert self._kp_count(session_factory) > 0
+
+    def test_a_wired_slot_without_a_call_identity_is_503_and_creates_no_batch(self, tmp_path, monkeypatch):
+        """R6 甲案的端点面：接了引擎却没给身份 ⇒ 受理期拒跑，读成 503（错在服务侧接线，不在请求体）。"""
+        client, session_factory, stub = self._live(tmp_path, monkeypatch, kp_call_identity=None)
+        response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+        assert response.status_code == 503, response.text
+        assert "身份" in response.text
+        assert self._kp_count(session_factory) == 0
+        assert self._ledger_count(session_factory) == 0
+        assert self._call_rows(session_factory) == []
+        assert stub.outline_calls == []
+
+    def test_a_submitted_batch_leaves_one_call_ledger_row_per_model_call(self, tmp_path, monkeypatch):
+        """判据 10 的端点面：一次梳理作业在 `qed_llm_calls` 留下与模型调用一一对应的追加行。
+
+        断言里连「不该有的列」一起看：`prompt`／`response` 留 NULL（真实串只有适配器知道，摘要不算），
+        `review_status` 保持库侧默认（审核动作归 8900，本通路一列不碰）。
+        """
+        client, session_factory, stub = self._live(tmp_path, monkeypatch)
+        gen_batch = self._submit(client)
+
+        rows = self._call_rows(session_factory)
+        # 目录两条正腿同样进账（`KA-23`／`KA-35` 改判）：账的顺序＝调用发生的顺序，知识点腿每节一笔
+        assert [row["step"] for row in rows] == ["toc_pages", "toc_entries"] + ["points"] * len(stub.section_calls)
+        assert {row["service"] for row in rows} == {"axiom_flow"}
+        assert {row["endpoint"] for row in rows} == {"text"}
+        assert {row["task"] for row in rows} == {"kp-curation"}
+        assert {(row["mode"], row["provider"], row["model"]) for row in rows} == {
+            ("local", "stub-runtime", "stub-text-model")
+        }
+        assert {json.loads(row["meta"])["gen_batch"] for row in rows} == {gen_batch}
+        assert all(row["prompt"] is None and row["response"] is None for row in rows)
+        assert {row["review_status"] for row in rows} == {"unreviewed"}
+
+    def test_unavailable_text_service_is_503_at_submit_time(self, tmp_path, monkeypatch):
+        client, session_factory, stub = self._live(tmp_path, monkeypatch, engine=_StubKpEngine(healthy=False))
+        response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+        assert response.status_code == 503, response.text
+        assert stub.closed is True
+        assert self._kp_count(session_factory) == 0
+        assert self._ledger_count(session_factory) == 0
+
+    def test_acceptance_gates_precede_the_engine_slot(self, tmp_path, monkeypatch):
+        """非法请求不打模型，也不该先撞槽位门：书目与页区间判在槽位与探活之前。"""
+        client, _, _ = self._live(tmp_path, monkeypatch, kp_engine="")
+        assert client.post("/api/v1/kp-jobs", json={"book_id": "nope-not-here"}).status_code == 404
+        assert client.post(
+            "/api/v1/kp-jobs", json={"book_id": self.BOOK, "page_start": 1, "page_end": 99}
+        ).status_code == 422
+
+    # ---------------------------------------------------------------- 进度端点
+
+    def test_progress_in_flight_reads_draft_rows_not_the_ledger_status(self, tmp_path, monkeypatch):
+        """事件行禁作当前态判据（`KA-4`/`KA-9`）：流水写「ok」而 `draft` 行还在 ⇒ `in_flight` 必须为真。"""
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        gen_batch = self._submit(client)
+        self._seed(session_factory, node_id="afkp-draft9", name="在飞行", gen_status="draft",
+                   gen_batch=gen_batch)
+        reading = client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{gen_batch}").json()
+        assert reading["ledger"]["status"] == "ok"
+        assert reading["in_flight"] is True
+        assert reading["counts"]["draft"] == 1
+
+    def test_progress_of_a_batch_between_acceptance_and_landing_is_200_not_404(self, tmp_path, monkeypatch):
+        """`KA-40` 的读面缺口：受理到落行之间零行零流水，进度面仍得 200＋在飞＋`ledger=null`。
+
+        这一窗在真机上长达约 10 分钟（判页 152s ＋逐页整理 291s／枚），8903 每 1.5s 轮一次；判 404
+        就是把活批次读成死链路，人工据此重复点钮（`afkp-8d5978d985eb` 原证：404 连吃 19 枚期间三笔
+        调用全 `success`，批末照样产出 119 行）。批次必须真的跑在另一个线程里，所以这条开后台 worker：
+        两条腿的完成信号都取假引擎的 `close`（执行体 `finally` 的最后一手），且都只认「真的干过活」
+        的那一枚实例——探活也建引擎、也关引擎，不Gate就会在活儿没跑完时放行用例。
+        """
+        parsed = threading.Event()
+
+        class _SignallingParseEngine(FakeEngine):
+            """完成信号只由**真跑过解析**的那个实例发：提交期探活另建一枚引擎并在 `finally` 里
+            `close` 它（`_probe_model_service`），照单全收就会在解析还没跑完时放行用例。"""
+
+            def __init__(self, **kwargs) -> None:
+                super().__init__(**kwargs)
+                self.used = False
+
+            def parse_document(self, pdf_bytes, filename, **kwargs):  # noqa: ANN001, ANN201
+                self.used = True
+                return super().parse_document(pdf_bytes, filename, **kwargs)
+
+            def close(self) -> None:
+                super().close()
+                if self.used:
+                    parsed.set()
+
+        entered, release = threading.Event(), threading.Event()
+        stub = _BlockingKpEngine(entered=entered, release=release)
+        client, _, _ = _kp_build(
+            tmp_path,
+            monkeypatch,
+            engine=stub,
+            background_jobs=True,
+            engine_factory=lambda name: _SignallingParseEngine(),
+        )
+        _sync_book(client)
+        _ingest(client)
+        assert client.post("/api/v1/parse-jobs", json={"book_id": self.BOOK}).status_code == 202
+        assert parsed.wait(10), "解析没跑完：后台 worker 的最后一手是 close"
+        assert client.get(f"/api/v1/books/{self.BOOK}").json()["active_job_id"], "生效版本没落，受理门会 422"
+
+        gen_batch = self._submit(client)
+        assert entered.wait(10), "整理腿没被发起：批次没停在落行之前"
+        reading = client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{gen_batch}")
+        assert reading.status_code == 200, reading.text
+        body = reading.json()
+        assert body["in_flight"] is True
+        assert body["ledger"] is None
+        assert (body["counts"]["draft"], body["counts"]["outline"]) == (0, 0)
+
+        release.set()
+        assert stub.finished.wait(10), "批次没跑完：close 是执行体最后一手"
+        after = client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{gen_batch}").json()
+        assert after["ledger"]["status"] == "ok", after["ledger"]
+        assert (after["counts"]["outline"], after["counts"]["draft"]) == (1, 0), after
+        assert after["in_flight"] is False, "收尾是这批唯一的一次三态迁移：行与登记都该撤下"
+
+    def test_progress_of_unknown_batch_is_404(self, tmp_path, monkeypatch):
+        """反向判据（`KA-40` 不收的形）：行、流水、在途登记三者全无的批次号照旧 404——登记不是万能钥匙。"""
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/afkp-never")
+        assert response.status_code == 404
+        assert "afkp-never" in response.text
+
+    # ---------------------------------------------------------------- 工作区读面
+
+    def test_workspace_does_not_follow_the_active_version_pointer(self, tmp_path, monkeypatch):
+        """锚点按**行自身的 `job_id`** 解释（`KA-18`）：产物目录没了也不 404，只落 `review_flags`。"""
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        evidence_job_id = client.get(f"/api/v1/books/{self.BOOK}").json()["active_job_id"]
+        shutil.rmtree(next((tmp_path / "data" / "parsed").rglob(evidence_job_id)))
+        workspace = self._workspace(client)
+        assert workspace["nodes"], "换产物不换知识点行：一行都不该因产物缺失而消失"
+        assert any("缺该页产物" in flag["reason"] for flag in workspace["review_flags"])
+        assert workspace["in_flight_batch"] is None
+        # 对照：走生效指针的读端点仍然 404，两者不是同一作用域入口
+        assert client.get(f"/api/v1/books/{self.BOOK}/manifest").status_code == 404
+
+    def test_workspace_of_missing_book_is_404_and_empty_book_is_200(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        assert client.get("/api/v1/books/nope-not-here/kp").status_code == 404
+        empty = self._workspace(client)
+        assert empty["nodes"] == [] and empty["in_flight_batch"] is None
+
+    # ---------------------------------------------------------------- 背书 PATCH
+
+    def test_patch_writes_only_the_keys_present_in_the_body(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        before = node["rev"]
+        patched = client.patch(
+            f"/api/v1/kp/nodes/{node['node_id']}", json={"summary": "改过的摘要", "if_rev": before}
+        )
+        assert patched.status_code == 200, patched.text
+        after = patched.json()
+        assert after["summary"] == "改过的摘要"
+        assert after["name"] == node["name"] and after["anchors"] == node["anchors"]
+        assert after["rev"] == before + 1
+        # 显式 null 与缺席两件事：给出 `parent_id: null` 就是退回未归档池
+        retreated = client.patch(f"/api/v1/kp/nodes/{node['node_id']}", json={"parent_id": None}).json()
+        assert retreated["parent_id"] is None
+        assert retreated["summary"] == "改过的摘要"
+
+    def test_patch_with_stale_if_rev_is_409(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        response = client.patch(
+            f"/api/v1/kp/nodes/{node['node_id']}", json={"summary": "旧表单", "if_rev": node["rev"] + 5}
+        )
+        assert response.status_code == 409, response.text
+        assert client.get(f"/api/v1/books/{self.BOOK}/kp").json()["nodes"]
+
+    def test_patch_rejects_unknown_node_and_foreign_book_fields(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        assert client.patch("/api/v1/kp/nodes/afkp-never", json={"summary": "x"}).status_code == 404
+        self._submit(client)
+        node = self._node(client)
+        # 来源三列与确认位不在请求模型里：改不动是形状保证，不是运行期判断（`KA-11`）
+        for field in ("gen_status", "gen_batch", "model_ref", "confirmed", "book_id", "node_kind"):
+            assert client.patch(f"/api/v1/kp/nodes/{node['node_id']}", json={field: "x"}).status_code == 422
+
+    def test_patch_rejects_edges_that_break_the_server_invariants(self, tmp_path, monkeypatch):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        missing = client.patch(
+            f"/api/v1/kp/nodes/{node['node_id']}",
+            json={"links": [{"kind": "prerequisite", "to": "afkp-nope"}]},
+        )
+        assert missing.status_code == 422, missing.text
+        assert "afkp-nope" in missing.text
+        selfloop = client.patch(
+            f"/api/v1/kp/nodes/{node['node_id']}",
+            json={"links": [{"kind": "extends", "to": node["node_id"]}]},
+        )
+        assert selfloop.status_code == 422
+        assert "自环" in selfloop.text
+        # 对岸那行用固定 id 直填：成环的两条边必须分属两行，否则「自环」会先把环那一问遮蔽掉
+        self._seed(session_factory, node_id="afkp-peer9", name="对岸的点")
+        first = client.patch(
+            f"/api/v1/kp/nodes/{node['node_id']}",
+            json={"links": [{"kind": "prerequisite", "to": "afkp-peer9"}]},
+        )
+        assert first.status_code == 200, first.text
+        closing = client.patch(
+            "/api/v1/kp/nodes/afkp-peer9",
+            json={"links": [{"kind": "prerequisite", "to": node["node_id"]}]},
+        )
+        assert closing.status_code == 422, closing.text
+        assert "环" in closing.text
+
+    def test_patch_rejects_a_type_on_an_outline_row(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        outline = self._node(client, kind="outline")
+        response = client.patch(f"/api/v1/kp/nodes/{outline['node_id']}", json={"type": "concept"})
+        assert response.status_code == 422, response.text
+        assert client.get(f"/api/v1/books/{self.BOOK}/kp").json()
+
+    # ---------------------------------------------------------------- 确认与撤回
+
+    def test_confirm_names_every_missing_endorsement_and_writes_nothing(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        stripped = client.patch(f"/api/v1/kp/nodes/{node['node_id']}", json={"anchors": []}).json()
+        assert stripped["anchors"] == []
+        denied = client.post(f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": True})
+        assert denied.status_code == 422, denied.text
+        assert denied.json()["missing"], "422 的正文必须逐条点名缺的是什么"
+        assert denied.json()["confirmed"] == 0
+        assert denied.json()["rev"] == stripped["rev"]
+        out_of_range = client.patch(
+            f"/api/v1/kp/nodes/{node['node_id']}",
+            json={"anchors": [{"kind": "page_block", "page": 99, "block_indexes": [0]}]},
+        )
+        assert out_of_range.status_code == 200, out_of_range.text
+        second = client.post(f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": True})
+        assert second.status_code == 422, second.text
+        assert any("页集" in item for item in second.json()["missing"])
+
+    def test_confirm_conflict_precedes_the_shape_check(self, tmp_path, monkeypatch):
+        """旧表单的冲突不得读成「行不合形状」的 422：`rev` 比对排在可回指校验之前。"""
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        client.patch(f"/api/v1/kp/nodes/{node['node_id']}", json={"anchors": []})
+        response = client.post(
+            f"/api/v1/kp/nodes/{node['node_id']}/confirm",
+            json={"confirmed": True, "if_rev": node["rev"] + 3},
+        )
+        assert response.status_code == 409, response.text
+
+    def test_confirm_then_withdraw_is_always_possible(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        confirmed = client.post(f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": True})
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["confirmed"] == 1
+        assert confirmed.json()["rev"] == node["rev"] + 1
+        # 撤坏锚的行同样能撤确认（`KA-17`：撤回永远可执行，不能卡在已确认态）
+        client.patch(
+            f"/api/v1/kp/nodes/{node['node_id']}",
+            json={"anchors": [{"kind": "page_block", "page": 99, "block_indexes": [0]}]},
+        )
+        withdrawn = client.post(f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": False})
+        assert withdrawn.status_code == 200, withdrawn.text
+        assert withdrawn.json()["confirmed"] == 0
+        assert self._node(client, kind="point")["gen_status"] == "candidate"
+
+    def test_confirm_of_unknown_node_is_404(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        response = client.post("/api/v1/kp/nodes/afkp-never/confirm", json={"confirmed": True})
+        assert response.status_code == 404
+
+    # ---------------------------------------------------------------- 目录整批声明
+
+    def test_outline_declaration_detaches_children_of_absent_entries_and_deletes_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        kept = self._node(client, kind="outline")
+        self._seed(session_factory, node_id="afkp-o9", name="第 9 章", node_kind="outline", depth=1,
+                   order_hint=9)
+        point = self._node(client, kind="point")
+        client.patch(f"/api/v1/kp/nodes/{point['node_id']}", json={"parent_id": "afkp-o9"})
+
+        declared = client.put(
+            f"/api/v1/books/{self.BOOK}/kp/outline",
+            json={"declarations": [{"node_id": kept["node_id"], "order_hint": 1}]},
+        )
+        assert declared.status_code == 200, declared.text
+        body = declared.json()
+        assert [node["node_id"] for node in body["outline"]] == [kept["node_id"]]
+        assert body["detached_points"] == 1
+
+        nodes = self._workspace(client)["nodes"]
+        ids = {node["node_id"] for node in nodes}
+        assert "afkp-o9" in ids, "缺席只降级，不下线：目录行不删、不改身份"
+        absent = next(node for node in nodes if node["node_id"] == "afkp-o9")
+        assert absent["name"] == "第 9 章" and absent["order_hint"] == 9
+        moved = next(node for node in nodes if node["node_id"] == point["node_id"])
+        assert moved["parent_id"] is None
+
+        again = client.put(
+            f"/api/v1/books/{self.BOOK}/kp/outline",
+            json={"declarations": [{"node_id": kept["node_id"], "order_hint": 1}]},
+        ).json()
+        assert again["detached_points"] == 0, "重复提交同一份声明结果不变（幂等，无需 undo 端点）"
+
+    def test_outline_declaration_rejects_bad_shape_before_any_write(self, tmp_path, monkeypatch):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        gen_batch = self._submit(client)
+        kept = self._node(client, kind="outline")
+        point = self._node(client, kind="point")
+        before = {
+            node["node_id"]: (node["parent_id"], node["order_hint"], node["rev"])
+            for node in self._workspace(client)["nodes"]
+        }
+        for payload in (
+            [{"node_id": "afkp-nope"}],
+            [{"node_id": point["node_id"], "order_hint": 7}],
+            [{"node_id": kept["node_id"], "parent_id": kept["node_id"], "order_hint": 1}],
+        ):
+            response = client.put(
+                f"/api/v1/books/{self.BOOK}/kp/outline", json={"declarations": payload}
+            )
+            assert response.status_code == 422, f"{payload} 应整批拒收：{response.text}"
+        assert self._workspace(client)["nodes"] and before == {
+            node["node_id"]: (node["parent_id"], node["order_hint"], node["rev"])
+            for node in self._workspace(client)["nodes"]
+        }
+        assert self._kp_count(session_factory) == len(before)
+        assert self._ledger_count(session_factory) == 1
+        assert gen_batch
+
+    # ---------------------------------------------------------------- 只读导出面
+
+    def test_export_gives_confirmed_rows_only_with_parents_first(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        empty = client.get(f"/api/v1/books/{self.BOOK}/kp/export")
+        assert empty.status_code == 200, empty.text
+        assert empty.json()["nodes"] == [] and empty.json()["total"] == 0
+
+        outline = self._node(client, kind="outline")
+        point = self._node(client, kind="point")
+        client.post(f"/api/v1/kp/nodes/{point['node_id']}/confirm", json={"confirmed": True})
+        solo = client.get(f"/api/v1/books/{self.BOOK}/kp/export").json()
+        assert [node["node_id"] for node in solo["nodes"]] == [point["node_id"]]
+        assert solo["nodes"][0]["rev"] >= 1
+
+        client.post(f"/api/v1/kp/nodes/{outline['node_id']}/confirm", json={"confirmed": True})
+        both = client.get(f"/api/v1/books/{self.BOOK}/kp/export").json()
+        assert [node["node_id"] for node in both["nodes"]] == [outline["node_id"], point["node_id"]]
+        assert {node["confirmed"] for node in both["nodes"]} == {1}
+        assert client.get("/api/v1/books/nope-not-here/kp/export").status_code == 404
+
+
+    # ---------------------------------------------------------------- 单点重生成
+
+    def test_regenerating_a_point_summary_overwrites_it_and_returns_the_new_rev(
+        self, tmp_path, monkeypatch
+    ):
+        """`KA-45`：人工按「重新生成总结」⇒ 覆盖该行的 `summary`、`rev` 递增，一次模型调用随响应回来。"""
+        client, session_factory, stub = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory,
+            node_id="afkp-point1",
+            name="1.1 数列极限",
+            node_kind="outline",
+            depth=2,
+            order_hint=1,
+            anchors=[{"page": 1, "block_indexes": [0], "snippet": "回指正文"}],
+        )
+        node = self._node(client, kind="outline")
+        assert node["node_type"] == "point"
+
+        response = client.post(
+            f"/api/v1/kp/nodes/{node['node_id']}/summary", json={"if_rev": node["rev"]}
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["summary"] == "1.1 数列极限 这一讲讲的是什么。"
+        assert body["rev"] == node["rev"] + 1
+        assert stub.section_calls and stub.section_calls[-1].title == "1.1 数列极限"
+
+    def test_regenerating_a_chapter_or_an_exercise_summary_is_422(self, tmp_path, monkeypatch):
+        """只有「知识点」这一型可重生成：章节走内容批次的章腿，习题与其他的令文口径是「什么都不需要」。"""
+        client, session_factory, stub = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory,
+            node_id="afkp-ch1",
+            name="第 1 章 极限",
+            node_kind="outline",
+            depth=1,
+            order_hint=1,
+            anchors=[{"page": 1, "block_indexes": [0], "snippet": "回指正文"}],
+        )
+        self._seed(
+            session_factory,
+            node_id="afkp-ex1",
+            name="习题一",
+            node_kind="outline",
+            depth=2,
+            order_hint=2,
+            anchors=[{"page": 2, "block_indexes": [0], "snippet": "回指正文"}],
+            meta={"toc_role": "reference", "toc_kind": "exercise"},
+        )
+
+        for node_id in ("afkp-ch1", "afkp-ex1"):
+            response = client.post(f"/api/v1/kp/nodes/{node_id}/summary", json={})
+            assert response.status_code == 422, response.text
+            assert "只有知识点可以重生成总结" in response.json()["detail"]
+        assert stub.section_calls == [], "类型不合不发起模型调用"
+
+    def test_regenerating_an_unknown_node_is_404(self, tmp_path, monkeypatch):
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        assert client.post("/api/v1/kp/nodes/afkp-never/summary", json={}).status_code == 404
+
+
+class TestKpNarrativeLegs:
+    """`KA-30` 长文两条腿：判定序、409 先于落盘、先落盘再落列、缺文件的 200 披露位。
+
+    路径在测试里按 `KA-20` 的派生式**自己算一遍**（`parsed/<domain>/<course>/<book>/kp/<node_id>.md`），
+    不沿用实现的私设基准——jail 挪了位就转红。两条腿读写的必须是同一个文件，所以两侧共用这条算式。
+    """
+
+    BOOK = "mathanalysis-b05"
+    BODY = "学什么\n\nε-δ 语言把「无限接近」写成有限不等式。\n\n为什么要学\n\n后续极限定理都靠它。"
+
+    def _live(self, tmp_path, monkeypatch):
+        client, session_factory, _ = _kp_build(tmp_path, monkeypatch)
+        _parsed_book(client)
+        client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+        return client, session_factory
+
+    def _file(self, tmp_path, node_id: str) -> Path:
+        return (
+            tmp_path
+            / "data"
+            / "parsed"
+            / "math-advanced"
+            / "math_analysis"
+            / self.BOOK
+            / "kp"
+            / f"{node_id}.md"
+        )
+
+    def _node(self, client, *, kind: str = "point") -> dict:
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp")
+        rows = [node for node in response.json()["nodes"] if node["node_kind"] == kind]
+        assert rows, f"工作区里没有 {kind} 行"
+        return rows[0]
+
+    def _row(self, session_factory, node_id: str) -> tuple[str, int]:
+        """库内侧读数：`(narrative_ref, rev)`——列有没有被写、序号动不动，不看响应镜像。"""
+        with session_factory() as session:
+            node = KpRepository(session).get(node_id)
+            assert node is not None
+            return node.narrative_ref, node.rev
+
+    def _workspace_nodes(self, client) -> list[dict]:
+        return client.get(f"/api/v1/books/{self.BOOK}/kp").json()["nodes"]
+
+    # ---------------------------------------------------------------- 写腿
+
+    def test_write_lands_the_file_and_the_pointer_and_echoes_the_body(self, tmp_path, monkeypatch):
+        """200 回显＝写完不必再发一次读腿；`bytes` 按 UTF-8 计，与正文的字符数不同口径。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+        before = node["rev"]
+
+        response = client.put(
+            f"/api/v1/kp/nodes/{node['node_id']}/narrative",
+            json={"content": self.BODY, "if_rev": before},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["node_id"] == node["node_id"]
+        assert body["narrative_ref"] == f"{node['node_id']}.md"
+        assert body["exists"] is True and body["content"] == self.BODY
+        assert body["bytes"] == len(self.BODY.encode("utf-8"))
+        assert body["rev"] == before + 1 and body["updated_at"] is not None
+        assert self._file(tmp_path, node["node_id"]).read_text(encoding="utf-8") == self.BODY
+        assert self._row(session_factory, node["node_id"]) == (f"{node['node_id']}.md", before + 1)
+
+    def test_the_read_leg_returns_the_same_file_the_write_leg_wrote(self, tmp_path, monkeypatch):
+        """两条腿共用同一条派生式：写进去与读回来必须是同一篇，`GET` 不修列也不动序号。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+        client.put(f"/api/v1/kp/nodes/{node['node_id']}/narrative", json={"content": self.BODY})
+
+        read = client.get(f"/api/v1/kp/nodes/{node['node_id']}/narrative")
+
+        assert read.status_code == 200, read.text
+        assert read.json()["content"] == self.BODY and read.json()["exists"] is True
+        assert self._row(session_factory, node["node_id"]) == (f"{node['node_id']}.md", node["rev"] + 1)
+
+    def test_rewriting_the_same_body_is_idempotent_on_disk_and_bumps_rev(self, tmp_path, monkeypatch):
+        """重发一次即收敛：文件名由 `node_id` 派生、同名覆盖，目录里始终只有那一篇。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+        first = client.put(
+            f"/api/v1/kp/nodes/{node['node_id']}/narrative", json={"content": "第一版", "if_rev": node["rev"]}
+        )
+        assert first.status_code == 200, first.text
+
+        second = client.put(
+            f"/api/v1/kp/nodes/{node['node_id']}/narrative",
+            json={"content": "第二版", "if_rev": first.json()["rev"]},
+        )
+
+        assert second.status_code == 200, second.text
+        assert second.json()["content"] == "第二版"
+        assert second.json()["rev"] == first.json()["rev"] + 1
+        directory = self._file(tmp_path, node["node_id"]).parent
+        assert [path.name for path in directory.iterdir()] == [f"{node['node_id']}.md"]
+
+    def test_both_kinds_carry_their_own_narrative(self, tmp_path, monkeypatch):
+        """章与点各有自己的详解（`KA-30` 的边界：`node_kind` 两种都能写）。"""
+        client, _ = self._live(tmp_path, monkeypatch)
+        outline = self._node(client, kind="outline")
+        point = self._node(client, kind="point")
+
+        for node, text in ((outline, "章的详解"), (point, "点的详解")):
+            response = client.put(
+                f"/api/v1/kp/nodes/{node['node_id']}/narrative", json={"content": text}
+            )
+            assert response.status_code == 200, response.text
+            assert self._file(tmp_path, node["node_id"]).read_text(encoding="utf-8") == text
+
+    # ---------------------------------------------------------------- 判定序
+
+    def test_stale_if_rev_is_409_and_precedes_every_disk_write(self, tmp_path, monkeypatch):
+        """409 排在落盘之前：磁盘写入不可回滚，旧表单先把文件改了再被序号拒就是没人认领的正文。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+
+        response = client.put(
+            f"/api/v1/kp/nodes/{node['node_id']}/narrative",
+            json={"content": "旧表单写的正文", "if_rev": node["rev"] + 5},
+        )
+
+        assert response.status_code == 409, response.text
+        assert str(node["rev"]) in response.text and str(node["rev"] + 5) in response.text
+        assert not self._file(tmp_path, node["node_id"]).exists()
+        assert self._row(session_factory, node["node_id"]) == ("", node["rev"])
+
+    def test_empty_or_oversized_body_is_422_and_leaves_no_trace(self, tmp_path, monkeypatch):
+        """超限判 422 **不截断**（与 `summary[:1000]` 的截断方向相反）：拒收的表单磁盘与库里都不动。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+
+        for content in ("", "x" * (NARRATIVE_MAX_CHARS + 1), "x" * (NARRATIVE_MAX_CHARS * 2)):
+            response = client.put(
+                f"/api/v1/kp/nodes/{node['node_id']}/narrative", json={"content": content}
+            )
+            assert response.status_code == 422, f"{len(content)} 字应判 422：{response.text[:200]}"
+        assert not self._file(tmp_path, node["node_id"]).exists()
+        assert self._row(session_factory, node["node_id"]) == ("", node["rev"])
+
+    def test_the_cap_is_inclusive(self, tmp_path, monkeypatch):
+        """上限是「恰好等于可写」：`max_length` 与判据同一条边界，写成 `>` 就少一个字。"""
+        client, _ = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+
+        response = client.put(
+            f"/api/v1/kp/nodes/{node['node_id']}/narrative",
+            json={"content": "x" * NARRATIVE_MAX_CHARS},
+        )
+
+        assert response.status_code == 200, response.text[:200]
+        assert response.json()["bytes"] == NARRATIVE_MAX_CHARS
+
+    def test_the_shape_gate_runs_before_the_row_lookup(self, tmp_path, monkeypatch):
+        """形状闸先于查行是 schema 层的事实，不是实现漏洞：空正文的表单不该多花一次查行。"""
+        client, _ = self._live(tmp_path, monkeypatch)
+        assert client.put("/api/v1/kp/nodes/afkp-never/narrative", json={"content": ""}).status_code == 422
+
+    def test_missing_row_is_404_and_neither_leg_touches_the_disk(self, tmp_path, monkeypatch):
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        write = client.put("/api/v1/kp/nodes/afkp-never/narrative", json={"content": "正文"})
+        read = client.get("/api/v1/kp/nodes/afkp-never/narrative")
+
+        assert write.status_code == 404 and "afkp-never" in write.text
+        assert read.status_code == 404 and "afkp-never" in read.text
+        assert not (tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / self.BOOK / "kp").exists()
+
+    def test_the_request_model_gives_no_way_to_name_a_path(self, tmp_path, monkeypatch):
+        """jail 一字不放宽：文件名与路径都不是调用方能给的东西（`extra="forbid"` 的形状保证）。"""
+        client, _ = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+        for field in ("path", "narrative_ref", "node_id", "book_id", "confirmed", "gen_batch"):
+            response = client.put(
+                f"/api/v1/kp/nodes/{node['node_id']}/narrative", json={"content": "正文", field: "x"}
+            )
+            assert response.status_code == 422, f"{field} 不该出现在请求模型里：{response.text}"
+
+    # ---------------------------------------------------------------- 缺文件的披露位
+
+    def test_missing_file_reads_as_exists_false_without_touching_columns(self, tmp_path, monkeypatch):
+        """200 带 `exists=false` 而不是 404：把「行在而正文缺」报成「节点不存在」会让界面谎报行本身。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+        written = client.put(f"/api/v1/kp/nodes/{node['node_id']}/narrative", json={"content": self.BODY})
+        pointer, rev = self._row(session_factory, node["node_id"])
+        self._file(tmp_path, node["node_id"]).unlink()
+
+        response = client.get(f"/api/v1/kp/nodes/{node['node_id']}/narrative")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["exists"] is False and body["content"] == "" and body["bytes"] == 0
+        assert body["narrative_ref"] == pointer and body["rev"] == rev
+        assert self._row(session_factory, node["node_id"]) == (pointer, rev)
+        assert written.json()["narrative_ref"] == pointer
+
+    def test_a_row_that_never_had_a_narrative_reads_as_exists_false(self, tmp_path, monkeypatch):
+        """列为空是可读现状不是错误：新梳理出来的行本来就还没有详解。"""
+        client, _ = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+
+        response = client.get(f"/api/v1/kp/nodes/{node['node_id']}/narrative")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["exists"] is False and response.json()["narrative_ref"] == ""
+
+    def test_a_file_on_disk_reads_under_its_derived_name_even_with_an_empty_column(self, tmp_path, monkeypatch):
+        """读腿读的是**文件**：磁盘上有那一篇就按派生名回，列还没落也不圆场成 `exists=false`。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+        path = self._file(tmp_path, node["node_id"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("磁盘上先行存在的一篇", encoding="utf-8")
+
+        response = client.get(f"/api/v1/kp/nodes/{node['node_id']}/narrative")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["exists"] is True and response.json()["content"] == "磁盘上先行存在的一篇"
+        assert response.json()["narrative_ref"] == f"{node['node_id']}.md"
+        assert self._row(session_factory, node["node_id"])[0] == ""
+
+    def test_the_workspace_still_carries_no_bodies(self, tmp_path, monkeypatch):
+        """整册工作区不带正文（`KA-30` 的边界）：长文只能逐篇取，一次一篇是形状决定。"""
+        client, _ = self._live(tmp_path, monkeypatch)
+        node = self._node(client)
+        client.put(f"/api/v1/kp/nodes/{node['node_id']}/narrative", json={"content": self.BODY})
+
+        rows = self._workspace_nodes(client)
+
+        assert node["node_id"] in [row["node_id"] for row in rows]
+        for row in rows:
+            assert "content" not in row and "exists" not in row and "bytes" not in row
+
+
 PURGE_URL = "/api/v1/admin/purge"
 PURGE_CONFIRM = "PURGE"
 ADMIN_TOKEN = "af-admin-contract-token"
@@ -2169,3 +3526,235 @@ class TestAdminPurgeEndpoint:
             )
             assert again.json()["targets"] == []
             assert again.json()["deleted"].get("directories", 0) == 0
+
+
+class TestDerivedPageRange:
+    """④ 读面派生的正文区间两键（`KA-42`）：目录行到「下一条目录行之前」，点行到自己锚点的两端。
+
+    需求方第九令要的是屏上那句「从 X 页到 Y 页」写得准，而算式的正本在点腿取材里——屏侧自推就会
+    与模型实际读过的正文分叉。两键读时算、不落列（零 DDL），根侧 8900 字节转发零改码。
+    """
+
+    BOOK = "mathanalysis-b05"
+
+    def _live(self, tmp_path, monkeypatch, *, page_count: int | None = 12):
+        client, session_factory, _ = _kp_build(tmp_path, monkeypatch)
+        _parsed_book(client)
+        with session_factory() as session:
+            book = BookRepository(session).get(self.BOOK)
+            assert book is not None
+            book.page_count = page_count
+            session.commit()
+        return client, session_factory
+
+    def _seed(self, session_factory, *, node_id: str, name: str, **fields) -> None:
+        with session_factory() as session:
+            KpRepository(session).create(
+                KpNodeRow(
+                    node_id=node_id,
+                    book_id=self.BOOK,
+                    name=name,
+                    norm_key=norm_key_for(name),
+                    **fields,
+                )
+            )
+            session.commit()
+
+    def _ranges(self, client) -> dict[str, tuple[int | None, int | None]]:
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp")
+        assert response.status_code == 200, response.text
+        nodes = response.json()["nodes"]
+        assert nodes, "工作区里没有行"
+        return {node["node_id"]: (node["page_start"], node["page_end"]) for node in nodes}
+
+    def test_outline_rows_run_to_the_row_before_the_next_one(self, tmp_path, monkeypatch):
+        """末行到全书末页，其余各行到下一条目录行的前一页——不是它自己的锚点页。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        for index, page in enumerate((2, 5, 9), start=1):
+            self._seed(
+                session_factory,
+                node_id=f"kp-n{index}",
+                name=f"第{index}章",
+                node_kind="outline",
+                depth=1,
+                order_hint=index,
+                anchors=[{"page": page}],
+            )
+
+        assert self._ranges(client) == {
+            "kp-n1": (2, 4),
+            "kp-n2": (5, 8),
+            "kp-n3": (9, 12),
+        }
+
+    def test_a_let_go_row_does_not_take_part_in_the_split(self, tmp_path, monkeypatch):
+        """`rejected` 行不进序：它是被本批取代的旧读数，拿它切区间会把中间那一段凭空挖掉。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        for index, (page, status) in enumerate(((2, "candidate"), (5, "rejected"), (9, "candidate")), start=1):
+            self._seed(
+                session_factory,
+                node_id=f"kp-n{index}",
+                name=f"第{index}章",
+                node_kind="outline",
+                depth=1,
+                order_hint=index,
+                gen_status=status,
+                anchors=[{"page": page}],
+            )
+
+        assert self._ranges(client) == {
+            "kp-n1": (2, 8),
+            "kp-n2": (None, None),
+            "kp-n3": (9, 12),
+        }
+
+    def test_a_missing_page_count_falls_back_to_each_rows_own_start_page(self, tmp_path, monkeypatch):
+        """`af_books.page_count` 缺 ⇒ 折回本行起点页，且一行都不丢：两键退化不是整面 500。"""
+        client, session_factory = self._live(tmp_path, monkeypatch, page_count=None)
+        for index, page in enumerate((2, 5), start=1):
+            self._seed(
+                session_factory,
+                node_id=f"kp-n{index}",
+                name=f"第{index}章",
+                node_kind="outline",
+                depth=1,
+                order_hint=index,
+                anchors=[{"page": page}],
+            )
+
+        assert self._ranges(client) == {"kp-n1": (2, 2), "kp-n2": (5, 5)}
+
+    def test_a_row_without_anchors_has_no_range_to_report(self, tmp_path, monkeypatch):
+        """没有锚点就没有起点页：两键为空是披露，机器不替它编一个区间（`KA-26` 同轴）。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory,
+            node_id="kp-n1",
+            name="第1章",
+            node_kind="outline",
+            depth=1,
+            order_hint=1,
+            anchors=[],
+        )
+
+        assert self._ranges(client) == {"kp-n1": (None, None)}
+
+    def test_point_rows_take_the_two_ends_of_their_own_anchors(self, tmp_path, monkeypatch):
+        """点行两键＝锚点 min／max：屏侧只留一枚消费口，不给「目录行读派生键、点行自算」两套代码。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory,
+            node_id="kp-p1",
+            name="ε-δ 语言",
+            node_kind="point",
+            anchors=[{"page": 4}, {"page": 3}],
+        )
+
+        assert self._ranges(client)["kp-p1"] == (3, 4)
+
+    def test_a_single_row_echo_keeps_its_derived_range(self, tmp_path, monkeypatch):
+        """背书腿的单行回显同样带两键：屏上已读到的区间不该被一次人工写入抹成 `null`。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        for index, page in enumerate((2, 5), start=1):
+            self._seed(
+                session_factory,
+                node_id=f"kp-n{index}",
+                name=f"第{index}章",
+                node_kind="outline",
+                depth=1,
+                order_hint=index,
+                anchors=[{"page": page}],
+            )
+
+        response = client.patch("/api/v1/kp/nodes/kp-n1", json={"summary": "人工写的章级总结"})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["summary"] == "人工写的章级总结"
+        assert (body["page_start"], body["page_end"]) == (2, 4)
+
+    def test_a_chapter_runs_to_the_next_chapter_not_the_next_row(self, tmp_path, monkeypatch):
+        """章区间按树序算：首节与章共用一页时，章不塌成那一页（`DEFECT-028` 的读面一侧）。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        rows = (
+            ("kp-c1", "第1章 实数", 1, 2, None),
+            ("kp-s11", "1.1 数列极限", 2, 2, "kp-c1"),
+            ("kp-s12", "1.2 函数极限", 2, 7, "kp-c1"),
+            ("kp-c2", "第2章 一元微分", 1, 9, None),
+        )
+        for order, (node_id, name, depth, page, parent) in enumerate(rows, start=1):
+            self._seed(
+                session_factory,
+                node_id=node_id,
+                name=name,
+                node_kind="outline",
+                depth=depth,
+                order_hint=order,
+                parent_id=parent,
+                anchors=[{"page": page}],
+            )
+
+        assert self._ranges(client) == {
+            "kp-c1": (2, 8),
+            "kp-s11": (2, 6),
+            "kp-s12": (7, 8),
+            "kp-c2": (9, 12),
+        }
+
+    def test_a_reference_row_spans_only_its_own_page(self, tmp_path, monkeypatch):
+        """附件行只占自己那页：书目／索引之后没有内容可读，别把书尾算进它的区间。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory,
+            node_id="kp-sym",
+            name="重要符号表",
+            node_kind="outline",
+            depth=1,
+            order_hint=1,
+            anchors=[{"page": 5}],
+            meta={"toc_role": "reference", "toc_kind": "symbol_table"},
+        )
+        self._seed(
+            session_factory,
+            node_id="kp-c1",
+            name="第1章 实数",
+            node_kind="outline",
+            depth=1,
+            order_hint=2,
+            anchors=[{"page": 9}],
+        )
+
+        assert self._ranges(client) == {"kp-sym": (5, 5), "kp-c1": (9, 12)}
+
+    def test_the_read_face_reports_the_four_value_type(self, tmp_path, monkeypatch):
+        """四值类型读时派生（`KA-44`）：章节／知识点／习题／其他，屏上不再按 `node_kind` 猜。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        rows = (
+            ("kp-c1", "第1章 实数", "outline", 1, None, None),
+            ("kp-s11", "1.1 数列极限", "outline", 2, "kp-c1", None),
+            ("kp-ex", "习题 1.1", "outline", 1, None, {"toc_role": "reference", "toc_kind": "exercise"}),
+            ("kp-bib", "参考书目", "outline", 1, None, {"toc_role": "reference", "toc_kind": "bibliography"}),
+        )
+        for order, (node_id, name, kind, depth, parent, meta) in enumerate(rows, start=1):
+            self._seed(
+                session_factory,
+                node_id=node_id,
+                name=name,
+                node_kind=kind,
+                depth=depth,
+                order_hint=order,
+                parent_id=parent,
+                anchors=[{"page": order}],
+                meta=meta,
+            )
+
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp")
+
+        assert response.status_code == 200, response.text
+        types = {node["node_id"]: node["node_type"] for node in response.json()["nodes"]}
+        assert types == {
+            "kp-c1": "chapter",
+            "kp-s11": "point",
+            "kp-ex": "exercise",
+            "kp-bib": "other",
+        }

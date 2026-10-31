@@ -19,6 +19,11 @@
 已删除且不保留别名：`QED_API_SELECT`、`QED_LLM_GATEWAY_URL`、`QED_LLM_TIMEOUT`、
 `QED_PROXY`、`QED_API_PROVIDER`、`QED_MODEL`、`QED_EMBEDDING_MODEL`、`AXIOM_FLOW_DATA_DIR`、
 `AXIOM_PADDLEOCR_URL`；MinerU 直连地址读 `QED_OCR_MODEL_URL`（5002，`QED_MINERU_URL` 已删除）。
+
+梳理出站（R8 甲，PLAN-026 W6）用**新键名** `QED_ENGINE_GATEWAY_URL` 与 `AXIOM_KP_TIMEOUT`：
+退役清单里的 `QED_LLM_GATEWAY_URL`／`QED_LLM_TIMEOUT` 一个都不复活——那两个名字在 8902 侧
+曾同时承担「网关地址」和「要不要走网关」两件事，删掉正是为了不再让配置决定通路。
+两者都有内置默认值（8900 回环地址／360 秒），`.env` 零改动即可起梳理通路。
 """
 
 from __future__ import annotations
@@ -89,6 +94,16 @@ class Settings:
     ocr_timeout: int = 600  # 单个解析块一次调用的超时秒数（见 `parse_window_size`）
     parse_window_size: int = 56  # 全本解析的每块页数（真机 W0 冻结，PLAN-007）
     max_regions_per_page: int = 16  # 每页人工结构意图上限（ADR 0010 决定 6：每框一次提交，成本必须可见）
+    #: 梳理批次的文本引擎名（`KA-22`）：默认＝内置实名（T1 甲），显式置空即槽位未接入，
+    #: 梳理提交当场 503 且不写入。空名**不回落**成任何具体引擎——与 `ocr_engine` 同一条纪律
+    #: （ADR 0004 无静默兜底）。名字表在 `engines/factory.py`，这里只给默认值。
+    kp_engine: str = "qed-gateway"
+    #: 梳理出站地址（R8 甲）：8900 的 `POST /api/v1/llm/text`，prompt 与调用由本仓发起、
+    #: 调用账只由 8900 落一行。空值不提供——没有「不打网关」的默认形态。
+    engine_gateway_url: str = "http://127.0.0.1:8900"
+    #: 一次梳理模型调用的等待预算：必须长于 8900 自己的调用预算（现网 300s），否则慢模型的
+    #: 合法回复被本侧先掐掉，读成「这一节没产物」。
+    kp_timeout: int = 360
     db_host: str = "127.0.0.1"
     db_port: int = 3306
     db_name: str = "qed"
@@ -125,6 +140,9 @@ _ENV_MAP = {
     "AXIOM_OCR_TIMEOUT": ("ocr_timeout", partial(_to_int, default=600)),
     "AXIOM_PARSE_WINDOW_SIZE": ("parse_window_size", partial(_to_int, default=56)),
     "AXIOM_MAX_REGIONS_PER_PAGE": ("max_regions_per_page", partial(_to_int, default=16)),
+    "AXIOM_KP_ENGINE": ("kp_engine", str),
+    "QED_ENGINE_GATEWAY_URL": ("engine_gateway_url", str),
+    "AXIOM_KP_TIMEOUT": ("kp_timeout", partial(_to_int, default=360)),
     "QED_DB_HOST": ("db_host", str),
     "QED_DB_PORT": ("db_port", partial(_to_int, default=3306)),
     "QED_DB_NAME": ("db_name", str),
@@ -211,7 +229,11 @@ def load_settings(**overrides: Any) -> Settings:
         {key: value for key, value in overrides.items() if value is not None and key != "data_dir"}
     )
     settings = Settings(**values)
-    return replace(settings, ocr_model_url=settings.ocr_model_url.rstrip("/"))
+    return replace(
+        settings,
+        ocr_model_url=settings.ocr_model_url.rstrip("/"),
+        engine_gateway_url=settings.engine_gateway_url.rstrip("/"),
+    )
 
 
 def llm_api_key() -> str:

@@ -258,6 +258,7 @@ class TestEngineConfig:
 
         assert not hasattr(settings, "api_select")
         assert not hasattr(settings, "llm_gateway_url")
+        assert settings.engine_gateway_url == "http://127.0.0.1:8900"
 
     def test_invalid_ocr_timeout_falls_back_to_default(self, isolated, monkeypatch):
         monkeypatch.setenv("AXIOM_OCR_TIMEOUT", "notnum")
@@ -270,6 +271,31 @@ class TestEngineConfig:
 
         monkeypatch.setenv("AXIOM_PARSE_WINDOW_SIZE", "30")
         assert load_settings().parse_window_size == 30
+
+    def test_the_curation_slot_defaults_to_the_built_in_gateway_name(self, isolated):
+        """T1 甲：槽位默认值＝内置实名，`.env` 零改动就能起梳理通路（不再要求配 `AXIOM_KP_ENGINE`）。"""
+        assert load_settings().kp_engine == "qed-gateway"
+
+    def test_the_gateway_address_defaults_to_8900_and_strips_a_trailing_slash(self, isolated, monkeypatch):
+        """R8 甲的出站口：默认指本机 8900；尾部斜杠交给适配器拼路径，不留双斜杠。"""
+        assert load_settings().engine_gateway_url == "http://127.0.0.1:8900"
+
+        monkeypatch.setenv("QED_ENGINE_GATEWAY_URL", "http://127.0.0.1:9100/")
+        assert load_settings().engine_gateway_url == "http://127.0.0.1:9100"
+
+    def test_the_curation_timeout_outlives_the_gateway_own_call_budget(self, isolated, monkeypatch):
+        """8900 侧单次调用预算（现网 `QED_LLM_TIMEOUT`）实测 300s：本仓等待必须更长，否则慢模型
+        的合法回复会被适配器先掐掉，读成「这一节没产物」。"""
+        assert load_settings().kp_timeout == 360
+        assert load_settings().kp_timeout > 300
+
+        monkeypatch.setenv("AXIOM_KP_TIMEOUT", "120")
+        assert load_settings().kp_timeout == 120
+
+    def test_a_bad_curation_timeout_falls_back_to_the_default(self, isolated, monkeypatch):
+        monkeypatch.setenv("AXIOM_KP_TIMEOUT", "notnum")
+
+        assert load_settings().kp_timeout == 360
 
 
 class TestOverrides:

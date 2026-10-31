@@ -1,7 +1,8 @@
 """af_* 表模型与仓储层单测（SQLite 内存，不依赖 MySQL，符合测试隔离铁律）。
 
 守护面：四表结构与设计一致（表名/主键/唯一键）、事件与意图两语义分列（OB-1/OB-2）、并发判据
-CW-1~CW-6 的反向用例、同步幂等与快照语义、页/编辑/结构状态回写，以及建值不建写者与域值收窄的守护（裁决⑮⑯⑰）。
+CW-1~CW-6 的反向用例、同步幂等与快照语义、页/编辑/结构状态回写，建值不建写者与域值收窄的守护
+（裁决⑮⑯⑰），以及 `op_kind='kp'` 流水行的正向形状（PLAN-025 前置条件 7 的改判）。
 """
 
 from __future__ import annotations
@@ -37,12 +38,14 @@ from axiom_flow.db.models import (
 )
 from axiom_flow.db.repositories import (
     EDIT_PAYLOAD_KEYS,
+    KP_RESULT_KEYS,
     PROGRESS_DURATION_SECONDS,
     PROGRESS_FINISHED_AT,
     PROGRESS_STARTED_AT,
     STRUCTURE_PAYLOAD_KEYS,
     BookRepository,
     BookSyncRow,
+    KpBatchRow,
     KpNodeRow,
     KpRepository,
     OperationRepository,
@@ -837,6 +840,42 @@ class TestEditIntents:
         assert ops.list_versions("b05") == []
         assert [job.job_id for job in ops.list_versions("b11")] == ["job2"]
 
+    # ---------- REQ-142 W2／PLAN-026 W2：corrected_type 入载荷闭集 ----------
+
+    def test_corrected_type_lands_in_closed_payload(self, session):
+        """改判键进闭集载荷并可读回：`block_type` 仍是原类型快照，两枚不互相覆盖。"""
+        ops = OperationRepository(session)
+        edited = ops.upsert_edit(
+            "b05", "job1", 3, 2, block_type="paragraph", verdict="ok", corrected_type="header"
+        )
+
+        payload = session.get(AfOperation, edited.edit_id).payload
+        assert set(payload) == set(EDIT_PAYLOAD_KEYS)
+        assert payload["corrected_type"] == "header"
+        assert payload["block_type"] == "paragraph"
+        read = ops.get_edit("b05", "job1", 3, 2)
+        assert read.corrected_type == "header"
+        assert read.block_type == "paragraph"
+
+    def test_without_relabel_the_key_is_none_not_empty_string(self, session):
+        """未改判落成 None：空串会被回放腿读成「判成了一个空类型」，与「没判」无法分辨。"""
+        ops = OperationRepository(session)
+        edited = ops.upsert_edit("b05", "job1", 3, 2, block_type="paragraph", verdict="ok")
+
+        assert session.get(AfOperation, edited.edit_id).payload["corrected_type"] is None
+        assert ops.get_edit("b05", "job1", 3, 2).corrected_type is None
+
+    def test_relabel_overwrites_within_the_same_intent_row(self, session):
+        """重复改判走同一条 upsert：行数恒 1、后判覆盖前判、身份不换。"""
+        ops = OperationRepository(session)
+        first = ops.upsert_edit("b05", "job1", 3, 2, verdict="ok", corrected_type="header")
+        second = ops.upsert_edit("b05", "job1", 3, 2, verdict="ok", corrected_type="page_number")
+
+        edits = ops.list_edits_for_page("b05", "job1", 3)
+        assert len(edits) == 1
+        assert second.edit_id == first.edit_id
+        assert edits[0].corrected_type == "page_number"
+
 
 class TestEditCountByPage:
     """`edit_count` 的仓储面（PLAN-008 W2 / 承载 ARCH-006「页清单暴露编辑存在性」）。"""
@@ -1109,6 +1148,17 @@ class TestBuiltWithoutWriter:
         kp = KpRepository(session)
         kp.create(KpNodeRow(node_id="afkp-x1", book_id="b05", name="极限", norm_key="极限"))
         kp.update("afkp-x1", {"summary": "一句话"})
+        ops.create_kp_batch(
+            KpBatchRow(
+                gen_batch="afkp-111111111111",
+                book_id="b05",
+                job_id="job1",
+                status="ok",
+                page_start=1,
+                page_end=2,
+                result={"outline_rows": 1, "point_rows": 1, "candidate_rows": 1},
+            )
+        )
 
     def test_embedding_signature_stays_empty(self, session):
         """检索索引代际与解析代际分列：本轮无写者，非空值即意味着有代码越界写了检索面。"""
@@ -1122,15 +1172,17 @@ class TestBuiltWithoutWriter:
         assert _count(session, AfOperation, AfOperation.op_kind == OP_KIND_INDEX) == 0
 
     def test_remaining_writerless_op_kinds_are_never_written(self, session):
-        """闭集里其余五个无写者值（`confirm`／`ingest`／`sync`／`purge`／`kp`）同样不得被写出。
+        """闭集里其余四个无写者值（`confirm`／`ingest`／`sync`／`purge`）同样不得被写出。
 
         权威文档把「守护断言计数恒 0」写给了**全部**无写者值而不只是 `index`，本断言使那句话成立。
         粒度选仓储层：API 面没有独立的插入腿，它只能经这里的生产写入口落库。
-        `kp`（梳理批次流水）的行语义已由设计篇定义，但写者属实现批，故本轮同受本条约束。
+        `kp` 已从本条移出：它的插入腿随梳理消费批到齐，改判为正向断言（`TestKpLedgerRow`）。
+        上面的写者集合**含** `kp` 那条插入腿，所以本条是在「梳理写者也在跑」的状态下成立的——
+        顺带证明插入腿不越界替别的种类造行。
         """
         self._exercise_every_writer(session)
 
-        for kind in (OP_KIND_CONFIRM, OP_KIND_INGEST, OP_KIND_SYNC, OP_KIND_PURGE, OP_KIND_KP):
+        for kind in (OP_KIND_CONFIRM, OP_KIND_INGEST, OP_KIND_SYNC, OP_KIND_PURGE):
             assert _count(session, AfOperation, AfOperation.op_kind == kind) == 0, kind
 
     def test_adopted_is_no_longer_a_legal_gen_status(self, session):
@@ -1139,6 +1191,91 @@ class TestBuiltWithoutWriter:
         self._exercise_every_writer(session)
 
         assert _count(session, AfKp, ~AfKp.gen_status.in_(GEN_STATUSES)) == 0
+
+
+class TestKpLedgerRow:
+    """`op_kind='kp'` 的正向断言（前置条件 7 的改判）：写者到齐后必须有行且字段形状可判。
+
+    本类取代原先挂在 `TestBuiltWithoutWriter` 里的「`kp` 计数恒 0」那条。反向判据仍在：
+    一行只对应一个批次（不逐节点造行）、事件行不进当前态判据（`KA-4` 的用例在梳理管线测试里）。
+    """
+
+    def _ledger(self, session) -> AfOperation:
+        _seed_book(session)
+        row = OperationRepository(session).create_kp_batch(
+            KpBatchRow(
+                gen_batch="afkp-111111111111",
+                book_id="b05",
+                job_id="job-e1",
+                status="ok",
+                page_start=3,
+                page_end=7,
+                review_note="第 3 章的节标题把书眉粘进来了",
+                result={"outline_rows": 2, "point_rows": 5, "candidate_rows": 5, "failed_sections": 1},
+            )
+        )
+        session.commit()
+        return row
+
+    def test_the_kp_writer_leg_produces_one_row(self, session):
+        """改判的正向半边：写者存在 ⇒ 计数不再恒 0，且这一行按批次号能被读回。"""
+        row = self._ledger(session)
+        ops = OperationRepository(session)
+
+        assert _count(session, AfOperation, AfOperation.op_kind == OP_KIND_KP) == 1
+        assert ops.find_kp_batch("b05", "afkp-111111111111").op_id == row.op_id
+        assert ops.find_kp_batch("b05", "afkp-999999999999") is None
+        assert [r.op_id for r in ops.list_kp_batches("b05")] == [row.op_id]
+
+    def test_kp_row_is_self_evident_as_an_event(self, session):
+        """「行种类与坐标自证」的 kp 半边：`lifecycle='event'`、`job_id`＝取证版本、`target_id`＝批次号。
+
+        批次身份落在 `target_id` 而非逐节点一行——`result` 的失败节计数根本没有节点可挂。
+        """
+        row = self._ledger(session)
+        session.expire_all()
+        stored = session.get(AfOperation, row.op_id)
+
+        assert (stored.lifecycle, stored.op_kind) == (LIFECYCLE_EVENT, OP_KIND_KP)
+        assert (stored.job_id, stored.target_id, stored.book_id) == ("job-e1", "afkp-111111111111", "b05")
+        assert (stored.actor, stored.engine, stored.page_no, stored.block_index) == ("system", "", None, None)
+        assert (stored.intent_key, stored.parser_signature, stored.embedding_signature) == (None, "", "")
+
+    def test_kp_row_payload_and_result_stay_inside_their_closed_shape(self, session):
+        """载荷五键、`result` 只取闭集读数：流水答「这一批做了什么」，自由键即账面失真。
+
+        `review_note` 是入参不是计数（AF-T5 甲），故与页区间同列 `payload`；缺省落空串而不是
+        `null`——读侧不必为「有没有备注」维持两种形状。`stage` 同列（`KA-34`）：它也是入参，
+        缺省 `full` 与早期批次的实际形态一致。
+        """
+        row = self._ledger(session)
+
+        assert set(row.payload) == {
+            "gen_batch",
+            "page_start",
+            "page_end",
+            "review_note",
+            "stage",
+        }
+        assert (row.payload["page_start"], row.payload["page_end"]) == (3, 7)
+        assert row.payload["review_note"] == "第 3 章的节标题把书眉粘进来了"
+        assert row.payload["stage"] == "full"
+        assert set(row.result) <= set(KP_RESULT_KEYS)
+        assert row.result["failed_sections"] == 1
+        assert (row.progress, row.failed_pages, row.pages, row.meta) == ({}, [], None, None)
+
+    def test_kp_row_is_never_advanced_after_insert(self, session):
+        """事件行只 INSERT：状态机回写三条都不认 kp 行，`updated_at` 恒等于 `created_at`。"""
+        row = self._ledger(session)
+        ops = OperationRepository(session)
+
+        assert (ops.mark_running(row.op_id), ops.update_progress(row.op_id, {"parsed": 1})) == (False, False)
+        assert ops.mark_finished(row.op_id, status="failed") is False
+
+        stored = session.get(AfOperation, row.op_id)
+        assert (stored.status, stored.error) == ("ok", "")
+        assert stored.updated_at == stored.created_at
+
 
 
 class TestKpRepository:
@@ -1185,32 +1322,16 @@ class TestKpRepository:
         assert (result.ok, result.rev_conflict, result.node) == (False, False, None)
 
     def test_write_whitelist_protects_identity_and_human_columns(self, session):
-        """通用写入口拒绝越列：身份不可变、序号只由写入本身递增、确认位另走 `confirm`。"""
+        """通用写入口拒绝越列：身份不可变、序号只由写入本身递增、确认位另走 `set_confirmed`。
+
+        写者分列的完整守护面在 `tests/unit/test_db_knowledge.py`（`KA-11`/`KA-12`/`KA-17`/`KA-18`）。
+        """
         kp = KpRepository(session)
         self._node(session)
 
         for column in ("node_id", "book_id", "rev", "confirmed", "created_at"):
             with pytest.raises(ValueError, match="af_kp"):
                 kp.update("afkp-a1", {column: "x"})
-
-    def test_confirm_is_the_only_human_gate(self, session):
-        kp = KpRepository(session)
-        self._node(session)
-
-        assert kp.confirm("afkp-a1", confirmed=True).ok is True
-        assert (kp.get("afkp-a1").confirmed, kp.get("afkp-a1").rev) == (1, 1)
-
-        assert kp.confirm("afkp-a1", confirmed=False, if_rev=0).rev_conflict is True
-        assert kp.get("afkp-a1").confirmed == 1
-
-    def test_gen_status_is_machine_only(self, session):
-        """机器写 `gen_status`、人工写 `confirmed`：两列各由一个入口负责，互不覆据。"""
-        kp = KpRepository(session)
-        self._node(session)
-
-        assert kp.update("afkp-a1", {"gen_status": "rejected"}).ok is True
-        assert kp.get("afkp-a1").gen_status == "rejected"
-        assert kp.get("afkp-a1").confirmed == 0
 
     def test_delete_for_book_drops_nodes(self, session):
         """梳理作用域就是一册书：删书带走节点，不留无主结论。"""

@@ -99,7 +99,7 @@ sequenceDiagram
 | --- | --- | --- | --- |
 | PM-3 | **编辑幂等键含解析版本**：`af_operations` 的 `op_kind='edit'`、`lifecycle='intent'` 行按 `intent_key`（`op_kind:book_id:job_id:page_no:block_index:target_id` 的摘要）单语句 upsert，同版本同版面块重复提交＝覆盖更新 | 为什么把版本放进键：块下标只在版本内有意义（PP-9），不带 `job_id` 的键会让上一版的结论套到新版产物上。边界：`op_id` 只是行身份，仓储一律按 `intent_key` 读写 | `db/repositories.py:OperationRepository.upsert_edit`、`intent_key_for()` → `tests/unit/test_db.py`（edit upsert 覆盖、intent_key 幂等） |
 | PM-4 | **进度由本篇自持，且只描述生效版本**：`ingest_status`/`parse_status`/`pages_done` 由本篇维护，不依赖 qt_books 之外的上游字段；`pages_done` 与 `active_job_id` 一致地描述**生效版本**，不是全书历史累计 | — | `db/repositories.py:BookRepository.update_parse` → `tests/unit/test_db.py` |
-| PM-5 | **人工编辑是覆盖层，不改产物文件**：解析产物文件是模型产物事实源，人工编辑只入 `af_operations` 的 `edit` 意图行、**不改文件**；读取端在响应里按生效版本合并编辑 | 后果：「产物没变、校验结论变了」两件事可分别追溯 | `api/main.py` 单页端点合并 edits → `tests/contract/test_api_v1_contract.py` |
+| PM-5 | **人工编辑是覆盖层，不改产物文件**：解析产物文件是模型产物事实源，人工编辑只入 `af_operations` 的 `edit` 意图行、**不改文件**；读取端在响应里按生效版本合并编辑。合并的形状＝**只叠加判别维**：块类型改判（`corrected_type`）覆盖 `Block.type`，`text`／`latex`／`level` 等内容字段一律不补不动，`markdown` 与 `blocks.json` 逐字保持产物原文 | 后果：「产物没变、校验结论变了」两件事可分别追溯。为什么改判不补内容字段：补出来的 `latex` 是机器替人编的内容，它一旦被锚点或渲染消费就冒充模型产物；判成缺内容的类型读出来就是「该类型且内容为空」，由读侧自己判空（守护用例钉住这种形状不 500）。边界：消费面有**两处**——页数据端点与梳理取证集（`KA-2`），缺一无效；改判行绑 `job_id`，换版不自动套用（PM-3） | `normalize/intents.py:apply_relabels`、`api/main.py` 单页端点合并 edits、`orchestrator/knowledge.py:_heading_evidence` → `tests/contract/test_api_v1_contract.py`（回放两形与两条反向断言）、`tests/unit/test_knowledge_pipeline.py::TestHumanRelabelIsReplayed` |
 
 #### 生效指针与引擎边界
 
@@ -138,6 +138,12 @@ sequenceDiagram
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | PM-18 | **结构意图是页级解析输入，不是版本内覆盖层**：人工框 / 删块 / 并块落 `af_operations` 的 `op_kind='structure'`、`lifecycle='intent'` 行（作用域 `(book_id, page_no)`，`job_id` 恒 `''` 即**不绑解析版本**），写入是**全量声明**＝缺席即撤销，故重复提交同一组意图幂等、无需 undo 端点；受理时把三选一（下标 / `region_id` / 框）统一换算成**几何锚**才落库 | 为什么与 PM-5 分列：编辑结论绑版本（换版不自动套用），结构意图跨版本存活（换版后按锚重新命中）——两行同表、靠 `job_id` 是否参与幂等键分列，不因折叠而混写。下标 ↔ `region_id` 的翻译归本仓（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)）；画框先于解析 ⇒ 本端点不调模型服务；投影合并的读语义与重锚定阈值另批落，本篇不复制形状（事实源见文首指针） | `db/repositories.py:OperationRepository.replace_page_intents`、`region_id_for()`、`api/main.py:put_structure` → `tests/unit/test_db.py`、`tests/contract/test_api_v1_contract.py::TestStructureEndpoint` |
+
+#### 跨页重复线（家具提示）
+
+| 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
+| --- | --- | --- | --- |
+| PM-19 | **跨页重复线是读时派生的提示，不是页状态**：同一归一文本（NFKC＋折空白＋小写）在**多数页的同一纵向位置**出现 ⇒ 一条候选家具线，门槛＝≥3 页 **且** ≥半数页、纵向位置极差 ≤32px（页图像素）；只读整本生效版本的页块序列，**零写库、零重解析、不改任何块的类型** | 为什么它只是提示不是结论：「这是页眉」是三条条件的合取（跨页重复线＋页边带几何＋短文本），本仓只判得动第一条，另两条属读取方的渲染判据——在这里合取就把别人的阈值冻结进解析侧。为什么不落列：提示一旦写进 `af_pages` 就成了机器改判人工面（PM-5 的覆盖层方向是读时叠加），且历史页回填是写库窗口。边界：无正文的块（公式／表／图）不参与，`text` 为空即跳过——否则每页的空块会被并成一条假线；同一页上两处同文本只算一页，分母是**不同页号** | `normalize/furniture.py:furniture_hints`（判线）＋ 同模块的取材面 `furniture_texts`／`strip_furniture`（类型维 ∪ 线维逐页出文本、按整行删**送模型的副本**，产物与页数据读数不动；消费方判据正文见 [knowledge-analysis.md](knowledge-analysis.md) 的 `KA-29`） → `tests/unit/test_normalize.py::TestFurnitureHints`（正样本一条 ＋「正文里反复出现的定义句不成线」「少数页不成线」「重复块不充数」「无正文块不成线」四条反例）、`::TestFurnitureTexts`、`::TestStripFurniture`（另含「包含不剔」「无家具即逐字」两条反向断言） |
 
 ### 端点语义（形状一律见 api.md）
 

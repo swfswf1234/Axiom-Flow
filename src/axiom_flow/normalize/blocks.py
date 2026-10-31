@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from axiom_flow.engines.base import BboxSpace, PageResult
+from axiom_flow.normalize.furniture import FURNITURE_TYPES
 from axiom_flow.schemas import Block, BlocksPage, BlockType, QualityMetrics
 
 # MinerU content_list 类型 → 统一块类型。真机 3.4.4 的页眉/页脚字面值是 `header`/`footer`
@@ -37,7 +38,8 @@ _TYPE_MAP: dict[str, BlockType] = {
     "ref_text": BlockType.PARAGRAPH,
 }
 
-_SKIP_IN_MARKDOWN = {BlockType.HEADER, BlockType.FOOTER, BlockType.PAGE_NUMBER}
+#: 家具三值不进页级 Markdown（同源常量见 `normalize/furniture.py`：梳理取材剔的是同一组类型）。
+_SKIP_IN_MARKDOWN = FURNITURE_TYPES
 
 
 def _as_text(value: Any) -> str:

@@ -1,7 +1,7 @@
 # ADR 0004：解析管线归位与模型直连（对齐根仓库 ADR 0014）
 
 状态：Accepted
-最后更新：2026-10-22
+最后更新：2026-10-26
 关联代码：`src/axiom_flow/engines/`、`src/axiom_flow/orchestrator/`、`src/axiom_flow/ingest/`
 关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_design_documents.py`
 
@@ -37,6 +37,11 @@ v0.1 模型形态（[ADR 0002](0002-pending-design-location.md) 承接的
    统一 `qed` 库 `af_*` 命名空间表族（首建时四表：af_books/af_parse_jobs/af_pages/af_block_edits）。
 6. **独立性**：解析不再要求 8900 在线；模型服务可经根仓库脚本手动启停。`qed_llm_calls`
    调用记录由本仓库在直连成功路径自写（`service=axiom_flow`）。
+   （修订文本梳理半边，2026-10-26 用户出裁并批准代改在册措辞：**文本槽位的出站经 8900 统一
+   中转**——prompt 由本仓组装、调用由本仓发起，但一次调用**只落一行账且由 8900 写**，本仓的自写腿与
+   包装器在该通路不启用（归因随请求体上送）。故本条的「直连自写」语义限定在图像槽位；文本槽位以
+   [knowledge-analysis.md](../design/knowledge-analysis.md) 的 `KA-22`／`KA-23` 为准。服务启动仍不依赖
+   8900 与模型在线，梳理批次只能人工发起，因此「一起来就在跑模型」不成立。）
 
 ## 后果
 

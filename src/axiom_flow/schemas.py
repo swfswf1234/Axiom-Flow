@@ -11,7 +11,7 @@
 版本化改变（PLAN-004 / REQ-080）。
 
 API 契约模型：BookOut / BookSyncItem / IngestResponse / PageData / EditRecord / StructureRequest /
-RegionRecord / ParseVersionOut / ParseJob。
+RegionRecord / ParseVersionOut / ParseJob，与知识点梳理面 `Kp*`／`AnchorReviewOut`（`PLAN-025`）。
 块类型 10 种；解析来源 source ∈ {mineru, paddleocr-vl, qwen-vl}（后两者预留）。
 """
 
@@ -399,7 +399,11 @@ class IngestResponse(BaseModel):
 
 
 class EditRecord(BaseModel):
-    """块级人工编辑记录（`af_operations` 的 edit 意图行，绑定其所属解析版本）。"""
+    """块级人工编辑记录（`af_operations` 的 edit 意图行，绑定其所属解析版本）。
+
+    `block_type`＝产物原类型的只读快照，`corrected_type`＝人工改判（`None`＝没改判过，
+    回放腿据此分辨「没判」与「判成某类型」）。
+    """
 
     edit_id: str
     book_id: str
@@ -411,6 +415,7 @@ class EditRecord(BaseModel):
     note: str = ""
     corrected_text: str | None = None
     corrected_bbox: BBox | None = None
+    corrected_type: BlockType | None = None
     edited_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -433,12 +438,20 @@ class ParseVersionOut(BaseModel):
 
 
 class EditRequest(BaseModel):
-    """PUT /blocks/{index}/edit 请求（同块重复编辑覆盖更新）。"""
+    """PUT /blocks/{index}/edit 请求（同块重复编辑覆盖更新）。
+
+    `corrected_type` 是**人工改判后的类型**（REQ-142 的标注腿），取值受 `BlockType` 十枚闭集校验；
+    与响应侧的 `block_type`（产物原类型只读快照）分职——前者可改、后者是「改之前长什么样」的证据。
+    `extra="forbid"`：闭集外的键当场 422，不静默吞（`database-design.md` 的「禁自由键」同一条纪律）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     verdict: Verdict = Verdict.NONE
     note: str = Field(default="", max_length=1000)
     corrected_text: str | None = None
     corrected_bbox: BBox | None = None
+    corrected_type: BlockType | None = None
 
 
 # ---------- 页级结构意图（af_operations 的 structure 意图行 / PUT …/structure，ADR 0010） ----------
@@ -529,12 +542,20 @@ class PageListOut(BaseModel):
 
 
 class PageData(BaseModel):
-    """GET /books/{id}/pages/{no} 响应：对照主数据源（已合并人工编辑）。"""
+    """GET /books/{id}/pages/{no} 响应：对照主数据源（已合并人工编辑）。
+
+    `furniture_blocks` 是**读时派生**的家具块下标（人工改判三型 ∪ 跨页重复线，见
+    `normalize/furniture.py`）：产物文件与 `markdown` 不经它，屏侧据此逐块隐藏；没有家具的页是空清单。
+    """
 
     blocks: BlocksPage
     markdown: str = ""
     image_url: str
     edits: list[EditRecord] = Field(default_factory=list)
+    furniture_blocks: list[int] = Field(
+        default_factory=list,
+        description="家具块下标（0 基、版本内块坐标；类型维∪跨页重复线，升序）",
+    )
 
 
 # ---------- API：解析任务 ----------
@@ -583,6 +604,323 @@ class ParseJobListOut(BaseModel):
     total: int = 0
     limit: int = 50
     offset: int = 0
+
+
+# ---------- API：知识点梳理（af_kp，PLAN-025 / KA-n） ----------
+
+
+#: 人工评审备注的上限（AF-T5 甲）：一段到几段意见够用，再长就是在本体之外塞正文了。
+#: 超限判 422 而不是截断——备注被砍半会静默改变这一轮梳理的取向，与 `NARRATIVE_MAX_CHARS`
+#: 「超限不截」同一条口径；批次流水的 `payload` 是 JSON，落库存全文、不受列宽约束。
+KP_REVIEW_NOTE_MAX_CHARS = 2000
+
+#: 一批跑哪几条腿（`KA-34`／`KA-43`）：`full`＝目录＋知识点两腿，`outline`＝只跑目录、知识点阶段
+#: 整条不发起，`content`＝目录腿不发起、拿**在册**目录行做知识点并同批补节级总结。
+#: 用三值闭集而不是一枚布尔，是因为「跑哪几条腿」不是一个轴上的开关：`content` 有库侧前置
+#: （零枚在册目录行即拒），布尔形状表达不出「这一值要读库才判得出能不能受理」。
+KpStage = Literal["full", "outline", "content"]
+
+
+class KpJobCreate(BaseModel):
+    """`POST /kp-jobs` 请求体：一册书 + 可选页区间（`KA-25`，缺省＝整本书）+ 可选人工评审备注
+    + 可选阶段（`KA-34`，缺省＝两腿全跑）。
+
+    **没有 `engine` 字段**：梳理引擎取服务端槽位（`AXIOM_KP_ENGINE`），缺配即受理时 503（`KA-22`）。
+    让请求体能点名引擎，等于让调用方绕过「未接入就拒」这道门槛，成本归因（`KA-23`）也就失去落点。
+
+    `stage` 是同一件事的范围参数，与 `page_start`／`page_end` 同类——它不另开端点，因为「这一批
+    做了什么」在流水里必须是一行两处读（`KA-27`）。域外值由 pydantic 判 422，先于六道受理门；
+    `content` 另有一道库侧前置（在册目录行零枚即拒，`KA-43`），排在页区间之后、在飞之前。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    book_id: str = Field(pattern=SAFE_SEGMENT_PATTERN)
+    page_start: int | None = Field(default=None, ge=1, description="单章范围的起始页（1 基）")
+    page_end: int | None = Field(default=None, ge=1, description="单章范围的结束页（1 基，含）")
+    review_note: str = Field(
+        default="",
+        max_length=KP_REVIEW_NOTE_MAX_CHARS,
+        description="人工评审意见：注入本轮两阶段 prompt，并随批次流水 payload 存档（AF-T5 甲）",
+    )
+    stage: KpStage = Field(
+        default="full",
+        description=(
+            "本批跑哪几条腿：full＝目录＋知识点，outline＝只梳理目录（KA-34），"
+            "content＝拿在册目录只补知识点与节级总结（KA-43）"
+        ),
+    )
+
+
+class KpJobAccepted(BaseModel):
+    """受理成功的批次身份：客户端拿 `gen_batch` 轮询进度，之后不再自己猜批次号。"""
+
+    book_id: str
+    gen_batch: str
+    evidence_job_id: str = Field(description="本批的取证版本（受理一刻的生效版本，`KA-1`/`KA-18`）")
+    page_start: int
+    page_end: int
+    status: Literal["queued"] = "queued"
+
+
+class KpLedgerOut(BaseModel):
+    """一行批次流水（`op_kind='kp'`，`KA-27`）：只答「这一批发生过什么、账面如何」。
+
+    `result` 是执行体跑完的计数集（键闭集见 `KP_RESULT_KEYS`）；失败批次没有 `result`——
+    账面只在跑通的那条路上存在，失败的原因在 `error`。本行**不是当前态判据**（在飞读 `af_kp`）。
+    """
+
+    gen_batch: str
+    book_id: str
+    job_id: str
+    status: Literal["ok", "failed"]
+    page_start: int | None = None
+    page_end: int | None = None
+    #: 这一批是照着哪句人工意见跑的（AF-T5 甲）：取 `payload.review_note`，缺省空串而不是缺键。
+    review_note: str = ""
+    #: 这一批跑了哪条腿（`KA-34`）：取 `payload.stage`，缺省 `full`——早期批次没有这一键，
+    #: 而它们确实是两腿全跑的，回落值与事实一致，不必为「有没有这一键」维持两种形状。
+    stage: KpStage = "full"
+    result: dict[str, Any] | None = None
+    error: str = ""
+    created_at: datetime | None = None
+
+
+class KpJobProgressOut(BaseModel):
+    """`GET /books/{id}/kp-jobs/{gen_batch}`：批次三态计数 + 流水行，`in_flight` 由 `draft` 行数判。
+
+    在飞判据与 `KA-4` 同源（`af_kp` 里有没有 `draft` 行），不看流水行的 `status`——事件行禁作判据。
+    `ledger` 可为 `null`：批次还在跑时流水行尚未写出，这一位就是「还在跑」的读数。
+    """
+
+    book_id: str
+    gen_batch: str
+    in_flight: bool
+    counts: dict[str, int] = Field(default_factory=dict, description="按 gen_status 与 node_kind 的计数")
+    ledger: KpLedgerOut | None = None
+
+
+class AnchorReviewOut(BaseModel):
+    """一条复核标记（`KA-19` 的越界与 `KA-3` 的未确认锚点）：点名节点、页与原因，不改写数据。"""
+
+    node_id: str
+    page: int
+    reason: str
+
+
+class KpNodeOut(BaseModel):
+    """`af_kp` 一行的响应投影：人工背书域 + 来源与状态读数。
+
+    `norm_key` 与整槽 `meta` 不外发——前者是去重用的派生值（冲突由 422 的点名承载），后者是扩展槽；
+    唯一的例外是 `meta` 里的两枚身份位 `toc_role`／`toc_kind`（`KA-39`），它们逐字带出供屏上标「非知识点」。
+    `rev` 每次服务端写入自增，是 `if_rev` 乐观并发的对手值（CW-6）；确认位只有 `confirmed` 一列。
+    """
+
+    node_id: str
+    book_id: str
+    job_id: str = Field(description="取证版本；''＝人工直填行，无锚可解释（`KA-18`）")
+    node_kind: Literal["outline", "point"]
+    node_type: Literal["chapter", "point", "exercise", "other"] = Field(
+        default="chapter",
+        description="四值类型（`KA-44`，读时派生不落列）：exercise＝`toc_kind='exercise'` 或其祖先为习题；"
+        "other＝其余 `toc_role='reference'` 行（符号表／书目／附录／前后记）；knowledge 行按层级 1 分成"
+        " chapter、2 及以上分成 point。屏上标签只认这四词，不再按 `node_kind` 出「章节」。",
+    )
+    parent_id: str | None = None
+    depth: int | None = None
+    order_hint: int | None = None
+    name: str
+    role: str = ""
+    type: str = ""
+    summary: str = ""
+    links: list[dict[str, Any]] = Field(default_factory=list)
+    anchors: list[dict[str, Any]] = Field(default_factory=list)
+    page_start: int | None = Field(
+        default=None,
+        description="读时派生的正文区间起点（`KA-42`，不落列）：目录行＝自身锚点页的最小值，"
+        "点行＝自身锚点页的最小值；没有锚点即 `null`（披露，不编区间）。",
+    )
+    page_end: int | None = Field(
+        default=None,
+        description="读时派生的正文区间终点（`KA-42`，不落列）：目录行＝排序后下一枚在册目录行的起点页 − 1，"
+        "末行到 `af_books.page_count`（该列缺 ⇒ 折回本行起点页）；点行＝自身锚点页的最大值。",
+    )
+    narrative_ref: str = ""
+    gen_status: Literal["draft", "candidate", "rejected"]
+    gen_batch: str = ""
+    model_ref: str = ""
+    toc_role: str = Field(
+        default="knowledge",
+        description="目录行的知识点身份位（`KA-39`，取自 `meta`）：'reference'＝正文前后的附件行。"
+        "整槽 `meta` 仍不外发，只把这两枚键原样带出；点行与旧批次行恒为 'knowledge'。",
+    )
+    toc_kind: str = Field(
+        default="",
+        description="附件行的类别（`KA-39`）：front_matter／back_matter／symbol_table／appendix／"
+        "bibliography／index／exercise；`toc_role='knowledge'` 时为空串。",
+    )
+    confirmed: int = 0
+    rev: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class KpWorkspaceOut(BaseModel):
+    """`GET /books/{id}/kp`：整册工作区（目录＋点＋未归档池一次给全）与复核标记。
+
+    不分页是形状决定：目录树与「谁挂在谁下面」必须整册读，翻页会把结构切成两屏。
+    `in_flight_batch` 就是 `KA-4` 的在飞批次号（无在飞为 `null`），界面据此禁用提交按钮。
+    """
+
+    book_id: str
+    in_flight_batch: str | None = None
+    nodes: list[KpNodeOut] = Field(default_factory=list)
+    review_flags: list[AnchorReviewOut] = Field(default_factory=list)
+
+
+class KpLinkIn(BaseModel):
+    """一条关系边：`kind` 闭集五种，端点由服务端校验存在性与自环（`database-design.md`「服务端不变式」）。"""
+
+    kind: Literal["prerequisite", "co_requisite", "explains", "exemplifies", "extends"]
+    to: str = Field(min_length=1, max_length=64)
+    note: str = ""
+
+
+class KpAnchorIn(BaseModel):
+    """一条来源锚点：页序是 **PDF 页序**，`block_indexes` 属该行 `job_id` 那一版的块序空间（`KA-18`）。"""
+
+    kind: str = Field(default="page_block", min_length=1, max_length=32)
+    ref_id: str = ""
+    page: int = Field(ge=1)
+    block_indexes: list[int] = Field(default_factory=list)
+    snippet: str = ""
+
+
+class KpNodePatch(BaseModel):
+    """人工背书域的整节点声明（`PUT`／`PATCH` 的 body）：只含 `KA-11` 人工可写的列。
+
+    缺席与显式 `null` 是两件事：只有出现在请求体里的键才参与写入（`model_fields_set`），
+    否则「只想改 `summary`」会变成把其余六列一起覆盖成空。`if_rev` 缺省＝不比序号。
+    来源三列（`gen_batch`/`model_ref`/`gen_status`）与 `confirmed` 不在本模型里——改不动是形状保证。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    parent_id: str | None = Field(default=None, max_length=64)
+    order_hint: int | None = None
+    links: list[KpLinkIn] | None = None
+    anchors: list[KpAnchorIn] | None = None
+    role: Literal["", "core", "explainer", "example"] | None = None
+    type: Literal["", "memory", "procedure", "concept", "design"] | None = None
+    summary: str | None = Field(default=None, max_length=1000)
+    if_rev: int | None = Field(default=None, ge=0, description="乐观并发：与当前 `rev` 不符即 409（CW-6）")
+
+
+class KpSummaryRegenIn(BaseModel):
+    """单点重生成（`KA-45`）：详情面「重新生成总结」的请求体，只有一枚可选序号。
+
+    没有正文键：新总结由模型按该行区间现读现写，人给的那份走 `PATCH` 的 `summary`。
+    `if_rev` 与其余写腿同一口径——屏上读到的那一份被别处改过时先撞 409，不静默覆盖。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    if_rev: int | None = Field(default=None, ge=0, description="乐观并发：与当前 `rev` 不符即 409（CW-6）")
+
+
+class KpConfirmIn(BaseModel):
+    """确认／撤回（`KA-14`/`KA-17`）：置位跑「可回指」前置校验，撤回永远可执行。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirmed: bool
+    if_rev: int | None = Field(default=None, ge=0)
+
+
+class KpConfirmOut(BaseModel):
+    """确认动作的结果：`missing` 逐条点名缺了哪个锚点页、哪条边的端点（422 的正文）。"""
+
+    node_id: str
+    confirmed: int
+    rev: int
+    missing: list[str] = Field(default_factory=list)
+
+
+#: 详解正文的上限（`KA-30`）：与其余长度闸不同，这一枚**不背列宽**——`af_kp.narrative_ref` 只存单段
+#: 文件名，正文在磁盘上。上限管的是「一次请求能吃下多大一篇」，取值口径与根侧读长文的字节闸同量级。
+NARRATIVE_MAX_CHARS = 512_000
+
+
+class KpNarrativeWriteIn(BaseModel):
+    """长文写腿的请求体（`KA-30`）：只收一篇**已成文**的正文。
+
+    形状闸在模型里而不在处理函数里：空正文与超限都在查行之前判 422，且**不截断**——长文被砍一半
+    不会报错，只会让人对着一篇缺尾的详解讲不下去（与 `summary[:1000]` 的截断方向故意相反）。
+    文件名、路径与所属书都不在请求体里：路径唯一由 `KA-20` 的派生式算出，越根的口子是形状保证，
+    不是运行期判断。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1, max_length=NARRATIVE_MAX_CHARS)
+    if_rev: int | None = Field(default=None, ge=0, description="乐观并发：与当前 `rev` 不符即 409（CW-6）")
+
+
+class KpNarrativeOut(BaseModel):
+    """长文两条腿共用的响应体：`exists` 是「列有值而文件不在位」的披露位（`KA-30`）。
+
+    读的是**文件**不是列：`narrative_ref` 只存单段文件名，路径永远现算。缺文件仍回 200 带
+    `exists=false`——判 404 会把「节点存在但正文缺」谎报成「节点不存在」，而这个矛盾正是读侧要
+    显示出来的东西。`bytes` 按 UTF-8 计，与 `content` 的字符数是两个口径。
+    """
+
+    node_id: str
+    narrative_ref: str = ""
+    exists: bool
+    content: str = ""
+    bytes: int = 0
+    rev: int
+    updated_at: datetime | None = None
+
+
+class KpOutlineDeclIn(BaseModel):
+    """目录声明的一项：只有身份与挂载两列（`KA-8`），层数与名不是声明面能改的东西。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(min_length=1, max_length=64)
+    parent_id: str | None = Field(default=None, max_length=64)
+    order_hint: int = 0
+
+
+class KpOutlineDeclareIn(BaseModel):
+    """目录**整批**声明（`KA-8`）：全集语义——缺席的目录行不下线，只让它的子点退回未归档池。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    declarations: list[KpOutlineDeclIn] = Field(default_factory=list)
+
+
+class KpOutlineDeclareOut(BaseModel):
+    """声明回显：`outline` 按声明序（界面不需要再排一次），`detached_points` 是退池的行数。"""
+
+    book_id: str
+    outline: list[KpNodeOut] = Field(default_factory=list)
+    detached_points: int = 0
+
+
+class KpExportOut(BaseModel):
+    """只读导出面（`KA-15`）：`confirmed=1` 的行，一册全给，目录先于点。
+
+    空集是 200 不是 404——「这本书还没有已确认结论」是合法现状，拉取方按 `rev`/`updated_at` 增量。
+    `review_flags` 承载 `KA-3` 的外发提示（锚点页未确认），只提示不拦截。
+    """
+
+    book_id: str
+    nodes: list[KpNodeOut] = Field(default_factory=list)
+    review_flags: list[AnchorReviewOut] = Field(default_factory=list)
+    total: int = 0
 
 
 # ---------- API：非公开管理面（PLAN-010 / ARCH-024） ----------

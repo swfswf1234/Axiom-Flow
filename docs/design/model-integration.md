@@ -62,6 +62,9 @@
 | `QED_OCR_MODEL_URL` | 图像槽位本地端点（MinerU 容器，健康端点 `/health`） | `http://127.0.0.1:5002` |
 | `AXIOM_OCR_TIMEOUT` | **单窗口/单页一次调用**的超时秒数（三段式提交/轮询/取结果共享） | `600` |
 | `AXIOM_PARSE_WINDOW_SIZE` | 全本解析每个解析窗口的页数（串行提交；默认值由真机 W0 冻结） | `56` |
+| `AXIOM_KP_ENGINE` | 梳理（文本）槽位名：唯一登记值是 `qed-gateway`（经统一中转的网关适配器），空值与闭集外名字一律受理期拒跑、**不回落** | `qed-gateway` |
+| `QED_ENGINE_GATEWAY_URL` | 梳理出站地址——本仓库唯一出站的文本通路（`POST /api/v1/llm/text`，探活 `GET /api/v1/health`）；尾斜杠读入即归一 | `http://127.0.0.1:8900` |
+| `AXIOM_KP_TIMEOUT` | 梳理单次调用的超时秒数，**必须长于**中转服务自身的调用预算（否则长回复恒在门外被切）；非数字回落默认值 | `360` |
 | `API_KEY` | 云端档位凭据（仅 qwen-vl 预留，注释态，不随解析默认路径读取） | — |
 | `AXIOM_VISION_MODEL` | qwen-vl 档位模型名（仅 qwen-vl 预留，注释态） | `qwen-vl-plus` |
 | `QED_DATA_ROOT` | 三项目统一数据根（`raw/` 只读输入、`parsed/` 本仓库产物） | 向上走查根 `.env` |

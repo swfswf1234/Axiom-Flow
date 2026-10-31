@@ -1,9 +1,9 @@
 # 数据库设计（Axiom-Flow af_* 命名空间）
 
 设计状态：Accepted（四表形状的方向与列清单已经确认，列由守护与 ORM 逐列对账）
-确认状态：已确认（四表形状、两模块的通路判据与 `links` 越闸例外均已终审；分析模块 `af_kp` 有判据而暂无写者，见「af_kp 列清单」节末）
-实现状态：Implemented（四表代码与迁移 base 已落；两库真库整族重建已执行完毕；`af_kp` 的消费通路零实现）
-最后更新：2026-10-23
+确认状态：已确认（四表形状、两模块的通路判据与 `links` 越闸例外均已终审；分析模块 `af_kp` 的判据与本侧写者均已落地，见「af_kp 列清单」节末）
+实现状态：Implemented（四表与迁移 base 已落；本侧梳理通路已交付；缺文本引擎适配器与根侧提升作业）
+最后更新：2026-10-24
 关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
 关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_table_family_governance.py`、`tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py`、`tests/integration/test_concurrency_criteria.py`、`tests/contract/test_api_v1_contract.py`、`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -31,11 +31,13 @@
 - **本篇的章体与总纲同形**（八章编号体：前言／规则／表总览／整体架构／详细设计／同步契约／变更运维／
   守护），使同一库的两篇设计文档可按章对读；章内小节标题仍承载对账锚点（`### <table> 列清单`）。
   体裁改判由 [ADR 0017](../adr/0017-database-design-eight-chapter-skeleton.md) 立法。
-- **`af_kp` 的现状＝形状与判据都定、通路未实现**：表与列都已落在代码与迁移 base 里，`links` 越过 JSON 列
-  反向闸的例外与其转表判据已终审追认（[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)），
-  梳理作业／复核端点／提升作业的通路判据已成篇（[knowledge-analysis.md](../design/knowledge-analysis.md)）
-  并另有实现批在册；未成形的只有**实现本身**——本表至今有形状、有判据而没有写者。因此向根侧承诺的口径是
-  「可按 `KA-n` 对接设计」，**不是**「已有梳理能力」。
+- **`af_kp` 的现状＝本侧通路已落地，未交付的是一段外部依赖**：表与列都已落在代码与迁移 base 里，`links`
+  越过 JSON 列反向闸的例外与其转表判据已终审追认（[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)），
+  通路判据与实现落点已成篇（[knowledge-analysis.md](../design/knowledge-analysis.md)）；梳理批次作业、复核与导出
+  端点、批次流水与调用账都已在代码与测试里，文本引擎适配器也已接入（`qed-gateway`＝prompt 在本仓组装、
+  出站唯一＝根侧统一中转，`KA-22`）。未交付只剩一段＝8900 侧的拉取式提升作业。
+  因此向根侧承诺的口径是「本侧梳理通路可用，提升作业待根侧消费」，**不是**「提升已
+  闭环」；逐列的写者到齐程度见「`af_kp` 列清单」节末的当前范围段。
 - 库内换形状属 D 类人工窗口（逐表备份留指纹 → 用户批准 → 执行），本篇不安排执行。
 
 ### 三类登记面
@@ -89,7 +91,7 @@
 | 解析 | `af_books` | 一册已验证书（qt_books 只读快照 + ingest/解析进度与结局 + 生效解析版本指针 + 扩展槽） | `book_id` | 同步、ingest 与解析收尾 | [↓](#af_books-列清单) |
 | 解析 | `af_operations` | 一次操作＝一行：解析版本（事件）／块编辑／结构声明／页确认／ingest／同步／清除／检索索引版本／梳理批次流水 | `op_id`（意图行另由 `intent_key` 唯一定位） | 任务生命周期、人工校验与结构声明；余值建而不写 | [↓](#af_operations-列清单) |
 | 解析 | `af_pages` | 一页**在某个解析版本内**的状态、质量、在位产物索引、确认态与页域 | (`book_id`, `job_id`, `page_no`) | 逐页持久化（产物写先于页行） | [↓](#af_pages-列清单) |
-| 分析 | `af_kp` | 一个节点（章／节／知识点）的当前结论 | `node_id`（梳理作用域＝`book_id`，不含版本） | **本轮无写者**：形状先行，仓储与清除面已就位 | [↓](#af_kp-列清单) |
+| 分析 | `af_kp` | 一个节点（章／节／知识点）的当前结论 | `node_id`（梳理作用域＝`book_id`，不含版本） | **本侧写者已就位**：批次作业、复核与导出端点、批次流水与清除面；未落＝检索面与 8900 侧提升作业 | [↓](#af_kp-列清单) |
 
 **四表各有一个 `meta` JSON 扩展槽**，这就是「留扩展空间」的落点；三条红线按通则指针引用，键定档后升
 实体列并清空对应键。**明确不建**：块正文表、知识点关系边表、梳理批次表、私有 LLM 调用账表、检索索引
@@ -208,7 +210,7 @@ parse 行 `op_id`。页表以 `job_id` 为作用域键的一分子，因此同�
 | 6 | 块编辑（解析·人工） | `af_operations` 的 `op_kind='edit'`、`lifecycle='intent'`，按 `intent_key` upsert | 不改产物（编辑是覆盖层） | intent 行 |
 | 7 | 页级结构声明（解析·人工） | `af_operations` 的 `op_kind='structure'`、`job_id=''`（跨版本存活），整批在书行锁内替换 | — | intent 行；缺席即撤销 |
 | 8 | 页确认（解析·人工） | `af_pages.confirm_state` ＋ `af_operations` 一行 `op_kind='confirm'` 流水（本轮只建列与建值，不建写者） | — | `confirm_state`（版本内判定；流水不是判据） |
-| 9 | 知识点梳理（分析·机器） | `af_kp` 批次行：`gen_batch` 分组、`gen_status` 走 `draft`→`candidate`；批次流水另落 `af_operations` 一行 `op_kind='kp'`（建值不建写者） | `<book_dir>/kp/<node_id>.md` 长文 | 在飞判据＝该书存在 `gen_status='draft'` 行 |
+| 9 | 知识点梳理（分析·机器） | `af_kp` 批次行：`gen_batch` 分组、`gen_status` 走 `draft`→`candidate`；目录行**逐页落库**、收尾前定稿同批改写一次 `anchors`／`order_hint`／`parent_id`（`KA-40`，不递增 `rev`）；批次流水另落 `af_operations` 一行 `op_kind='kp'`（整批一行，`result`＝节计数与产出读数） | `<book_dir>/kp/<node_id>.md` 长文 | 在飞判据＝该书存在 `gen_status='draft'` 行；进度面另有一条进程内的在途登记补「受理到首行落库」那一窗（`KA-40`，不进受理门、不落盘） |
 | 10 | 复核与确认（分析·人工） | `af_kp` 的人工域列 ＋ `confirmed=1` ＋ `rev` 自增 | 长文改写 | `confirmed`（机器路径恒写 0） |
 | 11 | 提升（分析·8900 拉取） | 只读导出；本方不写共享主表、不回写 | — | 提升事实的唯一正本在共享主表 |
 | 12 | 清除（运维·人工双确认） | `af_operations` 一行 `op_kind='purge'` 流水（建值不建写者） | 删 `af_*` 行与 `parsed/` 子树 | — |
@@ -279,7 +281,7 @@ parse 行 `op_id`。页表以 `job_id` 为作用域键的一分子，因此同�
 | `op_id` | VARCHAR(64) | 否 | PK | 事件身份，值形沿用 `uuid4().hex[:12]`。`op_kind='parse'` 行的 `op_id` **就是版本号**：产物目录 `versions/<op_id>/`、`af_books.active_job_id`、`af_pages.job_id` 都按值指它。值形不改＝只换表不换目录名，把改动面收在持久层 |
 | `book_id` | VARCHAR(100) | 否 | i | 作用域（哪本书）；事件流主屏读法是「一本书做过什么」，故它是索引首列 |
 | `job_id` | VARCHAR(64) | 否 `''` | i | 版本坐标。parse 行**强制等于 `op_id`**（守护断言）；`edit`/`confirm` 行＝其绑定的生效版本（编辑结论绑版本）；`kp` 行＝其取证版本（结论钉回那一版的产物）；`structure`/`ingest`/`sync`/`purge` 行＝`''`（结构意图跨版本存活） |
-| `op_kind` | VARCHAR(24) | 否 | i | 闭集 `parse`/`edit`/`structure`/`confirm`/`ingest`/`sync`/`purge`/`index`/`kp`。本轮有写者的只有 `parse`/`edit`/`structure`；其余六个值（`index`＝检索索引构建、**`kp`＝梳理批次流水**）**建值不建写者**——行语义在此定档，写者随各自消费批落地，本轮任何路径不得写出，守护断言计数恒 0。`kp` 行承载「一次梳理批次对一本书/一章做了什么」（`job_id`＝取证版本、`target_id`＝节点、`result`＝成功/失败节计数），**禁作当前态判据**（事件行只答「发生过什么」，与「服务端不变式」的「行种类与坐标自证」条同判据）。各值的行语义见「流程落点」。扩值须评审——种类是判据的分母 |
+| `op_kind` | VARCHAR(24) | 否 | i | 闭集 `parse`/`edit`/`structure`/`confirm`/`ingest`/`sync`/`purge`/`index`/`kp`。本轮有写者的四值＝`parse`/`edit`/`structure`/**`kp`（梳理批次流水）**；其余五个值（`index`＝检索索引构建、`confirm`／`ingest`／`sync`／`purge`）**建值不建写者**——行语义在此定档，写者随各自消费批落地，无写者那五值守护断言计数恒 0。`kp` 的守护是**正向断言**：有行、`result` 为闭集键、且不越界替别的种类造行。`kp` 行承载「一次梳理批次对一本书/一章做了什么」（`job_id`＝取证版本、`target_id`＝**批次号**、`result`＝成功/失败节计数；整批一行，因为失败节计数没有节点可挂），**禁作当前态判据**（事件行只答「发生过什么」，与「服务端不变式」的「行种类与坐标自证」条同判据）。各值的行语义见「流程落点」。扩值须评审——种类是判据的分母 |
 | `lifecycle` | VARCHAR(16) | 否 `event` | — | 闭集 `event`（不可变流水，禁作判据）/`intent`（人工意图当前态，唯一合法判据位）。这一列是「一张表两用」能被守护的全部依据 |
 | `actor` | VARCHAR(16) | 否 `human` | — | 闭集 `human`/`system`/`model`：人工确认门与自动归一必须可分列，「谁做的」是裁决不是细节 |
 | `page_no` | INTEGER | 是 | i | 页坐标（edit/structure/confirm/单页 parse）；`NULL`＝不落在具体页 |
@@ -297,7 +299,7 @@ parse 行 `op_id`。页表以 `job_id` 为作用域键的一分子，因此同�
 | `progress` | JSON | 否 `{}` | — | parse 行进度读数 `{"parsed":N,"total":M,"failed":N,"error":"…"}`（节流写与终态必写）；另**折叠** `started_at`／`finished_at`／`duration_seconds` 三个内部时刻键，见下「时刻折叠」。杂项不得混入本列（本列是被轮询读的热列） |
 | `failed_pages` | JSON | 否 `[]` | — | 结构化失败页码数组，**不截断**；`error` 只是给人看的摘要，摘要截断不丢页码 |
 | `error` | VARCHAR(500) | 否 `''` | — | 人读摘要（≤500，族内口径） |
-| `payload` | JSON | 否 `{}` | — | 操作载荷。edit：`{block_type, verdict, corrected_text, corrected_bbox}`；structure：`{op, bbox, anchor_bbox, members, kind}`；confirm：`{state}`。**形状闭集由单测断言**，禁自由键；`note` 按裁决是实体列、不进载荷 |
+| `payload` | JSON | 否 `{}` | — | 操作载荷。edit：`{block_type, verdict, corrected_text, corrected_bbox, corrected_type}`（`block_type`＝产物原类型的只读回声，`corrected_type`＝**人工改判**的 `BlockType` 取值、`NULL`＝未改判，两者分职）；structure：`{op, bbox, anchor_bbox, members, kind}`；kp（批次流水）：`{gen_batch, page_start, page_end, review_note}`（本批**入参**四键，`review_note`＝本轮人工评审备注全文——它是批次输入，不是 `note` 那枚「读这行的人留下的话」，见 [knowledge-analysis.md](../design/knowledge-analysis.md) `KA-31`）；confirm：`{state}`。**形状闭集由单测断言**，禁自由键；`note` 按裁决是实体列、不进载荷 |
 | `result` | JSON | 是 | — | 操作结果读数：受影响页/块、生成条数、拒绝原因码。与 `status` 分工＝`status` 是判据、`result` 是明细；`NULL`＝无额外读数 |
 | `note` | VARCHAR(1000) | 否 `''` | — | 人写备注（单数，族内较新表口径） |
 | `meta` | JSON | 是 | — | 扩展槽，三条红线全部按共享表通则引用（见「三类登记面」的通则指针）；定档后升实体列并清空对应键 |
@@ -405,7 +407,7 @@ JSON 取值，既违「只读不筛」纪律，也让 JSON 反向闸失去意义
 | `confirmed` | INTEGER | 否 0 | — | 人工确认位（0/1），**只有人工可置**。与 `gen_status` 分列＝机器与人工各写一列互不覆据；置位才可被提升 |
 | `gen_batch` | VARCHAR(64) | 否 `''` | i | 梳理批次＝一次重编排作业。整批复核、整批清理、整批回滚与「保留最新 2 批」全据此，**故不需要批次表** |
 | `model_ref` | VARCHAR(128) | 否 `''` | — | 产出者标识（`manual`/模型名）；自由文本列不得含密钥与个人信息 |
-| `rev` | INTEGER | 否 0 | — | 乐观并发序号：每次成功写入自增，长表单可传 `if_rev`，不匹配即 409 |
+| `rev` | INTEGER | 否 0 | — | 乐观并发序号：每次成功写入自增（机器的态迁移与启动期归一也自增，故它不是「只有人改过」的计数器），长表单可传 `if_rev`，不匹配即 409。**唯一不自增的写＝`KA-40` 的同批定稿改写**——早落行与定稿行是同一批的两次读数，序号加上去人工就把「机器自己把锚修准了」读成「有人改过这行」而平白撞一次 409（守护＝`tests/unit/test_knowledge_pipeline.py::TestProgressiveOutlineLanding` 的逐列零变化断言：本批行只动三列、`rev` 取写前快照） |
 | `meta` | JSON | 是 | — | 扩展槽，红线同上 |
 | `created_at` | DATETIME | 否 | — | 节点建行时刻 |
 | `updated_at` | DATETIME | 否 | — | 最近一次改写时刻 |
@@ -413,16 +415,18 @@ JSON 取值，既违「只读不筛」纪律，也让 JSON 反向闸失去意义
 键与索引：`ix_af_kp_book(book_id, node_kind, gen_status)`、`ix_af_kp_parent(parent_id)`、
 `ix_af_kp_batch(gen_batch)`、`ix_af_kp_norm(book_id, node_kind, norm_key)`（普通索引，服务端查重）。
 
-**当前范围（这就是「有形状有判据、暂无写者」的全部含义）**：表与列随新 base 一次建齐，仓储读写面
-（`KpRepository`）与删除面（删书、管理面整族清除）已就位，但**没有梳理作业、没有对外端点、没有提升作业**。
-因此有四条计数恒 0 的守护断言：① 非空 `embedding_signature`；② `op_kind='index'`；③ `op_kind` 其余五个
-无写者值（`kp`／`confirm`／`ingest`／`sync`／`purge`）；④ `gen_status` 的**域外值**（闭集
-`draft`/`candidate`/`rejected` 三值之外——域内没有「人已采纳」这一档，人工终态只由 `confirmed` 表达）。
-②③把仓储层全部生产插入腿（`OperationRepository.create`／`upsert_edit`／`replace_page_intents`）
-跑一遍再计数，故「任何路径不得写出」是可执行判据而不是口头约定。
-消费通路的形状（批次作业、复核端点、提升幂等锚）已定为 [knowledge-analysis.md](../design/knowledge-analysis.md)
-的 `KA-1~KA-28`，其立项与 `links` 越闸终审均已了结 ⇒ **本节按已确认对待**：列语义、不变式与并发形态可直接
-作为实现与跨仓对接的依据。计数恒 0 的四条断言不因本节转正而放松，它们随实现批逐条改判并各留反向判据。
+**当前范围（写者到齐的程度逐项交代）**：表与列随新 base 一次建齐；本侧消费通路已就位＝梳理批次作业
+（受理门 → 目录阶段 → 知识点阶段 → 收尾）、`KpRepository` 三条写腿、十条梳理与复核端点（长文两条腿成对开在节点路径上、总结重生成一条）、`op_kind='kp'`
+的批次流水插入腿、`qed_llm_calls` 的追加写通路（只 `INSERT`、不建 ORM、不进 `Base.metadata`）与长文／删除面。
+仍无写者的两处＝① 非空 `embedding_signature`（检索面未立项）；② `op_kind` 的 `confirm`／`ingest`／`sync`／
+`purge` 四值与 `index`。据此，计数恒 0 的守护由四条收成三条（`embedding_signature`、`op_kind='index'`、
+`op_kind` 其余四个无写者值），第四条 `gen_status` **域外值**恒 0 照旧（闭集 `draft`/`candidate`/`rejected`
+三值之外——域内没有「人已采纳」这一档，人工终态只由 `confirmed` 表达）。守护仍把仓储层全部生产插入腿
+（`OperationRepository.create`／`upsert_edit`／`replace_page_intents`／`create_kp_batch`）跑一遍再计数，
+故「任何路径不得写出」是可执行判据而不是口头约定；`kp` 那一面则按正向断言读。
+消费通路的判据正本在 [knowledge-analysis.md](../design/knowledge-analysis.md) 的 `KA-1~KA-28` ⇒
+**本节按已确认对待**：列语义、不变式与并发形态可直接作为实现与跨仓对接的依据。未交付的两段不改变本节形状＝
+8900 侧的拉取式提升作业（幂等锚写在共享主表，不归本组件）与「保留最新 2 批」的裁剪腿（系统「裁剪」一路，写者未落）。
 
 ### 服务端不变式（DDL 表达不了的）
 
@@ -588,11 +592,11 @@ SQLite 上 `with_for_update()` 是空操作，因此锁类判据（意图 upsert
 | **甲（采）**：并进 `af_operations` | `op_kind` 扩 `index` 一值 ＋ 增一列**独立的** `embedding_signature`（不复用 `parser_signature`） | 事件表继续变宽，多出第三段稀疏列；「版本行」与「操作流水」两种语义共表 |
 | 乙（拒）：独立第五表 | 一行＝一个索引版本，列只服务检索面 | 表数 4→5，与「四表足矣」的结论正面冲突，须独立加表评审并同步全部表清单守护 |
 
-采甲的附带后果必须与列同批写明：**本形状产生暂无写者的列与暂无写者的闭集值**。处置口径与梳理流水值
-相同——守护断言任何路径写出的非空 `embedding_signature`、`op_kind='index'` 与 `op_kind='kp'`
-计数恒为 0，直到检索面立项并交出索引行的 `job_id`／`status`／`lifecycle` 映射（那属检索面自身设计，
-本篇不定）、直到梳理实现批交出 `kp` 行的写者（其行语义已由「流程落点」第 9 步与
-[knowledge-analysis.md](../design/knowledge-analysis.md) 的 `KA-27` 定档）。整族重建档位下这些列与其它列同批建在新 base 里，
+采甲的附带后果必须与列同批写明：**本形状产生暂无写者的列与暂无写者的闭集值**。守护断言任何路径写出的
+非空 `embedding_signature` 与 `op_kind='index'` 计数恒为 0，直到检索面立项并交出索引行的 `job_id`／`status`／
+`lifecycle` 映射（那属检索面自身设计，本篇不定）。同批改判的是梳理流水值：`op_kind='kp'` 的写者已随本侧
+通路交出，其守护由「计数恒 0」转为**正向断言**（有行、`result` 为闭集键、且不越界替别的种类造行），行语义
+由「流程落点」第 9 步与 [knowledge-analysis.md](../design/knowledge-analysis.md) 的 `KA-27` 定档。整族重建档位下这些列与其它列同批建在新 base 里，
 故「现在建」与「以后 ALTER」成本相同，
 不构成推迟理由；反过来说，它也不构成**提前定义行语义**的理由，行语义仍随消费方来。
 

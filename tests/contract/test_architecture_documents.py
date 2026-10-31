@@ -100,15 +100,19 @@ def test_code_map_lists_v2_modules_with_design_references():
 
 def test_api_document_declares_interface_categories():
     """四类公共契约面 + 非公开管理面必须成类可查；**端点清单不在本守护硬编码**——
-    它由 `test_fixed_document_form.py` 与运行时路由表双向对账（钉字符串会让清单两头漂移）。"""
+    它由 `test_fixed_document_form.py` 与运行时路由表双向对账（钉字符串会让清单两头漂移）。
+
+    ④ 类由「未来 RAG·知识图谱预留（无端点）」改名而来（`KA-n` 端点面落地，PLAN-025 W5）：检索与
+    向量化仍是无端点预留，正文留在该节末尾的「预留」段，不在这条守护里点名。
+    """
     content = (ARCHITECTURE / "api.md").read_text(encoding="utf-8")
-    for heading in ("生命周期与健康", "数据查询", "解析结果与 PDF 对照", "RAG·知识图谱预留"):
+    for heading in ("生命周期与健康", "数据查询", "解析结果与 PDF 对照", "知识点梳理"):
         assert heading in content, heading
     for section in (
         "### ① 生命周期与健康\n",
         "### ② 数据查询（af_*）\n",
         "### ③ 解析结果与 PDF 对照\n",
-        "### ④ 未来 RAG·知识图谱预留（无端点）\n",
+        "### ④ 知识点梳理（af_kp）\n",
         "### 非公开管理面（af_* 与产物一键清除）\n",
     ):
         assert section in content, section
