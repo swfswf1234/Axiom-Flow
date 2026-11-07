@@ -9,6 +9,7 @@ PLAN-024）：`af_books`（书目快照与进度）、`af_operations`（事件�
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import JSON, DateTime, Index, Integer, String, Text, UniqueConstraint
@@ -59,6 +60,24 @@ ACTORS = ("human", "system", "model")
 #: `af_kp.gen_status` 闭集：人工终态只由 `confirmed` 一列表达，域内不设「人已采纳」这类第二值。
 GEN_STATUSES = ("draft", "candidate", "rejected")
 
+#: `af_books.doc_kind` 两值闭集（ADR 0019）：由同步行 `roles` 派生，`''` = 未声明（不受理梳理）。
+DOC_KIND_TEXTBOOK = "textbook"
+DOC_KIND_EXERCISE = "exercise"
+DOC_KINDS = (DOC_KIND_TEXTBOOK, DOC_KIND_EXERCISE)
+#: 根侧 `qt_books.roles` 中参与派生的取值；闭集外的值不猜（落未声明）。
+ROLE_TEXTBOOK = "textbook"
+ROLE_EXERCISES = ("exercises", "solutions")
+
+
+def derive_doc_kind(roles: Sequence[str]) -> str:
+    """同步行 `roles` → `af_books.doc_kind`（ADR 0019）：两义并存按教材，缺位即未声明。"""
+    values = {str(role) for role in roles}
+    if ROLE_TEXTBOOK in values:
+        return DOC_KIND_TEXTBOOK
+    if values.intersection(ROLE_EXERCISES):
+        return DOC_KIND_EXERCISE
+    return ""
+
 
 class AfBook(Base):
     """af_books：已验证书快照 + ingest/解析进度（本侧维护）。"""
@@ -79,6 +98,12 @@ class AfBook(Base):
     display_title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     authors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     file_path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    doc_kind: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="",
+        comment="书种类两值闭集（同步行 roles 派生，ADR 0019）；'' = 未声明",
+    )
     page_count: Mapped[int | None] = mapped_column(
         Integer, nullable=True, comment="全书页数（ingest 写入；页清单枚举域唯一来源）"
     )
@@ -94,6 +119,12 @@ class AfBook(Base):
     )
     last_parse_result: Mapped[str] = mapped_column(
         String(16), nullable=False, default="", comment="最近一次任务结局；'' = 从未有任务（ADR 0007）"
+    )
+    last_curation_result: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="",
+        comment="最近一次梳理批次结局（ADR 0019）；'' = 从未梳理。只由批次收尾与启动期归一写",
     )
     pages_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active_job_id: Mapped[str | None] = mapped_column(

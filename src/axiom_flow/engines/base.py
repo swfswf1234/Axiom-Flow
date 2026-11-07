@@ -154,6 +154,20 @@ class ChapterInput:
 
 
 @dataclass(frozen=True, slots=True)
+class RevisionContext:
+    """单点重写的上下文（`KA-48`）：人给的修改建议 ＋ 这一行当前的成品。
+
+    只属于**一次同步生成调用**，不随批次走：`note` 是屏上确认框里那句话（可空＝不改写法），
+    `previous` 是引擎要参照的底稿正文（章导读由盘上那一篇现读），`previous_kind` 只决定提示词里
+    这枚底稿叫什么（「现有总结」／「现有导读」）。事实与结论始终以正文材料为准。
+    """
+
+    note: str = ""
+    previous: str = ""
+    previous_kind: str = "总结"
+
+
+@dataclass(frozen=True, slots=True)
 class ChapterReply:
     """一章回复的两段（`KA-45`）：章级总结落 `summary`，章级导读走 `narrative` 写腿。
 
@@ -224,6 +238,50 @@ class TocVerifyAnswer:
     page_no: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class ExerciseItemInput:
+    """题腿的一道题：规则切出的边界（题号、页区间）与该题正文切片（`KA-53`）。
+
+    边界由 `normalize.exercise` 给，模型只读题面与解答的**内容**——分题权不在模型手里。
+    """
+
+    item_no: str
+    label: str
+    page_start: int
+    page_end: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExerciseInput:
+    """习题集一节的材料：章节标题、页区间与本节切出的题（`KA-53`）。"""
+
+    title: str
+    page_start: int
+    page_end: int
+    items: tuple[ExerciseItemInput, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExerciseDraft:
+    """模型读出的一道题：题面与解答两段（都可能为空串）。
+
+    空 `problem`＝这一题的题面没能分出（读面据此标 `source_missing`）；空 `solution`＝只读出题面
+    （`problem_only`）。未配到的解答另走 `unmatched_solutions` 披露，不在这里造一行假解答。
+    """
+
+    item_no: str
+    problem: str = ""
+    solution: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ExerciseReply:
+    """题腿的一节回复：按出题序的草稿数组。缺项由编排层按切分边界补齐并计数。"""
+
+    items: tuple[ExerciseDraft, ...] = ()
+
+
 @runtime_checkable
 class KnowledgeEngine(Protocol):
     """梳理引擎协议（文本类槽位）：目录三条腿 ＋ 知识点逐节调用。
@@ -260,4 +318,12 @@ class KnowledgeEngine(Protocol):
 
     def chapter(self, material: ChapterInput) -> ChapterReply:
         """一章的两段回复（`KA-45`）：章级总结与其导读。材料依赖其下各节的总结，故排在节腿之后。"""
+        ...
+
+    def exercise(self, section: ExerciseInput) -> ExerciseReply:
+        """习题集一节：按规则给出的题边界读题面与解答（`KA-53`）。
+
+        模型不得增删题号，也不得自行分题——只回给定的那些 `item_no`；某一题读不出题面或解答时
+        留空串，由编排层按三态披露（`source_missing`／`problem_only`）。
+        """
         ...

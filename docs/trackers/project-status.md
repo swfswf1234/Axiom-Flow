@@ -3,7 +3,7 @@
 设计状态：Accepted
 实现状态：In Progress
 确认状态：已确认（四表形状、两模块通路判据与 `af_kp.links` 越闸例外均已终审）
-最后更新：2026-11-01
+最后更新：2026-11-07
 关联代码：无（状态快照，不映射具体模块）
 关联测试：无
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -31,7 +31,7 @@ ARCH-001 聚合行）。**未交付**＝v1.0 线（PLAN-009 只立项
 
 | 能力 | 形态 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| 8902 HTTP 服务（`/api/v1`） | 8902 | 已服务化 | FastAPI；sync/CRUD/ingest/异步 parse-jobs/**jobs 列表**/pages/**页状态清单**/manifest/edit/chunks/**versions** 全端点（29 条公共契约＝运行时路由实测，另有默认不挂载的管理面一枚，见 `api.md` 端点总表），af_* 持久化；生命周期脚本 `scripts/axiom_flow_service.py`。 |
+| 8902 HTTP 服务（`/api/v1`） | 8902 | 已服务化 | FastAPI；sync/CRUD/ingest/异步 parse-jobs/**jobs 列表**/pages/**页状态清单**/manifest/edit/chunks/**versions** 全端点（30 条公共契约＝运行时路由实测，另有默认不挂载的管理面一枚，见 `api.md` 端点总表），af_* 持久化；生命周期脚本 `scripts/axiom_flow_service.py`。 |
 | 解析管线（ingest/engines/normalize/orchestrator） | Windows 编排层 | 部分验证 | 预处理（150 DPI 页图 + book.json/manifest）→ MinerU 适配（**全本默认按 56 页窗口串行分块提交**、逐页重解析）→ 统一 blocks + 质量信号 → 分块 → 落盘 `parsed/` + af_* 回写。**2026-09-20 真机已打通（小样止）**：单页 PNG 提交（真书第 3 页）、5 页合成小样整本提交、失败注入与 kill 续跑四类路径全部落库并产出 blocks/md/chunks/manifest，L1~L8 判据全绿（证据 `tmp/probes/live-bringup-20260920/`，结论见 PLAN-003「收尾执行登记」）；**2026-09-21 真机链路固化为冒烟用例** `tests/smoke/test_live_mineru_chain.py`（默认门禁 skip，`QED_SMOKE_LIVE=1` 真机绿），DEFECT-002 随之关闭。**遗留缺陷**：~~bbox 坐标空间误判~~ **2026-09-21 已修复关闭**（DEFECT-004：适配器以 `PageResult.bbox_space` 声明 0–1000 归一化空间，`scale_bbox` 按空间换算，真机锚点复验 5/5 块 IoU 0.9314 / 偏移 ≤7px；修复前落盘的 `parsed/` 产物坐标仍是错的，需重解析）；剩余缺陷：~~块类型字面值缺口（真机 `header`/`footer` 不在映射表 → 页眉页脚块静默丢弃）~~ **2026-09-21 已修复关闭**（DEFECT-005：新旧字面值并存入 `_TYPE_MAP`，未覆盖字面值以 `QualityMetrics.dropped_block_count`/`dropped_types` **可见丢弃**计数，`index` 只在存活块连续编号；11 例单元两轮红→绿（映射与计数 6、整页回退收紧 1）+ 冒烟零丢弃对账断言，真机复跑待 MinerU 起服务）；两项修复都不回溯历史产物。**2026-09-22 代表书抽查窗口（ARCH-009 口径）类型分布取证**：两本各 20 页抽样内实际出现 8 种 `BlockType`（`paragraph / formula / header / footer / page_number / image / table`，`caption` 仅 b11 1 块），`heading`/`list` 两键从未命中（取证事实、非缺陷），b05 另有 26 块按可见丢弃计数；同轮发现并同日修复第三处归一缺陷（ARCH-018，已关闭）：引擎 `equation` 条目的 `latex` 自带 `$$…$$`，归一层原样存储致下游二次包裹成 `$$$…$$$`（KaTeX 不可渲染）、`display` 恒 False；现由 `split_math_delimiters()` 剥定界符并据其决定 `display`（裸 LaTeX 契约成文于 parsing-pipeline「公式定界符契约」），真机同批 20 页复解析后公式段可解析率 87.79%/91.95% → **100%/100%**。同轮暴露 `ref_text`（参考文献条目）未入 `_TYPE_MAP` ⇒ b05 抽样页 26 块**可见丢弃**，登记为 ARCH-019（映射目标待裁决） |
 | 非公开管理面（一键清除） | 8902 `POST /api/v1/admin/purge` | 已实现（真机两形态演练通过） | PLAN-010 / ARCH-024（2026-09-23）：默认**不挂载**（未启用即 404、`/openapi.json` 不收录），启用需 `QED_ADMIN_ENABLED=1` + `QED_ADMIN_TOKEN`（启用无 token ⇒ 启动期拒绝起服）；`X-QED-Admin-Token` 逐字比对 （缺失与错值同 401）；`dry_run` 缺省只回清单、真删需逐字 `confirm:"PURGE"`；作用域可按书目或全项目，清 `af_*` 四表行（**含 parse 事件行**，只 DML）与书目录整目录（不裁剪空父级）；**书目录识别只看产物标记（`book.json`/`pages/`/`versions/`）、不看层数**——`domain_id`/`course_id` 为空时 pathlib 折叠空段 ⇒ 真实布局只有两层（判例 ARCH-026）；守卫次序 `confirm` → 作用域（形状＋书目落点）→ 在飞 → 删除，故脏落点判 400 而非 409；先磁盘后库、`failures` 可见、重跑幂等。8900/8903 **不得透传**。回归网 `TestAdminPurgeEndpoint` 14 例 + 真机留档 `tmp/probes/purge-20260923/`（探针两形态）与 `tmp/probes/purge-business-20260923/`（**2026-09-23 业务侧全项目真删 17/24/1015/2 + 4 目录、3.90 GB、零失败，随后 `books/sync` 回灌 17 本**）；运维口径见 [operations.md runbook](../guides/operations.md)。 |
 | 模型与引擎对接 | 引擎适配器 | 已实现 | **解析直连本地模型服务**（`QED_OCR_MODEL_URL` 5002，不经 8900 网关）；MinerU 落地，PaddleOCR-VL/qwen-vl 预留，槽位由 `engines/factory.py` 显式分派（未实现即 400，不自动兜底）；模型生命周期与调参归 QED-Engine，而**预处理与后处理两段恒在本仓库**（`ingest/` 与 `normalize/`，MI-15；见 [model-integration](../design/model-integration.md)，[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。 |
@@ -51,7 +51,7 @@ S2 按块进度）+ 单测 18 例常驻，并对「撤掉块级隔离」「取�
 前三次尝试的根因经直证更正为环境侧两条（WSL 全局 OOM 与 **WSL 空闲回收发行版**），判据与处置写入
 [operations.md](../guides/operations.md)。本行状态据此转「已实现（全本真机已证）」。 |
 | af_* 书目同步与块编辑 | MySQL `qed` 库 af_* 私有表族（四表） | 已实现（四表折叠代码与守护已落；真库整族重建已于 2026-10-22 W8 窗口执行） | 四表一次迁移（`src/axiom_flow/migrations/`）+ 仓储层；sync 幂等、edit upsert 覆盖；MySQL 隔离测试网见 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（`qed_test` 内只 DROP 自有 `af_*` + `alembic_version`，`qed` 只读未触达）。**2026-09-21 PLAN-004 实施**：迁移 `20260920_0002`（`af_books.active_job_id` 生效指针 + `af_pages` 主键与 `af_block_edits` 唯一键纳入 `job_id` + `af_parse_jobs.source_sha256/page_count` + `engine` 死默认值 DROP）与仓储/编排/API 读取面全部落地，S1~S6 在 SQLite + `tmp_path` 上取证。**真机 B→C→D 单窗口已于 2026-09-21 执行完毕**：`alembic_version = 20260920_0002`、D-1 re-ingest 486 页并作废 39 行 legacy（现 0 行）、D-2 单次重解析 20/20 后 `active_job_id = 86ab56ae2b6c`（**真机首次激活**）。**迁移 `20260921_0001`（PLAN-006 / ADR 0007：`af_books.last_parse_result` + `af_parse_jobs.failed_pages`）已落地并做 SQLite 5 例 + 真 MySQL `qed_test` 升降级往返；**2026-09-22 R2 窗口在真机 `qed` 上 apply 完成**（备份先行、`alembic_version` 现为 `20260921_0001`，回滚按 `tmp/backups/window-20260922/af_backup_20260922.sql` 还原而非有损 downgrade）**。**REQ-080 双侧闭环（2026-09-22）**：根侧四条确认全部接受（不做切换/回滚写入端点、旧版本清理属 D 类另立、人工编辑不随版本继承），版本布局契约自此冻结，PLAN-004 关闭。**2026-10-22 档 B 折叠（PLAN-024 W7）**：`af_parse_jobs`／`af_block_edits`／`af_page_regions` 三表退役为 `af_operations` 的事件行与意图行，仓储合成 `OperationRepository`（`upsert_edit`／`replace_page_intents`／`delete_intents_for_book`），迁移链重置为唯一 base `20261022_0001`——本行上半部 2026-09 的真机读数描述的是旧形状，按当时记录保留；新形状的真机 DDL 与空窗后果已在 2026-10-22 W8 窗口取证（两库 `VERDICT=PASS`、真库列数逐张等于本篇列清单、`books/sync` 17 本幂等回灌，读数见 [operations.md runbook](../guides/operations.md)） |
-| 知识点梳理与复核通路（本侧） | `af_kp` 三写者面 + `af_operations` 的 `kp` 流水行 + 共享表 `qed_llm_calls` 的追加账 | 已实现（本侧代码与守护全绿；真机小页区间一轮已达成，整本目录排在两处裁点之后） | 判据正本＝[knowledge-analysis.md](../design/knowledge-analysis.md) 的 `KA-1~KA-45`：受理门（生效版本取证 → 目录阶段先于知识点阶段 → 收尾单语句条件 UPDATE）、批次三态只由 `gen_status` 表达、人工终态的唯一判据位是 `confirmed`、未归档池的收敛只由人工挂父、启动期归一与让位分支、跨章次序边按**全节点集**做 DAG 校验。十条公共端点（`POST /kp-jobs`／批次进度／整册工作区／节点背书／确认撤回／总结重生成／长文读写两条腿／目录整批声明／只读导出）已由契约测试与运行时路由表逐行对账；`stage∈{full,outline,content}` 三值、目录行派生本节起止页与四值类型只读面可判。目录阶段＝模型判页＋逐页整理为正腿、确定性条目腿按页回落（`KA-35`／`KA-37`／`KA-39`），逐页落行消掉受理到落行之间的 404 窗口（`KA-40`）。调用账走根侧共享表：写入器只有一条 `INSERT`、不建 ORM、不进 `Base.metadata`、`prompt`/`response` 留 NULL、归因进 `meta`，形状闸在发出前抛；出站唯一＝8900 文字网关（`KA-22` 的 `qed-gateway` 已接入，起服即接通）。**仍未交付的一处**＝8900 侧的拉取式提升作业；「保留最新 2 批」的裁剪腿同样无写者。回归网＝`tests/unit/test_knowledge_pipeline.py`、`tests/unit/test_db_knowledge.py`、`tests/unit/test_db_llm_ledger.py`、`tests/contract/test_api_v1_contract.py`（真 MySQL 账面 4 例待 `QED_TEST_MYSQL=1` 窗口）。 |
+| 知识点梳理与复核通路（本侧） | `af_kp` 三写者面 + `af_operations` 的 `kp` 流水行 + 共享表 `qed_llm_calls` 的追加账 | 已实现（本侧代码与守护全绿；小页区间一轮与整本目录轮均已在 `qed_test` 达成，业务库待发令） | 判据正本＝[knowledge-analysis.md](../design/knowledge-analysis.md) 的 `KA-1~KA-57`：受理门（生效版本取证 → 目录阶段先于知识点阶段 → 收尾单语句条件 UPDATE）、批次三态只由 `gen_status` 表达、人工终态的唯一判据位是 `confirmed`、未归档池的收敛只由人工挂父、启动期归一与让位分支、跨章次序边按**全节点集**做 DAG 校验。十一条公共端点（`POST /kp-jobs`／批次进度／整册工作区／节点背书／确认撤回／总结重生成／长文写腿／长文读腿／章导读生成／目录整批声明／只读导出）已由契约测试与运行时路由表逐行对账；`stage∈{full,outline,content,exercise}` 四值并与书种类按闭集配对（教材四值全开、习题集只开 `outline`／`exercise`、未声明种类一律 422），目录行派生本节起止页与四值类型只读面可判。详情读数一处成形、三面共用（`KA-57`）：工作区行与单行回显同一投影，导出面只加「已确认」过滤与父先于子排序；点腿带 `must_master`／`key_definitions` 两枚学习读数，跨书挂章带 `source_book_id`／`source_pages`（`KA-53`）。教材与习题集两条习题腿均已交付（`KA-53`／`KA-56`），书目读面新增 `doc_kind`／`last_curation_result`／`curation_in_flight` 三枚（[ADR 0019](../adr/0019-curation-outcome-and-book-kind-columns.md)）。目录阶段＝模型判页＋逐页整理为正腿、确定性条目腿按页回落（`KA-35`／`KA-37`／`KA-39`），逐页落行消掉受理到落行之间的 404 窗口（`KA-40`）。调用账走根侧共享表：写入器只有一条 `INSERT`、不建 ORM、不进 `Base.metadata`、`prompt`/`response` 留 NULL、归因进 `meta`，形状闸在发出前抛；出站唯一＝8900 文字网关（`KA-22` 的 `qed-gateway` 已接入，起服即接通）。**仍未交付的一处**＝8900 侧的拉取式提升作业；「保留最新 2 批」的裁剪腿同样无写者。回归网＝`tests/unit/test_knowledge_pipeline.py`、`tests/unit/test_db_knowledge.py`、`tests/unit/test_db_llm_ledger.py`、`tests/contract/test_api_v1_contract.py`（真 MySQL 账面 4 例待 `QED_TEST_MYSQL=1` 窗口）。 |
 | 分块（blocks → chunks） | `chunks.json` + `GET /chunks` | 已实现（真机抽样取证完成） | 派生文件、不入库、可重建；参数（max_chars/overlap_blocks）可经端点重算。**REQ-080 归属约定成文并经真机验证**：`chunks.json` 每个解析版本一份、落 `versions/<job_id>/`（真机 `versions/86ab56ae2b6c/chunks.json` 存在），`GET /chunks` 读生效版本，**根视图不含 `chunks.json`**（实测 `root_view_has_no_chunks=True`）。**2026-09-21 抽样完整性取证（PLAN-002 标准 7）**：`tmp/live_check_chunk_formula_integrity.py` 对生效版本 20 页 / 159 原始块 / 17 chunk 跑四项判据全 PASS——18 个 formula 块按 `$$…$$`/`$…$` 规则整块出现在 chunk 文本中、逐 chunk `$` 定界符平衡、`block_refs` 零悬空、非噪声块 100% 覆盖；**反向判据**在临时副本上人为腰斩/悬空 ref/整删 chunk 全部变红；留档 `tmp/probes/chunk-integrity-20260921/C1_chunks.json`。规则本身由 `tests/unit/test_chunking.py::test_formula_and_table_never_split` 在默认门禁常驻守护。**2026-09-22 R2 窗口复跑**：ARCH-018 修复后两本代表书各 20 页的生效版本 chunk 完整性检查 **PASS**（公式整块出现、溯源无悬空、非噪声块全覆盖）；同轮实证一条**判据边界**：修复前的 b11 版本 `chunks.json` 含 126 处 `$$$` 而四项判据仍 PASS（留档 `tmp/probes/window-20260922/C8_chunk_prefix_b11.json`）——腰斩判据看块边界与 `$` 奇偶，不看定界符包裹层级，故公式渲染前的定界符契约由 `normalize/` 单测 + 代表书取证把住 |
 | 套1 代表书验收 | 教程 Rudin 中译 + 习题集吉米多维奇 | 抽查口径 + 真实根全本已证（ARCH-009/019 已关闭；业务侧重生随 2026-09-23 真删后当晚重建达成，ARCH-011 行已于 2026-09-30 关闭） | ARCH-009；**2026-09-22 R2 窗口按用户裁决的抽查口径判定**（每本 20 页＝首 3 + 中 7 + 尾 5 + 公式密集 5；两本 PDF 均无文本层，密集页按**墨度**排序选页）：b05《数学分析原理》317 页 / b11《吉米多维奇》406 页，逐条判定 ①~⑤ PASS、公式段可解析率修复后 **100% / 100%**（判据为程序化结构可解析 + 人工留档，不引入 KaTeX 渲染依赖）、chunk 完整性两版本 PASS、`$$$` 归零；⑥类型分布取证未达成 ⇒ **ARCH-019**（`ref_text` 26 块可见丢弃）。**当时未做全量（2026-09-22 读数，已被后续两轮取代）**：b05 生效版本是混合版本（20 页新 / 292 页继承修复前基线，跨旧页 chunk 仍有 `$$$` 485/525），其 5 个缺页与 `last_parse_result=failed` 未处理——全量重生先并入 **PLAN-007**（W6 全本复测，探针根达成），该混合版本又随 2026-09-23 全项目真删物理清除、当晚重建窗口在真实数据根跑出 b05 `012d637df1eb` 317/317 全 `parsed` 且激活（见本文件二十/二十一轮）⇒ 混合版本与 5 个缺页由此不存在。**容量限制已在本轮消除（待真机复测）**：全本单任务的 600s 单墙由 PLAN-007 的按页窗口分块提交根治
 （见 orchestrator 行 REQ-086），W0~W7 全部落地并**已随 PLAN-007 关闭（2026-09-22 收口轮）**：**尝试 4 在探针根上把 b05 全本 317 页一次跑通并激活**
@@ -62,6 +62,43 @@ ARCH-009（验收）与 ARCH-019（`ref_text` 映射）**同批关闭**；**当�
 
 ## 当前主线
 
+- **大任务四收尾（2026-11-07）＝接口与链路统一关闭归档**：PLAN-028 W12／W13／W15 交付——`api.md` 受理面按运行时实序重写
+  （七道单门 → 种类×阶段／重跑组合／目标教材三类组合门，`only_failed`／`target_book_id`／`retry_node_ids` 各自组合面成行），
+  工作区与导出面 JSON 补齐 `exercise` 与 `source_book_id`／`source_pages`；契约网新增导出同投影一枚与全链回归三枚
+  （同一 `GET /books/{id}` 三阶段读数、教材轮溯源、习题集行回读），④ 类端点表 11 行与运行时路由逐行对账（公共端点 30 条）。
+  `overview.md` 能力行与 `knowledge-analysis.md` 验收判据 24／25 同批刷新，`ARCH-040` 随之关闭（completed.md 2026-11-07 行）。
+  W15 出站清点＝现有端点的响应字段已覆盖 8900／8903 所需清单，`roles` 到货由 REQ-155 承载、人工建点（N3）未裁，故不新增出站行。
+  全量 `pytest tests -q` 与 `ruff check src tests scripts` 全绿（读数见本轮汇报）；PLAN-028 仍 `In Progress`，在册剩余＝
+  W14 真库加列窗口（D 类待发令）与 C 类提示词优化（降耗时／提准确），W1~W18 其余工作项全部交付。
+- **大任务三收尾（2026-11-07）＝知识点详情关闭归档**：PLAN-028 W11 交付——点腿除节总结外产出「要掌握什么」
+  （`must_master`）与关键定义清单（`key_definitions`），净化后落 `meta` 两枚闭集键；`KpNodeOut` 与导出面
+  同一投影透传、坏值归空表；章侧沿用 `chapter_summary`（本章学习内容）与 `narrative`（导读）。零新列、
+  零 DDL、零新端点，确认门未放宽。`ARCH-039` 随之关闭（completed.md 2026-11-07 行）。全量
+  `pytest tests -q` 1406 passed／18 skipped、`ruff` 全绿；Q5 已裁甲，Q3／Q6 仍待裁。
+- **大任务二与重要任务二收尾（2026-11-07）＝内容解析与习题集题目腿关闭归档**：PLAN-028 W6~W8（四链路分流、教材习题按章与题号成点层行、按失败节点重跑、切片不落盘而读面派生）与 W9／W10／W16／W17（习题集题腿与跨书挂章、章级索引与 `exercise` 读面、选中题行重解析）全部交付；`ARCH-038`／`ARCH-041` 随之关闭（completed.md 2026-11-07 两行）。全量 `pytest tests -q` 1397 passed／18 skipped、`ruff check src tests` 全绿。PLAN-028 仍 `In Progress`，在册剩余＝W11~W13、W15 与 W14 真库窗口（D 类待发令）。W18 提速已落地＝习题集题腿由「模型直接抄题面与解答」改为「模型只确认解答起始行、程序按原文切片」（`KA-56`），模型输出量由 O(本节正文) 降为 O(本题数)。
+- **大任务一收尾（2026-11-06）＝目录探索（只教材）关闭归档**：PLAN-028 W5 交付面（四值 `stage` 闭集、种类 × 阶段两道门、
+  目录重试＝同范围重发）在 `qed_test` 做整本 dry-run 验证——`mathanalysis-b05` 317 页 `stage=outline` 批次
+  `afkp-b79732ef1000` 856.4 s 跑完、四次模型调用全成功、116 行目录、零失败节，书目读面 `doc_kind=textbook`／
+  `last_curation_result=completed`／`curation_in_flight=false`；未声明种类与习题集×`outline` 两枚 422 且零写入；
+  迁移 `20261022_0001`→`20261106_0001` 在 `qed_test` 升→降→升往返（22→24→22→24 列）。`ARCH-037` 随之关闭
+  （completed.md 2026-11-06 行）；PLAN-028 仍 `In Progress`，在册剩余＝W6~W13、W15 与 W14 真库窗口（D 类待发令）。
+  Q2／Q3／Q5／Q6 四项待裁、REQ-155 仍等根侧 8900 补 `roles`。
+- **主攻窗口规划（2026-11-01）＝PLAN-027 立项**（用户令「确认码侧欠账是否登记，并把 PLAN-025 W9／PLAN-026 W10
+  后半条＝同一枚真机梳理窗口列一个收口计划」）：**本轮零代码改动**，交付＝
+  [整本真机梳理窗口与两壳收口](../plans/2026-11-01-kp-real-machine-window-closeout.md)（任务类型 D、`In Progress`）
+  ＋其 todo 镜像行，两枚上游壳的 W9／W10 后半条行与「关闭与归档」节各加一枚指向它的移交指针（原叙述一字未删）。
+  **登记判定**＝`R12~R17` 已在 PLAN-025 壳的结构请求登记节、`R7~R11` 在 PLAN-026 壳在册，按进度单源与 ADR 0018
+  （「任务」列禁词含 `待裁`）**不为任何一枚 R 项开 todo 支线行**，改由 PLAN-027 的闸门表把它们排进窗口：
+  **A 档**（窗口前必答／体检）＝`R7`（出站三键的 ADR＋运维口径＋停用路径实测可达，它正是本案唯一的行为回滚形态）、
+  `R11`（`KA-5` 目录阶段取材批文）、`R17`（窗口前重复跑定位一次）；`R12` 只阻 `full` 对照轮；
+  **B 档**（窗口内取证）＝`R13`／`R14`／`R16`；**C 档**（窗口后另批）＝`R15`。
+  工作项＝W1 闸门交裁 → W2 R7 落地 → W3 R11 批文对齐 → W4 窗口前体检与三面指纹 → W5 备份与回滚必答件 →
+  W6 `stage=outline` 整本只目录轮 → W7 人工审目录并同轮取改名与重排的两侧读数 → W8 `stage=content` 只补内容轮
+  并取调用账 `step` 实测值域 → W9 `full` 对照轮（是否单独批待裁）→ W10 两壳关闭判定与台账六步收口；
+  每轮发令前的冻结件（假设／样本与哈希／预算上限／采纳门槛）已按任务生命周期成表，**缺一律不发**。
+  **在册剩余**＝PLAN-027 W1（把闸门档位交给用户逐条出裁）与窗口本身（D 类，逐次批准，本轮未发令）；
+  PLAN-025／PLAN-026 的关闭条件按该壳 W10 的读数推进。门禁 1220 passed／18 skipped ＋ `ruff` All checks passed，
+  治理守护 `test_plan_governance`＋`test_tracker_governance` 15 passed。
 - **主攻审理（2026-11-01）＝PLAN-025 W1~W8 ＋ PLAN-026 W1~W25 的合流树整体审理**（用户令「详细审理这轮改动、
   梳理流程和文档、没问题就提交」）**审理结论＝树可提交、通路未收口**：合流树门禁 **1220 passed／18 skipped**
   （文档随步后复跑 49.54s，改前一次读数 61.51s；两批各自末次读数 921／1210 都不再是现值）＋ `ruff check src tests scripts`

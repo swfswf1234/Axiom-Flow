@@ -34,7 +34,7 @@ from axiom_flow.orchestrator.knowledge import (
     run_knowledge_job,
 )
 from axiom_flow.orchestrator.pipeline import DEFAULT_WINDOW_SIZE, ParseOutcome, run_parse_job
-from axiom_flow.schemas import JobStatus, LastParseResult, ParseStatus
+from axiom_flow.schemas import JobStatus, LastCurationResult, LastParseResult, ParseStatus
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +201,10 @@ class JobRunner:
                     page_start=acceptance.page_start,
                     page_end=acceptance.page_end,
                     stage=acceptance.stage,
+                    only_failed=acceptance.only_failed,
                     error="内部错误（详见服务日志）",
-                )
+                ),
+                curation_result=LastCurationResult.FAILED,
             )
         finally:
             # 撤凭据发在关引擎之前（`KA-40`）：`close` 是「这批已经结束」的信号点，先撤再关——
@@ -212,10 +214,16 @@ class JobRunner:
             if callable(close):
                 close()
 
-    def _record_kp_batch(self, row: KpBatchRow) -> None:
-        """流水单独一个会话写：执行批次的会话此刻要么已提交要么正回滚，失败批次的账面不能跟着消失。"""
+    def _record_kp_batch(self, row: KpBatchRow, *, curation_result: str | None = None) -> None:
+        """流水单独一个会话写：执行批次的会话此刻要么已提交要么正回滚，失败批次的账面不能跟着消失。
+
+        `curation_result` 给出时在同一提交里回写书目结局（`KA-54` ②）：成功批次的结局已由执行体
+        在收尾的同一提交里写掉（①），这里只补异常腿——两笔账不能一笔落地一笔落空。
+        """
         with self._session_factory() as session:
             OperationRepository(session).create_kp_batch(row)
+            if curation_result is not None:
+                BookRepository(session).mark_curation_result(row.book_id, result=curation_result)
             session.commit()
 
     def reconcile_on_startup(self) -> list[tuple[str, str]]:

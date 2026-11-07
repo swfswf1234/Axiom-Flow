@@ -57,12 +57,15 @@ from axiom_flow.normalize.toc import TOC_ROLE_KNOWLEDGE, node_type_of, node_type
 from axiom_flow.orchestrator import MODEL_UNAVAILABLE, JobRunner, rebuild_chunks
 from axiom_flow.orchestrator.jobs import KpLedgerWiringError
 from axiom_flow.orchestrator.knowledge import (
+    ExerciseReading,
     KpGateError,
     SpanRow,
     accept_kp_job,
     anchor_review_flags,
+    exercise_workspace,
     order_for_export,
     read_narrative,
+    regenerate_chapter_narrative,
     regenerate_section_summary,
     section_spans_of,
     unconfirmed_anchor_flags,
@@ -88,11 +91,15 @@ from axiom_flow.schemas import (
     JobStatus,
     KpConfirmIn,
     KpConfirmOut,
+    KpExerciseItemOut,
+    KpExerciseOut,
     KpExportOut,
     KpJobAccepted,
     KpJobCreate,
     KpJobProgressOut,
+    KpKeyDefinition,
     KpLedgerOut,
+    KpNarrativeGenerateIn,
     KpNarrativeOut,
     KpNarrativeWriteIn,
     KpNodeOut,
@@ -121,7 +128,8 @@ from axiom_flow.schemas import (
 SafeBookId = Annotated[str, PathParam(pattern=SAFE_SEGMENT_PATTERN)]
 
 
-def _book_out(book: AfBook) -> BookOut:
+def _book_out(book: AfBook, *, curation_in_flight: bool = False) -> BookOut:
+    """书目读面：`curation_in_flight` 是读时派生的第三段（`KA-55`），由调用方按库内 `draft` 行给出。"""
     return BookOut(
         book_id=book.book_id,
         domain_id=book.domain_id,
@@ -139,6 +147,9 @@ def _book_out(book: AfBook) -> BookOut:
         parse_status=book.parse_status,
         pages_done=book.pages_done,
         last_parse_result=book.last_parse_result,
+        doc_kind=book.doc_kind,
+        last_curation_result=book.last_curation_result,
+        curation_in_flight=curation_in_flight,
         active_job_id=book.active_job_id,
         notes=book.notes,
     )
@@ -224,6 +235,7 @@ def _kp_page_spans(rows: Sequence[AfKp], last_page: int | None) -> dict[str, tup
                 page=pages[0],
                 depth=row.depth or 1,
                 toc_role=str((row.meta or {}).get("toc_role") or TOC_ROLE_KNOWLEDGE),
+                toc_kind=str((row.meta or {}).get("toc_kind") or ""),
             )
         )
     if not items:
@@ -255,7 +267,8 @@ def _kp_node_out(
 
     不发 `norm_key` 与整槽 `meta`：前者是去重用的派生值（冲突由 422 的点名承载），后者是禁进 WHERE
     的扩展槽（`database-design.md` 的 `meta` 列契约）。两枚身份位 `toc_role`／`toc_kind` 是例外，
-    从槽里逐字取出带出（`KA-39`）——屏上要标「非知识点」，靠的就是它们。
+    从槽里逐字取出带出（`KA-39`）——屏上要标「非知识点」，靠的就是它们。点行详情的两枚读数
+    `must_master`／`key_definitions`（`KA-57`）走同一条「逐键取出」的口径，槽里的坏值归空表。
     `page_start`／`page_end` 同样是读时派生（`KA-42`）：调用方手里有整册行时传 `spans`，没有则目录行
     两键为空——单行回显（背书腿）不为了两枚派生键去多读一整册。
     `node_type` 是第三枚派生键（`KA-44`）：四值类型要先看祖先的 `toc_kind` 才判得出习题的子行，
@@ -265,6 +278,24 @@ def _kp_node_out(
     page_start, page_end = _page_range_of(node, spans)
     toc_role = str(meta.get("toc_role") or TOC_ROLE_KNOWLEDGE)
     toc_kind = str(meta.get("toc_kind") or "")
+    raw_mastery = meta.get("must_master")
+    must_master = (
+        [item for item in raw_mastery if isinstance(item, str) and item.strip()]
+        if isinstance(raw_mastery, list)
+        else []
+    )
+    raw_definitions = meta.get("key_definitions")
+    key_definitions = (
+        [
+            KpKeyDefinition(
+                term=str(item.get("term") or ""), definition=str(item.get("definition") or "")
+            )
+            for item in raw_definitions
+            if isinstance(item, dict) and item.get("term") and item.get("definition")
+        ]
+        if isinstance(raw_definitions, list)
+        else []
+    )
     node_type = (node_types or {}).get(node.node_id) or node_type_of(
         depth=node.depth, toc_role=toc_role, toc_kind=toc_kind
     )
@@ -281,6 +312,8 @@ def _kp_node_out(
         role=node.role or "",
         type=node.type or "",
         summary=node.summary or "",
+        must_master=must_master,
+        key_definitions=key_definitions,
         links=list(node.links or []),
         anchors=list(node.anchors or []),
         page_start=page_start,
@@ -291,10 +324,32 @@ def _kp_node_out(
         model_ref=node.model_ref or "",
         toc_role=toc_role,
         toc_kind=toc_kind,
+        source_book_id=str(meta.get("source_book_id") or ""),
+        source_pages=[
+            int(page) for page in (meta.get("source_pages") or []) if isinstance(page, int)
+        ],
         confirmed=node.confirmed,
         rev=node.rev,
         created_at=node.created_at,
         updated_at=node.updated_at,
+    )
+
+
+def _kp_exercise_out(reading: ExerciseReading | None) -> KpExerciseOut | None:
+    """习题读面的响应装配（`KA-53`）：只搬服务端派生好的读数，屏侧不重算完成与状态。
+
+    教材的共享主表永不含习题行，服务端对它给 `None`——这里原样透传，不拿空形状冒充「本书无题」。
+    """
+    if reading is None:
+        return None
+    return KpExerciseOut(
+        kind=reading.kind,  # type: ignore[arg-type]
+        target_book_id=reading.target_book_id,
+        items=[KpExerciseItemOut(**item) for item in reading.items],
+        packs=reading.packs,
+        pending_reparse=reading.pending_reparse,
+        unmatched=[dict(item) for item in reading.unmatched],
+        done=reading.done,
     )
 
 
@@ -528,9 +583,13 @@ def create_app(
 
     @app.get("/api/v1/books", response_model=list[BookOut])
     def list_books(session: SessionDep) -> list[BookOut]:
-        """书目列表：只读 af_books（REQ-097：文件系统不再是书目来源）。"""
+        """书目列表：只读 af_books（REQ-097：文件系统不再是书目来源）。
+
+        「开始梳理」由一条分组查询一次取全（`KA-55`），不为每本书各查一次 `af_kp`。
+        """
         rows = BookRepository(session).list_books()
-        return [_book_out(row) for row in rows]
+        curating = KpRepository(session).curating_book_ids()
+        return [_book_out(row, curation_in_flight=row.book_id in curating) for row in rows]
 
     @app.get("/api/v1/books/{book_id}", response_model=BookOut)
     def get_book(book_id: SafeBookId, session: SessionDep) -> BookOut:
@@ -538,7 +597,7 @@ def create_app(
         book = BookRepository(session).get(book_id)
         if book is None:
             raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
-        return _book_out(book)
+        return _book_out(book, curation_in_flight=KpRepository(session).find_draft_batch(book_id) is not None)
 
     @app.patch("/api/v1/books/{book_id}", response_model=BookOut)
     def update_book(book_id: SafeBookId, payload: BookUpdate, session: SessionDep) -> BookOut:
@@ -548,7 +607,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
         book = repo.get(book_id)
         assert book is not None
-        return _book_out(book)
+        return _book_out(book, curation_in_flight=KpRepository(session).find_draft_batch(book_id) is not None)
 
     @app.delete("/api/v1/books/{book_id}")
     def delete_book(book_id: SafeBookId, session: SessionDep, purge: bool = False) -> dict:
@@ -589,16 +648,22 @@ def create_app(
                 display_title=item.display_title,
                 authors=[author.model_dump() for author in item.authors],
                 file_path=item.file_path,
+                roles=list(item.roles),
             )
             for item in items
         ]
         repo = BookRepository(session)
         result = repo.upsert_many(rows)
         books = [repo.get(item.book_id) for item in items]
+        curating = KpRepository(session).curating_book_ids()
         return SyncResponse(
             synced=result.synced,
             updated=result.updated,
-            books=[_book_out(book) for book in books if book is not None],
+            books=[
+                _book_out(book, curation_in_flight=book.book_id in curating)
+                for book in books
+                if book is not None
+            ],
         )
 
     @app.post("/api/v1/books/{book_id}/ingest", response_model=IngestResponse)
@@ -1084,6 +1149,9 @@ def create_app(
                 page_end=payload.page_end,
                 review_note=payload.review_note,
                 stage=payload.stage,
+                only_failed=payload.only_failed,
+                target_book_id=payload.target_book_id,
+                exercise_retry_node_ids=tuple(payload.retry_node_ids),
             )
         except KpGateError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -1161,6 +1229,9 @@ def create_app(
                 AnchorReviewOut(node_id=flag.node_id, page=flag.page, reason=flag.reason)
                 for flag in flags
             ],
+            exercise=_kp_exercise_out(
+                exercise_workspace(session, data_root=data_root, book=book)
+            ),
         )
 
     @app.patch("/api/v1/kp/nodes/{node_id}", response_model=KpNodeOut)
@@ -1304,11 +1375,38 @@ def create_app(
             exists=content is not None,
         )
 
+    @app.post("/api/v1/kp/nodes/{node_id}/narrative/generate", response_model=KpNarrativeOut)
+    def generate_kp_narrative(
+        node_id: str, payload: KpNarrativeGenerateIn, session: SessionDep
+    ) -> KpNarrativeOut:
+        """章导读单点生成（`KA-47`）：梳理屏「一键生成／重新生成」的导读腿，同步等一次章级模型调用。
+
+        取材与提示词复用内容批次章腿（`KA-45` 的三块材料），写面只碰导读两处（正文落盘＋指针列），
+        **覆盖**已有导读——与内容批次「已有就不覆盖」的分界是发起人：这里是人对这一章显式要求重写。
+        判定序、在飞批次闸与长超时与单点重生成同族；本层只把拒绝原样搬给调用方，不重判。
+        """
+        _, engine = _kp_text_engine()
+        _probe_model_service(engine)
+        try:
+            node, content = regenerate_chapter_narrative(
+                session,
+                data_root=data_root,
+                engine=engine,
+                node_id=node_id,
+                if_rev=payload.if_rev,
+                revision_note=payload.revision_note,
+            )
+        except KpGateError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return _kp_narrative_out(
+            node, pointer=node.narrative_ref, content=content, exists=True
+        )
+
     @app.post("/api/v1/kp/nodes/{node_id}/summary", response_model=KpNodeOut)
     def regenerate_kp_summary(
         node_id: str, payload: KpSummaryRegenIn, session: SessionDep
     ) -> KpNodeOut:
-        """单点重生成（`KA-45`）：知识点详情面「重新生成总结」的落点，覆盖该行的 `summary`。
+        """单点重生成（`KA-45`）：梳理屏「一键生成／重新生成」的总结腿，覆盖该行的 `summary`。
 
         这是一条**同步**腿（一次百秒级的模型调用），不进 `KA-4` 的单 worker 队列：编排层因此在发问
         之前挡同书在飞的批次（409），免得两路并跑把本机模型服务顶到超时。人工发起的写不遵守
@@ -1324,6 +1422,7 @@ def create_app(
                 engine=engine,
                 node_id=node_id,
                 if_rev=payload.if_rev,
+                revision_note=payload.revision_note,
             )
         except KpGateError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

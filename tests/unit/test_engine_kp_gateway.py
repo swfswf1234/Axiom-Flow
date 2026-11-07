@@ -20,9 +20,12 @@ import pytest
 from axiom_flow.engines.base import (
     ChapterInput,
     EngineError,
+    ExerciseInput,
+    ExerciseItemInput,
     PageBody,
     PageSample,
     ReferencePage,
+    RevisionContext,
     SectionInput,
     TocVerifyItem,
 )
@@ -120,6 +123,52 @@ class TestReviewNoteGoesIntoThePrompt:
         assert "人工评审意见" not in sent[0]["prompt"]
 
 
+class TestRevisionContextGoesIntoThePrompt:
+    """`KA-48` 单点重写：人给的修改建议与当前成品只进**这一次调用**的 prompt，不改取材也不进账目维。"""
+
+    def _bound(self, sent: list[dict], revision: RevisionContext) -> KpGatewayEngine:
+        reply = json.dumps({"section_summary": "新的总结", "points": []}, ensure_ascii=False)
+        return KpGatewayEngine(GW, client=_client(_capturing(sent, reply=reply)), timeout=5.0).bind_batch(
+            book_id="mathanalysis-b05", gen_batch="regen-afkp-1", revision=revision
+        )
+
+    def test_the_note_and_the_previous_summary_reach_the_points_prompt(self):
+        sent: list[dict] = []
+        revision = RevisionContext(note="参照已有内容，做简化和通俗化处理", previous="旧的节总结。")
+
+        self._bound(sent, revision).points(_section())
+
+        prompt = sent[0]["prompt"]
+        assert "本次修改建议" in prompt
+        assert revision.note in prompt
+        assert "现有总结" in prompt
+        assert revision.previous in prompt
+        assert "revision" not in sent[0]["meta"]
+
+    def test_the_note_and_the_previous_chapter_text_reach_the_chapter_prompt(self):
+        sent: list[dict] = []
+        revision = RevisionContext(note="更简短一些", previous="旧的章导读。", previous_kind="导读")
+        engine = KpGatewayEngine(
+            GW,
+            client=_client(_capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}')),
+            timeout=5.0,
+        ).bind_batch(book_id="mathanalysis-b05", gen_batch="regen-afkp-ch1", revision=revision)
+
+        engine.chapter(_material())
+
+        prompt = sent[0]["prompt"]
+        assert "本次修改建议" in prompt and revision.note in prompt
+        assert "现有导读" in prompt and revision.previous in prompt
+
+    def test_without_a_revision_the_prompt_keeps_its_old_shape(self):
+        """内容批次与首次生成不带重写上下文：提示词里不留空标题。"""
+        sent: list[dict] = []
+        _engine(_capturing(sent, reply='{"section_summary": "甲", "points": []}')).points(_section())
+
+        assert "本次修改建议" not in sent[0]["prompt"]
+        assert "现有总结" not in sent[0]["prompt"]
+
+
 class TestOutboundShape:
     """出站点与归因三键：只出 8900 那一个门，且每一条调用都可指认。"""
 
@@ -196,6 +245,52 @@ class TestOutboundShape:
         engine = KpGatewayEngine(GW, client=_client(handler), timeout=5.0)
         assert engine.health() is True
         assert seen == ["/api/v1/health"]
+
+
+class TestPointsDetailPrompt:
+    """`KA-57`：点腿除总结外还要两枚详情读数——「要掌握什么」与关键定义清单。
+
+    提示词给出键名、条数与字数上限（先说要什么），解析侧原样透传这两枚键给编排层净化；
+    适配层不在这里做逐条校验，坏条目归 `_point_row` 丢弃。
+    """
+
+    def test_the_prompt_asks_for_the_two_detail_reads_with_bounds(self):
+        sent: list[dict] = []
+        _engine(_capturing(sent)).points(_section())
+
+        prompt = sent[0]["prompt"]
+        assert "must_master" in prompt
+        assert "key_definitions" in prompt
+        assert "2~4" in prompt, "掌握要点的条数上限写在提示词里"
+        assert "2~6" in prompt, "关键定义的条数上限写在提示词里"
+        assert "term" in prompt and "definition" in prompt
+
+    def test_the_chapter_prompt_names_the_summary_as_learning_content(self):
+        """章侧不加新键（`KA-57`）：`chapter_summary` 就是「本章学习内容」，措辞要写明。"""
+        sent: list[dict] = []
+        _engine(
+            _capturing(sent, '{"chapter_summary": "整章一段话。", "chapter_narrative": "导读。"}')
+        ).chapter(
+            ChapterInput(
+                parent_id="afkp-ch-1",
+                title="第2章 极限",
+                page_start=5,
+                page_end=8,
+                intro_pages=(PageBody(page_no=5, markdown="章首正文。"),),
+                title_pages=(),
+                point_summaries=(),
+            )
+        )
+
+        assert "本章学习内容" in sent[0]["prompt"]
+
+    def test_the_two_reads_pass_through_untouched(self):
+        draft = {
+            **_POINTS_REPLY[0],
+            "must_master": ["能写出 ε-N 定义", "会用定义证收敛"],
+            "key_definitions": [{"term": "数列极限", "definition": "存在 L 使任意 ε 有 N。"}],
+        }
+        assert _engine(_reply([draft])).points(_section()).drafts == [draft]
 
 
 class TestReplyParsing:
@@ -735,3 +830,89 @@ class TestTruncatedReplyTolerance:
 
         with pytest.raises(EngineError):
             engine.chapter(_material())
+
+
+def _exercise_section() -> ExerciseInput:
+    return ExerciseInput(
+        title="习题 1.1",
+        page_start=4,
+        page_end=4,
+        items=(
+            ExerciseItemInput(
+                item_no="1",
+                label="1.",
+                page_start=4,
+                page_end=4,
+                text="1. 求极限 lim(x→0) sin x / x。\n小问：说明理由。\n解：由洛必达法则得 1。\n所以极限为 1。",
+            ),
+            ExerciseItemInput(
+                item_no="2",
+                label="2.",
+                page_start=4,
+                page_end=4,
+                text="2. 求证：任意实数的平方非负。",
+            ),
+        ),
+    )
+
+
+def _exercise_reply(items: list[dict]):
+    payload = json.dumps({"items": items}, ensure_ascii=False)
+    return lambda request: httpx.Response(200, json={"reply": payload, "success": True, "error": ""})
+
+
+class TestExerciseSplitPointReply:
+    """`KA-56`：题面／解答不由模型抄录——模型只给解答起始行号，正文由适配层从输入原文切出。"""
+
+    def test_the_prompt_numbers_every_line_and_asks_only_for_the_split_point(self):
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply=json.dumps({"items": []}, ensure_ascii=False)))
+
+        engine.exercise(_exercise_section())
+
+        prompt = sent[0]["prompt"]
+        assert "solution_start" in prompt
+        assert "  1| 1. 求极限 lim(x→0) sin x / x。" in prompt
+        assert "  3| 解：由洛必达法则得 1。" in prompt
+        assert '"problem"' not in prompt, "输出形状不再含题面／解答正文"
+
+    def test_the_two_segments_are_sliced_verbatim_from_the_source(self):
+        engine = _engine(
+            _exercise_reply(
+                [{"item_no": "【1】", "solution_start": 3}, {"item_no": "2", "solution_start": 0}]
+            )
+        )
+
+        replied = engine.exercise(_exercise_section())
+
+        assert [(draft.item_no, draft.problem, draft.solution) for draft in replied.items] == [
+            (
+                "1",
+                "1. 求极限 lim(x→0) sin x / x。\n小问：说明理由。",
+                "解：由洛必达法则得 1。\n所以极限为 1。",
+            ),
+            ("2", "2. 求证：任意实数的平方非负。", ""),
+        ]
+
+    def test_a_boundary_at_the_first_line_makes_the_whole_item_a_solution(self):
+        engine = _engine(_exercise_reply([{"item_no": "1", "solution_start": 1}]))
+
+        draft = engine.exercise(_exercise_section()).items[0]
+
+        assert draft.problem == ""
+        assert draft.solution == _exercise_section().items[0].text
+
+    def test_an_unsure_or_out_of_range_boundary_is_left_empty_not_guessed(self):
+        for boundary in ("3", -1, 99, None):
+            engine = _engine(_exercise_reply([{"item_no": "1", "solution_start": boundary}]))
+            draft = engine.exercise(_exercise_section()).items[0]
+            assert (draft.problem, draft.solution) == ("", ""), boundary
+
+    def test_an_old_transcription_object_is_not_taken_as_content(self):
+        engine = _engine(
+            _exercise_reply([{"item_no": "1", "problem": "抄来的题面", "solution": "抄来的解答"}])
+        )
+
+        draft = engine.exercise(_exercise_section()).items[0]
+
+        assert (draft.problem, draft.solution) == ("", "")

@@ -1,6 +1,6 @@
 """
-模块职责：守护 `af_*` 表族的**单一 base 迁移链**——档 B 整族重建后链上只有一条
-`20261022_0001`（`down_revision = None`），一次建齐四表；升降级可重复且形状与
+模块职责：守护 `af_*` 表族的**单线迁移链**——档 B 整族重建的 base `20261022_0001`
+（`down_revision = None`）一次建齐四表，其后的结构变更按序线性追加、单 head；升降级可重复且形状与
 `database-design.md` 目标列清单逐列一致。
 设计关联（DesignRef）：docs/architecture/database-design.md（目标形状四表 + 整族重建的档位与迁移链）
 实现状态：Current
@@ -22,6 +22,8 @@ from sqlalchemy import create_engine, inspect
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE_REVISION = "20261022_0001"
+#: base 之后按序追加的 revision（线性链，单 head）。
+FOLLOW_UP_REVISIONS = ("20261106_0001",)
 
 #: 四表列集合（正本＝database-design.md 目标列清单；`created_at`/`updated_at` 各算一列）。
 EXPECTED_COLUMNS: dict[str, set[str]] = {
@@ -36,12 +38,14 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
         "display_title",
         "authors",
         "file_path",
+        "doc_kind",
         "page_count",
         "sha256",
         "ingest_status",
         "ingested_at",
         "parse_status",
         "last_parse_result",
+        "last_curation_result",
         "pages_done",
         "active_job_id",
         "notes",
@@ -172,21 +176,25 @@ def _indexes(url: str, table: str) -> dict[str, list[str]]:
 # ---------- 迁移链张数（档 B 重置的唯一形状） ----------
 
 
-def test_chain_is_a_single_base_revision():
-    """链上只有一条迁移且它就是 base：旧链每条都在为不存在的形状跑 DDL，留着即漂移源。"""
-    script = _script()
-    revisions = list(script.walk_revisions())
+def test_chain_starts_at_the_base_and_appends_linearly():
+    """链首必须是档 B 的 base（不指向任何旧序号），其后逐条线性追加、单 head。"""
+    revisions = list(_script().walk_revisions())
 
-    assert [rev.revision for rev in revisions] == [BASE_REVISION]
-    assert revisions[0].down_revision is None, "重置后的 base 不得再指向任何旧序号"
+    assert [rev.revision for rev in revisions] == list(reversed((BASE_REVISION, *FOLLOW_UP_REVISIONS)))
+    assert revisions[-1].down_revision is None, "重置后的 base 不得再指向任何旧序号"
+    for index, revision in enumerate(revisions[:-1]):
+        assert revision.down_revision == revisions[index + 1].revision, "链必须是单线，不得分叉"
 
 
-def test_version_files_are_exactly_the_base():
-    """目录里不得残留旧链文件（`__pycache__` 之外只有 base 一个 .py）。"""
+def test_version_files_are_the_base_and_its_followups():
+    """目录里只有 base 与其线性追加的迁移（旧链文件不得残留）。"""
     versions = ROOT / "src/axiom_flow/migrations/versions"
     files = sorted(p.name for p in versions.glob("*.py"))
+    expected_prefixes = (BASE_REVISION, *FOLLOW_UP_REVISIONS)
 
-    assert files == [f"{BASE_REVISION}_af_family_rebuild.py"], files
+    assert len(files) == len(expected_prefixes), files
+    for name, revision in zip(files, expected_prefixes, strict=True):
+        assert name.startswith(f"{revision}_"), f"{name} 不是 {revision} 的迁移文件"
 
 
 def test_upgrade_creates_exactly_the_four_tables(migrated_url: str):
@@ -289,6 +297,15 @@ def test_intent_key_column_is_nullable(migrated_url: str):
 def test_af_operations_defaults(migrated_url: str, column: str, expected: str | None):
     """默认值逐列 pin：`engine` 的默认是空串而非某个引擎名（缺引擎名要报错，不静默回落）。"""
     assert _columns(migrated_url, "af_operations")[column]["default"] == expected
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [("doc_kind", "''"), ("last_curation_result", "''")],
+)
+def test_af_books_kind_and_curation_default_empty(migrated_url: str, column: str, expected: str):
+    """两列的默认空串就是语义：未声明种类／从未梳理（ADR 0019）。"""
+    assert _columns(migrated_url, "af_books")[column]["default"] == expected
 
 
 @pytest.mark.parametrize(

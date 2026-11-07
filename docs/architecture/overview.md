@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（v2 拓扑与 8902 服务面已落地并真机取证）
-最后更新：2026-10-22
+最后更新：2026-11-07
 关联代码：`src/axiom_flow/api/main.py`（应用装配与生命周期）、`src/axiom_flow/config.py`（端口、数据根、引擎地址）、`scripts/axiom_flow_service.py`（8902 唯一启停入口）
 关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -177,7 +177,7 @@ flowchart TB
 | 块级人工编辑落库与回显 | 已交付 | `PM-3`、`PM-5` |
 | 页级结构意图声明落库（人工框 / 删块 / 并块，跨版本存活） | 已实现，待真机窗口 | [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[api.md](api.md) ③ 类 |
 | 非公开一键清除（先清后建） | 已交付 | [api.md 管理面节](api.md)、`PM-17` |
-| 知识点梳理与提升通路（人工发起、批次三态、确认与只读导出） | 本侧通路已实现（受理门、两阶段执行体、收尾与启动期归一、十条端点、批次流水与调用账追加行，文本引擎适配器也已接入＝`KA-22` 的 `qed-gateway`）；缺 8900 拉取式提升作业与真机梳理窗口 | [knowledge-analysis.md](../design/knowledge-analysis.md) `KA-1`~`KA-45` |
+| 知识点梳理与提升通路（种类分流、四值阶段、批次三态、确认与只读导出） | 本侧通路已实现（受理门七道＋种类×阶段／重跑组合／目标教材三类组合门、两阶段执行体、收尾与启动期归一、十一条端点、批次流水与调用账追加行、教材与习题集两条习题腿、知识点详情两枚读数，文本引擎适配器也已接入＝`KA-22` 的 `qed-gateway`）；缺 8900 拉取式提升作业与真机梳理窗口 | [knowledge-analysis.md](../design/knowledge-analysis.md) `KA-1`~`KA-57` |
 | PaddleOCR-VL / qwen-vl 引擎槽位 | 预留，未实现 | `MI-11`~`MI-13` |
 | 8903 端到端联调与重建产物后的真机校验写入 | 未交付（等根侧排期与产物重建窗口） | 只在 `trackers/` 登记 |
 | 检索 / 知识图谱 / 数学解析器 / 学习交互 | 非 v0.1 目标 | [roadmap](../trackers/roadmap.md) |

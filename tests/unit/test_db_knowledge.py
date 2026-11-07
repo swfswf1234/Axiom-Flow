@@ -708,6 +708,12 @@ class TestNarrativeRefSystemLeg:
         _kp(session, "afkp-a1")
         repo = KpRepository(session)
         columns = tuple(column.name for column in AfKp.__table__.columns)
+        # `utc_now()` 在 Windows 上的分辨率约 16ms：同一刻建行与写入会落到同一时刻，「时刻列有没有
+        # 被写」就测不出来。先把旧值压到 2000 年，这条断言才只判写入而不判时钟。
+        staging = repo.get("afkp-a1")
+        assert staging is not None
+        staging.updated_at = staging.updated_at.replace(year=2000)
+        session.flush()
         # 先按值快照：同一行的两个句柄是同一个身份映射对象，写后对比会「全等」而什么都测不到
         snapshot = _column_values(repo.get("afkp-a1"), columns)
         assert snapshot is not None

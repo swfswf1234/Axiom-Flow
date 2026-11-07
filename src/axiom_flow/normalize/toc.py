@@ -2,7 +2,8 @@
 
 判据正文见 [knowledge-analysis.md](../../docs/design/knowledge-analysis.md) 的 `KA-33`（回落腿）与
 `KA-37`／`KA-38`（正腿复用本模块的定锚判据）、`KA-41`（`clean_entry_rows`＝条目腿与模型整理腿共用的
-那一把行清洗，与比对口径的闭集标点折算）。本模块只吃 `BlocksPage`（页产物回放后的块序列），
+那一把行清洗，与比对口径的闭集标点折算）、`KA-46`（习题段标签的整块判据：`is_exercise_label`／
+`exercise_entries`）。本模块只吃 `BlocksPage`（页产物回放后的块序列），
 产出纯读数：不写库、不改块类型、不碰磁盘产物——合成出来的标题读数由编排层并进取证面，
 `af_pages` 的任何列都不经这里。
 
@@ -19,7 +20,9 @@ import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 
+from axiom_flow.normalize.furniture import FURNITURE_TYPES
 from axiom_flow.schemas import BlocksPage, BlockType
 
 #: 一个段落块要被当作目录页，至少要这么多行。两行的「带页码重复」是巧合（正文里引一条定理也这样写）。
@@ -333,6 +336,163 @@ def locate_entries(
     return TocLocation(offset=offset, entries=tuple(located))
 
 
+#: 容错比对（`KA-49`）的两枚下限：近似比值与折叠名长度。短名（`数 e`／`习题`）没有鉴别力，
+#: 放开近似等于让任意两枚短名互认——近似腿只在长名上生效，短名只走整行同形。
+TOC_TOLERANT_SIMILARITY = 0.85
+TOC_TOLERANT_MIN_CHARS = 6
+
+#: 数学宏壳（`KA-49`）：`\\mathscr{L}^2` 与 `\\mathcal{L}^2` 是同一枚符号的两种写法，壳里那枚才是名字。
+#: 只剥「宏名＋花括号」这一形，花括号里不再嵌套（嵌套由不动点循环消化）。
+_MACRO_SHELL = re.compile(
+    r"\\(?:mathscr|mathcal|mathfrak|mathbf|mathrm|mathit|mathbb|mathsf|boldsymbol|pmb"
+    r"|text|textrm|textit|textbf|operatorname|bb)\s*\{([^{}]*)\}"
+)
+
+#: 希腊宏名折其字符：目录把 `$\\Gamma$ 函数` 抄成 `Γ函数` 是同一句话的两种排法（真机 `afkp-1c8c7a0bed99`）。
+_GREEK_LETTERS = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε", "varepsilon": "ε",
+    "zeta": "ζ", "eta": "η", "theta": "θ", "vartheta": "ϑ", "iota": "ι", "kappa": "κ",
+    "lambda": "λ", "mu": "μ", "nu": "ν", "xi": "ξ", "omicron": "ο", "pi": "π", "rho": "ρ",
+    "sigma": "σ", "varsigma": "ς", "tau": "τ", "upsilon": "υ", "phi": "φ", "varphi": "ϕ",
+    "chi": "χ", "psi": "ψ", "omega": "ω",
+    "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ", "Xi": "Ξ", "Pi": "Π", "Rho": "Ρ",
+    "Sigma": "Σ", "Upsilon": "Υ", "Phi": "Φ", "Psi": "Ψ", "Omega": "Ω",
+}
+_GREEK_MACRO = re.compile(r"\\([A-Za-z]+)")
+
+
+def _fold_math(text: str) -> str:
+    """容错比对口径＝NFKC＋剥数学宏壳（到不动点）＋希腊宏名折字符＋只留字母与数字＋小写。
+
+    与 `_squash` 的分工是刻意的：那一把是**第一遍**的口径（去空白前缀，编号里的点一律不动，
+    `2.10` 与 `210` 必须是两个名字），这一把只在第一遍查不中时启用，把排版壳与 OCR 掉字折成同一串。
+    两把分开，旧读数才逐字不变（`KA-49` 的边界）。
+
+    代价是这一把没有鉴别力可言：标点全删后 `矩的计算法。质心` 与 `矩的计算法质心` 同串，所以它
+    只能当**第二遍**用，且命中仍受窗口约束、短名仍不许近似。
+    """
+    folded = unicodedata.normalize("NFKC", text or "")
+    for _ in range(4):
+        stripped = _MACRO_SHELL.sub(r"\1", folded)
+        if stripped == folded:
+            break
+        folded = stripped
+    folded = _GREEK_MACRO.sub(lambda match: _GREEK_LETTERS.get(match.group(1), match.group(1)), folded)
+    return "".join(char for char in folded if char.isalnum()).casefold()
+
+
+def _title_line(text: str) -> str:
+    """一个块的候选标题行＝块里第一行非空文本的原样（不折、不清洗，`KA-50` 取的就是这一行）。"""
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+@dataclass(frozen=True, slots=True)
+class BodyReading:
+    """容错比对命中的一行正文：`name` 是正文那一行的原文，坐标是 `(页号, 块序)`。
+
+    跨块拼接的那一枚 `name` 以一枚空格相连、`block_index` 取**第一块**（标题起头那块），
+    两处都是 `KA-49`／`KA-50` 写在条文里的取法。
+    """
+
+    name: str
+    page_no: int
+    block_index: int
+
+
+class BodyNameIndex:
+    """正文块首行 → 折叠键的索引（`KA-49` 的输入面）：整本扫一遍，逐条查询走字典。
+
+    候选面只有两件事：非家具块（`FURNITURE_TYPES` 三型不进候选，书眉里的同名行是回声）与每块的
+    首行（块中间那一行是正文句子，不是这一节的题目）。同页相邻两块的首行再拼一枚候选，那是产物里
+    「标题折两块」的常态。索引一次建好、逐条查询零扫描——目录腿的条目数是百枚级，逐条重扫整本就
+    是万次级。
+    """
+
+    def __init__(self, pages: Sequence[BlocksPage]) -> None:
+        exact: dict[str, list[BodyReading]] = {}
+        singles: dict[str, list[BodyReading]] = {}
+        for page in pages:
+            titles: list[tuple[int, str]] = []
+            for block in page.blocks:
+                if block.type in FURNITURE_TYPES:
+                    continue
+                line = _title_line(block.text or "")
+                if line:
+                    titles.append((block.index, line))
+            for position, (block_index, line) in enumerate(titles):
+                reading = BodyReading(name=line, page_no=page.page, block_index=block_index)
+                exact.setdefault(_fold_math(line), []).append(reading)
+                singles.setdefault(_fold_math(line), []).append(reading)
+                if position + 1 >= len(titles):
+                    continue
+                next_index, next_line = titles[position + 1]
+                if next_index != block_index + 1:
+                    continue
+                joined = BodyReading(
+                    name=f"{line} {next_line}", page_no=page.page, block_index=block_index
+                )
+                exact.setdefault(_fold_math(joined.name), []).append(joined)
+        self._exact = exact
+        #: 近似腿的候选桶＝**单块首行**的两把下标（首字符与尾字符）：OCR 掉字多半掉在中间，两头仍能
+        #: 对上号。拼接候选不进这一把——标题后面接着的那一行是正文句子，拿它去近似等于让任何一枚长名
+        #: 都能撞上「标题＋一句正文」，近似腿的鉴别力就没了。
+        self._buckets: dict[str, list[tuple[str, BodyReading]]] = {}
+        for key, readings in singles.items():
+            if len(key) < TOC_TOLERANT_MIN_CHARS:
+                continue
+            for reading in readings:
+                for bucket_key in {key[0], key[-1]}:
+                    self._buckets.setdefault(bucket_key, []).append((key, reading))
+
+    def find(self, name: str) -> tuple[BodyReading, ...]:
+        """条目名 → 正文里的候选行序列（按 `(页号, 块序)` 升序）；三条命中形状见 `KA-49`。
+
+        整行同形（单块或相邻两块拼接）与近似都算候选；近似只在折叠名长 ≥`TOC_TOLERANT_MIN_CHARS`
+        且长度差在一成以内时判，比值下限 `TOC_TOLERANT_SIMILARITY`，且只在单块首行上判。**前缀不算
+        候选**：那是段落起头的形状，认了就会把题干抄成名字。
+        """
+        folded = _fold_math(name)
+        if not folded:
+            return ()
+        found: list[BodyReading] = list(self._exact.get(folded, ()))
+        if len(folded) >= TOC_TOLERANT_MIN_CHARS:
+            seen = {(item.page_no, item.block_index, item.name) for item in found}
+            for key, reading in self._buckets.get(folded[0], []) + self._buckets.get(folded[-1], []):
+                marker = (reading.page_no, reading.block_index, reading.name)
+                if key == folded or marker in seen:
+                    continue
+                seen.add(marker)
+                if abs(len(key) - len(folded)) > max(len(key), len(folded)) * 0.1:
+                    continue
+                if SequenceMatcher(None, folded, key, autojunk=False).ratio() >= TOC_TOLERANT_SIMILARITY:
+                    found.append(reading)
+        return tuple(sorted(found, key=lambda item: (item.page_no, item.block_index)))
+
+
+def pick_in_window(
+    readings: Sequence[BodyReading],
+    *,
+    printed_page: int | None,
+    offset: int | None,
+    slack: int = TOC_LOCATE_SLACK,
+) -> BodyReading | None:
+    """候选行里只接受 `印刷页＋偏移 ± slack` 窗口内的最早一枚（`KA-49` 的位置腿）。
+
+    与第一遍同一条约束：窗口外的回声一律不算，假锚比缺锚难发现。偏移标定不出或条目没有印刷页码
+    时不造锚——那时命中的是回声而不是这一节。
+    """
+    if offset is None or printed_page is None:
+        return None
+    target = printed_page + offset
+    for reading in sorted(readings, key=lambda item: (item.page_no, item.block_index)):
+        if abs(reading.page_no - target) <= slack:
+            return reading
+    return None
+
+
 def drop_unlocated_toc_pages(
     items: Sequence[tuple[int, LocatedEntry]], offset: int | None
 ) -> tuple[tuple[tuple[int, LocatedEntry], ...], tuple[int, ...]]:
@@ -400,6 +560,111 @@ def reference_role_for_name(name: str) -> tuple[str, str]:
         if shape.search(folded):
             return TOC_ROLE_REFERENCE, kind
     return TOC_ROLE_KNOWLEDGE, ""
+
+
+#: 习题段标签（`KA-46`）：整个块就是「习题／练习／Exercises／Problems ＋可选编号」。编号认书里真在用的
+#: 写法（`1`／`1.1`／`1-3`／`三`），全角数字先经 NFKC 折过。只认整块：行首命中不算——`习题解答` 是答案侧，
+#: `第一章 习题课` 是章名，带题干的段落是题目本身。
+_EXERCISE_LABEL = re.compile(
+    r"^(?:习\s*题|练\s*习|exercises?|problems?)"
+    r"(?:[\s第]*(?:[0-9]{1,3}(?:[.\-—–~～][0-9]{1,3}){0,2}|[一二三四五六七八九十百]{1,4}))?$",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExerciseEntry:
+    """一页里的一枚习题段标签：原样去空白后的名字与它所在块的数组下标（锚点要指回这一块）。"""
+
+    name: str
+    block_index: int
+
+
+def is_exercise_label(text: str) -> bool:
+    """一段文字是不是「章末习题段的标题」（`KA-46`）：整块短标签＋可选编号。
+
+    宁缺毋滥：认错一枚会在目录里多出一行假结构，而漏认只回到改判前「靠模型偶发抄行」的现状。
+    """
+    folded = unicodedata.normalize("NFKC", text or "").strip()
+    if not folded:
+        return False
+    return _EXERCISE_LABEL.match(folded) is not None
+
+
+def exercise_entries(page: BlocksPage) -> tuple[ExerciseEntry, ...]:
+    """一页产物 → 本页的习题段标签（按块序）；没有就出空元组。
+
+    块类型不设限：真机里这一段既可能是 `heading`（书有层级）也可能是 `paragraph`（整本零标题的老教材），
+    身份只由名字形状给。目录页的排除不在这里——一页是不是目录页要全书偏移才判得出来，那是编排层的事。
+    """
+    return tuple(
+        ExerciseEntry(name=(block.text or "").strip(), block_index=block.index)
+        for block in page.blocks
+        if is_exercise_label(block.text or "")
+    )
+
+
+#: 行首题号闭集（`KA-53`）：书自己写在题首的六形，全角先经 NFKC 折过再判。点号形额外要求分隔符
+#: 后面不是数字——`1.2 函数极限` 是节号、`3.14` 是小数，都不是题号；范围形要求后面是行末或分隔符，
+#: 免得把 `2017-01-01` 一类日期读成题号（四条题号共用一个函数，W9 的习题集腿也走它）。
+_EXERCISE_ITEM = re.compile(
+    r"^(?:"
+    r"【(?P<lenticular>\d{1,4})】"
+    r"|\((?P<paren>\d{1,4})\)"
+    r"|(?P<range_first>\d{1,4})\s*[-–—~～]\s*(?P<range_second>\d{1,4})(?=$|[.、\s])"
+    r"|(?P<dotted>\d{1,4})[.、](?!\d)"
+    r")"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExerciseItemEntry:
+    """一段习题正文里的一枚题号：`index` 指输入行序列的下标（锚点靠它回指页与块）。
+
+    `item_no` 是书自己写的题号（只做空白与全半角折叠，范围形保留两端的数）；`order_key` 只服务
+    单调序，取题号里的第一枚整数——`10-12` 排在 `9.` 之后，与书里的先后一致。
+    """
+
+    index: int
+    item_no: str
+    order_key: int
+
+
+def exercise_item_entries(lines: Sequence[str]) -> tuple[ExerciseItemEntry, ...]:
+    """一段正文的行序列 → 题号行（`KA-53`）：闭集形状 ＋ 同父单调序，其余行一律视作正文。
+
+    边界只由规则给、模型不参与分题：同一父行下只有题号严格大于上一枚已接受的才开新题。
+    编号回退（小问重新从 `(1)` 起、重复题号）不算新题——那正是「(1)(2) 小问不是题」的判据来源。
+    跨段重置不在这里：调用方按每个习题段各调一次，`order_key` 的比较域自然收在段内。
+    识别不出时返回空元组，这是披露不是失败（`KA-53`）。
+    """
+    entries: list[ExerciseItemEntry] = []
+    last_key = 0
+    for index, raw in enumerate(lines):
+        folded = unicodedata.normalize("NFKC", raw or "").strip()
+        if not folded:
+            continue
+        match = _EXERCISE_ITEM.match(folded)
+        if match is None:
+            continue
+        first = (
+            match.group("lenticular")
+            or match.group("paren")
+            or match.group("range_first")
+            or match.group("dotted")
+        )
+        order_key = int(first)
+        if order_key <= last_key:
+            continue
+        last_key = order_key
+        entries.append(
+            ExerciseItemEntry(
+                index=index,
+                item_no=re.sub(r"\s+", "", match.group(0)),
+                order_key=order_key,
+            )
+        )
+    return tuple(entries)
 
 
 def node_type_of(

@@ -42,8 +42,9 @@ from axiom_flow.db.models import (
     AfKp,
     AfOperation,
     AfPage,
+    derive_doc_kind,
 )
-from axiom_flow.schemas import SAFE_SEGMENT_PATTERN
+from axiom_flow.schemas import SAFE_SEGMENT_PATTERN, LastCurationResult
 
 log = logging.getLogger(__name__)
 
@@ -68,12 +69,35 @@ STRUCTURE_PAYLOAD_KEYS = ("op", "bbox", "anchor_bbox", "members", "kind")
 #: `result`＝执行体一次跑完的账面计数。禁自由键——流水是审计线索，读数形状必须可预期。
 #: `review_note` 是入参（AF-T5 甲的人工评审意见），与页区间同列；缺省空串，不为「有没有备注」维持两种形状。
 #: `stage`（`KA-34`）同样是入参：这一批跑了哪条腿只有请求方知道，流水是它唯一的落账处。
-KP_PAYLOAD_KEYS = ("gen_batch", "page_start", "page_end", "review_note", "stage")
+KP_PAYLOAD_KEYS = (
+    "gen_batch",
+    "page_start",
+    "page_end",
+    "review_note",
+    "stage",
+    "only_failed",
+    "target_book_id",
+    "retry_node_ids",
+)
 #: outline 行 `meta` 的两枚键（`KA-39`）：知识点身份位与其类别。**零 ALTER** 的落点就在这里——
 #: 两枚值只进 JSON 扩展槽、不建列、不进 WHERE，读面（`_kp_node_out`）逐字取出，屏上据此标「非知识点」。
 #: 导出面（`KA-15`）照带这两枚键交拉取方自判，本组件不因它删行、也不因它拒确认。
-KP_META_KEYS = ("toc_role", "toc_kind")
+#: 后两枚属习题题的来源位（`KA-53`）：配套模式的来源书与解答页只进扩展槽、不建列——解答页不是
+#: 锚点（`KA-18` 要求锚点与行的取证版本同书同版），建列会诱使读侧把它当锚解释。
+#: 末两枚属点行详情（`KA-57`）：掌握要点与关键定义只给屏侧渲染、不进 WHERE，故不进实体列；
+#: 章行不写这两枚（章级「学什么」由 `summary` 承担）。
+KP_META_KEYS = (
+    "toc_role",
+    "toc_kind",
+    "source_book_id",
+    "source_pages",
+    "must_master",
+    "key_definitions",
+)
 #: `outline_summary_rows`（第二十三键，`KA-43`）＝`content` 批次里被写上节级总结的在册目录行数。
+#: 习题腿五键（`KA-53`）：`exercise_item_rows`（第二十九）＝成出的题行数；`exercise_pack_rows`
+#: （第三十）＝落盘的题包篇数；`merged_exercise_rows`（第三十一）＝配套模式合并命中并写出的行数；
+#: `unmatched_solutions`／`unmatched_solution_details`（第三十二／三十三）＝只披露的未匹配解答。
 KP_RESULT_KEYS = (
     "outline_rows",
     "point_rows",
@@ -103,6 +127,11 @@ KP_RESULT_KEYS = (
     "verified_outline_entries",
     "reference_rows",
     "superseded_rows",
+    "exercise_item_rows",
+    "exercise_pack_rows",
+    "merged_exercise_rows",
+    "unmatched_solutions",
+    "unmatched_solution_details",
 )
 
 #: 页确认门是否已启用（`KA-3` 的第二个析取支）。`af_pages.confirm_state` 的写者属另一条线
@@ -128,6 +157,8 @@ class BookSyncRow:
     display_title: str = ""
     authors: list[dict[str, Any]] = field(default_factory=list)
     file_path: str = ""
+    #: 根侧 `qt_books.roles`（ADR 0019）：种类只从这里派生，本侧不改写取值。
+    roles: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +218,12 @@ class KpBatchRow:
     review_note: str = ""
     #: 这一批跑了哪条腿（`KA-34`）：同样落 `payload`；缺省 `full` 与早期批次的实际形态一致。
     stage: str = "full"
+    #: 这一批是不是按失败节点重跑（`KA-52`）：`payload` 第六键；缺省 `False`＝整批。
+    only_failed: bool = False
+    #: 配套模式的目标教材（`KA-53`）：`payload` 第七键；缺省 `None`＝独立模式（题行落本书）。
+    target_book_id: str | None = None
+    #: 习题腿选中重解析的题行（`KA-52`／`KA-53`）：`payload` 第八键；缺省空表＝首发批次。
+    retry_node_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -497,16 +534,18 @@ class BookRepository:
     def upsert_many(self, rows: Sequence[BookSyncRow]) -> SyncResult:
         """以 book_id 为幂等键 upsert；重复同步不产生重复行。
 
-        快照语义：只覆盖同步字段（课程归属/标题/作者/路径），**保留本侧字段**
-        （page_count/sha256/ingest_status/parse_status/pages_done/notes/**meta**）。
+        快照语义：只覆盖同步字段（课程归属/标题/作者/路径/**派生种类**），**保留本侧字段**
+        （page_count/sha256/ingest_status/parse_status/pages_done/notes/**meta**/last_curation_result）。
         `meta` 在这份清单里不是新增纪律而是裁决⑮的判据：改成 `merge`/整行覆写后，
         「同步重跑 ⇒ 先前写入的 `meta` 键集合不变」的用例即转红（双写者列域不重叠）。
+        `doc_kind` 是同步输入的派生物（ADR 0019）：每次同步按 `roles` 重算，它就是这一列的写者。
         """
         now = utc_now()
         synced = 0
         updated = 0
         for row in rows:
             book = self.session.get(AfBook, row.book_id)
+            doc_kind = derive_doc_kind(row.roles)
             if book is None:
                 self.session.add(
                     AfBook(
@@ -520,6 +559,7 @@ class BookRepository:
                         display_title=row.display_title,
                         authors=list(row.authors),
                         file_path=row.file_path,
+                        doc_kind=doc_kind,
                         synced_at=now,
                         updated_at=now,
                     )
@@ -535,6 +575,7 @@ class BookRepository:
                 book.display_title = row.display_title
                 book.authors = list(row.authors)
                 book.file_path = row.file_path
+                book.doc_kind = doc_kind
                 book.updated_at = now
                 updated += 1
         self.session.flush()
@@ -585,6 +626,20 @@ class BookRepository:
         book.parse_status = "pending"
         if last_parse_result is not None:
             book.last_parse_result = last_parse_result
+        book.updated_at = utc_now()
+        self.session.flush()
+        return True
+
+    def mark_curation_result(self, book_id: str, *, result: str) -> bool:
+        """梳理结局回写（ADR 0019／`KA-54`）：该列只由批次收尾与启动期归一调用。
+
+        与 `update_parse` 同形：书目不存在即不写（返回 False），成功时推进 `updated_at`。
+        端点与人工腿不给这一列留入口——「上一次怎么结束」不是请求方能声明的事实。
+        """
+        book = self.session.get(AfBook, book_id)
+        if book is None:
+            return False
+        book.last_curation_result = result
         book.updated_at = utc_now()
         self.session.flush()
         return True
@@ -911,6 +966,9 @@ class OperationRepository:
                 "page_end": row.page_end,
                 "review_note": row.review_note,
                 "stage": row.stage,
+                "only_failed": row.only_failed,
+                "target_book_id": row.target_book_id,
+                "retry_node_ids": list(row.retry_node_ids),
             },
             result=dict(row.result) if row.result is not None else None,
             note=row.note[:1000],
@@ -1390,6 +1448,18 @@ class KpRepository:
             .limit(1)
         )
 
+    def curating_book_ids(self) -> set[str]:
+        """书目列表的「开始梳理」读数（`KA-55`）：一条分组查询取代逐本 `find_draft_batch`。
+
+        判据与 `find_draft_batch` 同一把（`gen_status='draft'`），只把作用域从一本书放大到全表；
+        `candidate`／`rejected` 行不进集合（`KA-9` 的三态只由该列表达）。
+        """
+        return set(
+            self.session.scalars(
+                select(AfKp.book_id).where(AfKp.gen_status == "draft").distinct()
+            )
+        )
+
     def list_by_evidence_version(self, book_id: str) -> dict[str, list[AfKp]]:
         """按行的取证版本分桶（`KA-18` 的读面唯一形态）。
 
@@ -1752,7 +1822,15 @@ class KpRepository:
         return int(result.rowcount or 0)
 
     def reject_superseded_candidates(
-        self, book_id: str, gen_batch: str, *, page_start: int, page_end: int, node_kind: str | None = None
+        self,
+        book_id: str,
+        gen_batch: str,
+        *,
+        page_start: int,
+        page_end: int,
+        node_kind: str | None = None,
+        model_ref: str | None = None,
+        parent_ids: Sequence[str] | None = None,
     ) -> int:
         """重跑取代（`KA-36`）：同书其它批次、落在本批页区间内的**未背书候选行**翻 `rejected`。
 
@@ -1764,6 +1842,16 @@ class KpRepository:
         `node_kind`（`KA-43`）把作废面收到一种行上：`content` 批次不重做目录，在册目录行是它**正在
         使用**的结构而不是过期读数，整面作废会把这一批点行的父一起抽掉。缺省 `None`＝两种行都在面里
         （`full` 批次的既有口径逐字不动）。
+
+        `model_ref`（`KA-53`）再把点行收到本腿自己的产出者上：教材侧习题批次只重写
+
+        `rule:exercise_item` 那一类行，模型抽出的点行不是这一腿的过期读数——把它判死等于一次分题
+        重跑顺手清掉上一轮的知识点。缺省 `None`＝不按产出者过滤。
+
+        `parent_ids`（`KA-52`）把面收到「上一批点名过的失败节点」下：按节点重跑只重写那几节的读数，
+        名单外的节不是这一批的过期读数——整面作废会把上一批已经跑成功的几节一起清掉，重跑就变成
+        「重付几节＋丢几节」。空序列＝一枚都不作废（重跑没有写出任何行时也确实没有过期读数）。
+        缺省 `None`＝不按父过滤。
 
         锚点是 JSON 列，区间判定放在 Python 里做：候选行的规模是「一本书的行数」，一次取回再过滤比把
         JSON 下推成 SQL 更可读，也免得两库的 JSON 语法分叉。回写的 `WHERE` 仍带 `candidate` 与
@@ -1777,6 +1865,12 @@ class KpRepository:
         ]
         if node_kind is not None:
             conditions.append(AfKp.node_kind == node_kind)
+        if model_ref is not None:
+            conditions.append(AfKp.model_ref == model_ref)
+        if parent_ids is not None:
+            if not parent_ids:
+                return 0
+            conditions.append(AfKp.parent_id.in_(list(parent_ids)))
         rows = self.session.execute(select(AfKp.node_id, AfKp.anchors).where(*conditions))
         ids = [
             node_id
@@ -1964,8 +2058,39 @@ class KpRepository:
         node = self.get(node_id)
         return KpWriteResult(False, node is not None, node)
 
+    def set_exercise_source(
+        self, node_id: str, *, source_book_id: str, source_pages: Sequence[int]
+    ) -> bool:
+        """题行来源两键（`KA-53`）：合并只补 `meta.source_book_id`／`meta.source_pages`，不碰别的键。
+
+        「只补空位」在本列上落成两条 `WHERE`：`confirmed=0`（人已背书的行为机器不可改，`KA-13`）与
+        写入前的原值判——`source_book_id` 已有值且不是本书时一律不写，两本习题集指向同一道题时后到
+        的那本不得把先到的来源顶掉。`toc_kind` 等别的 meta 键原样并回，不整块覆盖。
+        `rev` 随成功写入自增，与归一各条同形（判据位是 `confirmed`，不是序号）。
+        """
+        node = self.get(node_id)
+        if node is None or node.confirmed:
+            return False
+        meta = dict(node.meta or {})
+        current = str(meta.get("source_book_id") or "")
+        if current and current != source_book_id:
+            return False
+        pages = sorted({int(page) for page in source_pages if page})
+        if current == source_book_id and list(meta.get("source_pages") or []) == pages:
+            return False
+        meta["source_book_id"] = source_book_id
+        meta["source_pages"] = pages
+        result = self.session.execute(
+            update(AfKp)
+            .where(AfKp.node_id == node_id, AfKp.confirmed == 0)
+            .values(meta=meta, rev=AfKp.rev + 1, updated_at=utc_now())
+        )
+        self.session.flush()
+        return bool(result.rowcount)
+
     def reconcile_draft_on_startup(self) -> list[tuple[str, str, int]]:
-        """启动期归一（`KA-9`／设计篇「进程中途死」）：残留 `draft` 按 `(book_id, gen_batch)` 整批判 `rejected` 并告警。
+        """启动期归一（`KA-9`／设计篇「进程中途死」）：残留 `draft` 按 `(book_id, gen_batch)` 整批判 `rejected` 并告警；
+        同一次提交把「还没记过结局」的那一批记 `interrupted`（`KA-54`）。
 
         没跑到收尾的批次会让 `KA-4` 的在飞判据永久为真——不处置就再没人能对这本书发起梳理。
         处置只做一件事：翻 `gen_status`。不删数据、不碰 `confirmed`、不动 `candidate` 及以上任何行
@@ -1991,6 +2116,12 @@ class KpRepository:
                 gen_batch,
                 int(flipped),
             )
+            # `KA-54`：中断结局只写给「还没记过结局」的批次——异常腿已经写下 `failed` 的批次，
+            # 它的残留 draft 同样在今天被清，但「跑了但坏了」不该被记成「被重启打断」。
+            if OperationRepository(self.session).find_kp_batch(book_id, gen_batch) is None:
+                BookRepository(self.session).mark_curation_result(
+                    book_id, result=LastCurationResult.INTERRUPTED
+                )
             disposed.append((book_id, gen_batch, int(count)))
         return disposed
 

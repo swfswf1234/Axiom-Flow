@@ -135,6 +135,19 @@ class LastParseResult(StrEnum):
     INTERRUPTED = "interrupted"
 
 
+class LastCurationResult(StrEnum):
+    """书目最近一次梳理批次的**结局**（af_books.last_curation_result，ADR 0019）。
+
+    与 `LastParseResult` 同形同轴：`NONE` = 从未梳理；只由批次收尾与启动期归一写（`KA-54`）。
+    """
+
+    NONE = ""
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+
+
 # ---------- 基础类型 ----------
 
 BBox = Annotated[
@@ -338,6 +351,12 @@ class BookOut(BaseModel):
     ingest_status: str = IngestStatus.NONE
     parse_status: str = ParseStatus.PENDING
     last_parse_result: str = LastParseResult.NONE
+    #: 书种类（`KA-51`／ADR 0019）：同步腿由 `roles` 派生，`""` = 未声明（不受理梳理）。
+    doc_kind: str = ""
+    #: 最近一次梳理批次结局（ADR 0019）：`""` = 从未梳理；只由批次收尾与启动期归一写。
+    last_curation_result: str = ""
+    #: 「开始梳理」的读时派生（`KA-55`）：该书存在 `draft` 行 ⇒ true，零列、不参与受理门。
+    curation_in_flight: bool = False
     pages_done: int = 0
     active_job_id: str | None = Field(
         default=None, description="当前生效解析版本（af_books.active_job_id）；None = 根视图 legacy"
@@ -362,6 +381,9 @@ class BookSyncItem(BaseModel):
     display_title: str = ""
     authors: list[Author] = Field(default_factory=list)
     file_path: str = Field(default="", max_length=512)
+    #: 根侧 `qt_books.roles` 原值（`textbook`／`exercises`／`solutions`）；种类由它派生（ADR 0019），
+    #: 缺位即未声明、不受理梳理。取值不在这里校验：闭集外的值由派生函数落到未声明，不猜。
+    roles: list[str] = Field(default_factory=list)
 
     @field_validator("file_path")
     @classmethod
@@ -614,11 +636,13 @@ class ParseJobListOut(BaseModel):
 #: 「超限不截」同一条口径；批次流水的 `payload` 是 JSON，落库存全文、不受列宽约束。
 KP_REVIEW_NOTE_MAX_CHARS = 2000
 
-#: 一批跑哪几条腿（`KA-34`／`KA-43`）：`full`＝目录＋知识点两腿，`outline`＝只跑目录、知识点阶段
-#: 整条不发起，`content`＝目录腿不发起、拿**在册**目录行做知识点并同批补节级总结。
-#: 用三值闭集而不是一枚布尔，是因为「跑哪几条腿」不是一个轴上的开关：`content` 有库侧前置
-#: （零枚在册目录行即拒），布尔形状表达不出「这一值要读库才判得出能不能受理」。
-KpStage = Literal["full", "outline", "content"]
+#: 一批跑哪几条腿（`KA-34`／`KA-43`／`KA-53`）：`full`＝目录＋知识点两腿，`outline`＝只跑目录、
+#: 知识点阶段整条不发起，`content`＝目录腿不发起、拿**在册**目录行做知识点并同批补节级总结，
+#: `exercise`＝习题梳理（教材侧按章与题号成行、习题集侧按同一把键合并）。
+#: 用闭集而不是一枚布尔，是因为「跑哪几条腿」不是一个轴上的开关：`content` 有库侧前置
+#: （零枚在册目录行即拒），布尔形状表达不出「这一值要读库才判得出能不能受理」；`exercise`
+#: 与种类的合法组合也不是全开（`KA-51`）。
+KpStage = Literal["full", "outline", "content", "exercise"]
 
 
 class KpJobCreate(BaseModel):
@@ -629,8 +653,9 @@ class KpJobCreate(BaseModel):
     让请求体能点名引擎，等于让调用方绕过「未接入就拒」这道门槛，成本归因（`KA-23`）也就失去落点。
 
     `stage` 是同一件事的范围参数，与 `page_start`／`page_end` 同类——它不另开端点，因为「这一批
-    做了什么」在流水里必须是一行两处读（`KA-27`）。域外值由 pydantic 判 422，先于六道受理门；
-    `content` 另有一道库侧前置（在册目录行零枚即拒，`KA-43`），排在页区间之后、在飞之前。
+    做了什么」在流水里必须是一行两处读（`KA-27`）。域外值由 pydantic 判 422，先于受理门；
+    `content` 另有一道库侧前置（在册目录行零枚即拒，`KA-43`），排在页区间之后、在飞之前；
+    种类 × 阶段的闭集（`KA-51`）排在既有五道门之后，同样零写入。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -647,8 +672,26 @@ class KpJobCreate(BaseModel):
         default="full",
         description=(
             "本批跑哪几条腿：full＝目录＋知识点，outline＝只梳理目录（KA-34），"
-            "content＝拿在册目录只补知识点与节级总结（KA-43）"
+            "content＝拿在册目录只补知识点与节级总结（KA-43），"
+            "exercise＝习题梳理（KA-53，受理面按种类 × 阶段闭集判，KA-51）"
         ),
+    )
+    only_failed: bool = Field(
+        default=False,
+        description="按失败节点重跑（`KA-52`）：只对 `stage='content'` 合法，名单取上一批流水 "
+        "`failed_section_details` 点名过的节点；名单外零调用，取证集仍按原页区间读全。",
+    )
+    target_book_id: str | None = Field(
+        default=None,
+        pattern=SAFE_SEGMENT_PATTERN,
+        description="配套模式的教材书 id（`KA-53`）：有值＝题行与题包写目标教材，缺省＝独立模式写本书。"
+        "只许与习题集的 `stage='exercise'` 同批；目标必须是 `doc_kind='textbook'` 且整本绿。",
+    )
+    retry_node_ids: list[str] = Field(
+        default_factory=list,
+        max_length=200,
+        description="选中题行重解析（`KA-52`）：只对 `stage='exercise'` 合法，逐枚要求「行在目标书 ∧ "
+        "来源书＝本书 ∧ 未确认」；空表＝首发，不设续跑。",
     )
 
 
@@ -708,6 +751,13 @@ class AnchorReviewOut(BaseModel):
     reason: str
 
 
+class KpKeyDefinition(BaseModel):
+    """关键定义一条（`KA-57`）：术语照正文、定义一句话；点腿产出、逐键取出，坏条目不入表。"""
+
+    term: str = Field(default="", description="术语原文（正文写法）")
+    definition: str = Field(default="", description="一句话定义：它指什么、条件是什么")
+
+
 class KpNodeOut(BaseModel):
     """`af_kp` 一行的响应投影：人工背书域 + 来源与状态读数。
 
@@ -733,6 +783,16 @@ class KpNodeOut(BaseModel):
     role: str = ""
     type: str = ""
     summary: str = ""
+    must_master: list[str] = Field(
+        default_factory=list,
+        description="这个点学完要能做到什么（`KA-57`，取自 `meta.must_master`）：机器按点腿回复净化后"
+        "落槽，条数与字数有上限；坏条目丢弃，点行本身照留。整槽 `meta` 仍不外发，只逐键带出。",
+    )
+    key_definitions: list[KpKeyDefinition] = Field(
+        default_factory=list,
+        description="这个点的关键定义清单（`KA-57`，取自 `meta.key_definitions`）：术语＋一句话定义，"
+        "本章正文没给定义时为空表。",
+    )
     links: list[dict[str, Any]] = Field(default_factory=list)
     anchors: list[dict[str, Any]] = Field(default_factory=list)
     page_start: int | None = Field(
@@ -759,10 +819,55 @@ class KpNodeOut(BaseModel):
         description="附件行的类别（`KA-39`）：front_matter／back_matter／symbol_table／appendix／"
         "bibliography／index／exercise；`toc_role='knowledge'` 时为空串。",
     )
+    source_book_id: str = Field(
+        default="",
+        description="配套模式题行的来源书（`KA-53`，取自 `meta`）：题面与解答出自哪本习题集；"
+        "非习题行恒空串。整槽 `meta` 仍不外发，只逐键带出这两枚来源位。",
+    )
+    source_pages: list[int] = Field(
+        default_factory=list,
+        description="配套模式题行的解答页（`KA-53`，取自 `meta`）：不是锚点、不参与 `KA-18` 的取证解释；"
+        "非习题行恒空表。",
+    )
     confirmed: int = 0
     rev: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class KpExerciseItemOut(BaseModel):
+    """一枚题框（`KA-53`）：题行身份、所属章行、页区间与题包状态。
+
+    `status` 键名固定三值，屏上中文文案由根侧唯一常量表给（8902 只出键名，不出口径词）：
+    `complete`／`problem_only`／`source_missing`。状态由题包与索引派生，不落列、不落库。
+    """
+
+    node_id: str
+    item_no: str = ""
+    parent_id: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    status: Literal["complete", "problem_only", "source_missing"] = "source_missing"
+    pack: bool = Field(default=False, description="题包文件是否已写（`narrative_ref` 非空）")
+    confirmed: int = 0
+    source_book_id: str = ""
+    source_pages: list[int] = Field(default_factory=list)
+
+
+class KpExerciseOut(BaseModel):
+    """习题读面（`KA-53`）：整册的题框、题包、待重解析与未匹配解答，全部读时派生、零写库。
+
+    `done` 是习题书唯一的完成读数：题行 > 0 ∧ 题包数 == 题行数 ∧ 待重解析零枚。它**不**复用
+    `stage.done`（其统计域只有章／点，在习题书上恒零行）；未匹配解答是披露、不是缺项，不挡完成。
+    """
+
+    kind: Literal["companion", "standalone"] = "standalone"
+    target_book_id: str | None = None
+    items: list[KpExerciseItemOut] = Field(default_factory=list)
+    packs: int = 0
+    pending_reparse: int = 0
+    unmatched: list[dict[str, Any]] = Field(default_factory=list)
+    done: bool = False
 
 
 class KpWorkspaceOut(BaseModel):
@@ -770,12 +875,15 @@ class KpWorkspaceOut(BaseModel):
 
     不分页是形状决定：目录树与「谁挂在谁下面」必须整册读，翻页会把结构切成两屏。
     `in_flight_batch` 就是 `KA-4` 的在飞批次号（无在飞为 `null`），界面据此禁用提交按钮。
+    `exercise` 只在习题书或有题行／来源清单的书上有值（`KA-53`）：教材的共享主表里永不含习题行，
+    这一位对它恒 `null`，不制造第二套读数。
     """
 
     book_id: str
     in_flight_batch: str | None = None
     nodes: list[KpNodeOut] = Field(default_factory=list)
     review_flags: list[AnchorReviewOut] = Field(default_factory=list)
+    exercise: KpExerciseOut | None = None
 
 
 class KpLinkIn(BaseModel):
@@ -818,15 +926,32 @@ class KpNodePatch(BaseModel):
 
 
 class KpSummaryRegenIn(BaseModel):
-    """单点重生成（`KA-45`）：详情面「重新生成总结」的请求体，只有一枚可选序号。
+    """单点重生成（`KA-45`）：详情面「一键生成／重新生成」的请求体：可选序号＋可选修改建议。
 
     没有正文键：新总结由模型按该行区间现读现写，人给的那份走 `PATCH` 的 `summary`。
     `if_rev` 与其余写腿同一口径——屏上读到的那一份被别处改过时先撞 409，不静默覆盖。
+    `revision_note` 是确认框里那句修改建议（`KA-48`）：只调写法与详略，不改事实与结论；
+    上限与批次备注同一枚常量，超限判 422、不截断（`KA-31` 同一条口径）。
     """
 
     model_config = ConfigDict(extra="forbid")
 
     if_rev: int | None = Field(default=None, ge=0, description="乐观并发：与当前 `rev` 不符即 409（CW-6）")
+    revision_note: str = Field(default="", max_length=KP_REVIEW_NOTE_MAX_CHARS)
+
+
+class KpNarrativeGenerateIn(BaseModel):
+    """章导读单点生成（`KA-47`）：详情面「一键生成／重新生成」的请求体：可选序号＋可选修改建议。
+
+    没有正文键：导读由模型按该章区间现读现写，人给的那份走 `PUT …/narrative`。
+    `if_rev` 与其余写腿同一口径——屏上读到的那一份被别处改过时先撞 409，不静默覆盖。
+    `revision_note` 与总结腿同义（`KA-48`）：只调写法与详略，不改事实与结论。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    if_rev: int | None = Field(default=None, ge=0, description="乐观并发：与当前 `rev` 不符即 409（CW-6）")
+    revision_note: str = Field(default="", max_length=KP_REVIEW_NOTE_MAX_CHARS)
 
 
 class KpConfirmIn(BaseModel):

@@ -1,5 +1,7 @@
 """schemas.py 单元测试：统一格式 Pydantic 模型（设计见 docs/design/parsing-pipeline.md）。"""
 
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
@@ -16,6 +18,11 @@ from axiom_flow.schemas import (
     EditRequest,
     IngestResponse,
     JobStatus,
+    KpExerciseOut,
+    KpJobCreate,
+    KpNodeOut,
+    KpStage,
+    KpWorkspaceOut,
     LastParseResult,
     ManifestEntry,
     PageData,
@@ -259,6 +266,12 @@ class TestApiModels:
         item = BookSyncItem(book_id="b05", file_path="raw/x.pdf")
         assert item.authors == []
         assert item.domain_id == ""
+        assert item.roles == []
+
+    def test_book_sync_item_carries_roles(self):
+        """种类派生的输入只走同步行（ADR 0019）：`roles` 是透传字段，本侧不改写取值。"""
+        item = BookSyncItem(book_id="b05", roles=["textbook", "exercises"])
+        assert item.roles == ["textbook", "exercises"]
 
     def test_book_sync_item_accepts_fullwidth_punctuation(self):
         """REQ-083：中文书名的全角标点不是遍历风险，不得让整批 sync 422。"""
@@ -372,6 +385,15 @@ class TestParseStatusSemantics:
     def test_book_out_last_parse_result_defaults_empty(self):
         assert BookOut(book_id="b05").last_parse_result == ""
 
+    def test_book_out_carries_kind_and_curation_result(self):
+        """`KA-51`／ADR 0019：两枚闭集列都从书目读面透出，缺省空串＝未声明／从未梳理。"""
+        book = BookOut(book_id="b05")
+        assert (book.doc_kind, book.last_curation_result) == ("", "")
+
+    def test_book_out_carries_the_derived_in_flight_reading(self):
+        """`KA-55`：第三段读数是读时派生的布尔，缺省 `false`——它不是库里的一列。"""
+        assert BookOut(book_id="b05").curation_in_flight is False
+
     def test_parse_job_failed_pages_is_structured(self):
         job = ParseJob(id="job-1", book_id="b05", status="partial", failed_pages=[3, 1])
         assert job.status == JobStatus.PARTIAL
@@ -383,3 +405,65 @@ class TestParseStatusSemantics:
     def test_parse_job_rejects_non_numeric_failed_page(self):
         with pytest.raises(ValidationError):
             ParseJob(id="job-1", book_id="b05", status="partial", failed_pages=["abc"])
+
+
+class TestKpJobBody:
+    """`KA-51`／`KA-52`：阶段四值闭集与「目录阶段无页子集重跑」的请求体形状。"""
+
+    def test_the_stage_closed_set_carries_the_exercise_value(self):
+        """第四值先登记在型上：域外值仍由 pydantic 判 422，先于受理门（`KA-51`）。"""
+        assert get_args(KpStage) == ("full", "outline", "content", "exercise")
+        assert KpJobCreate(book_id="b05", stage="exercise").stage == "exercise"
+
+    def test_the_body_has_no_page_subset_or_resume_input(self):
+        """`KA-52`：重跑目录＝同范围重发新批次——请求体没有逐页／续跑键。
+
+        `only_failed` 不是续跑：它只收窄「这一次对哪些节点发问」，批次号照旧新发、取证集照旧是整个
+        页区间。习题腿的两键也不是续跑（`KA-53`）：`target_book_id` 是配套模式的目标书、
+        `retry_node_ids` 只对 `stage='exercise'` 合法且同样是新批次；目录与内容两腿仍无页子集入参。
+        """
+        assert set(KpJobCreate.model_fields) == {
+            "book_id",
+            "page_start",
+            "page_end",
+            "review_note",
+            "stage",
+            "only_failed",
+            "target_book_id",
+            "retry_node_ids",
+        }
+
+    def test_exercise_keys_default_off(self):
+        """两键缺省＝独立模式、首发批次；载荷闭集扩键不改旧请求的读数（`KA-53`）。"""
+        body = KpJobCreate(book_id="b07", stage="exercise")
+        assert body.target_book_id is None
+        assert body.retry_node_ids == []
+
+    def test_target_book_id_rejects_unsafe_segment(self):
+        with pytest.raises(ValidationError):
+            KpJobCreate(book_id="b07", stage="exercise", target_book_id="../b05")
+
+
+class TestKpExerciseFace:
+    """`KA-53`：题行的来源位与习题读面的缺省形状。"""
+
+    def test_node_out_carries_empty_source_keys_by_default(self):
+        """非习题行的两枚来源键恒空串／空表：meta 整槽不外发，只逐键带这两枚。"""
+        row = KpNodeOut(
+            node_id="n1", book_id="b05", job_id="", node_kind="point", name="3.2", gen_status="candidate"
+        )
+        assert row.source_book_id == ""
+        assert row.source_pages == []
+
+    def test_workspace_exercise_is_optional(self):
+        """教材的共享主表永不含习题行：这一位对它缺省 `None`，不制造第二套读数。"""
+        assert KpWorkspaceOut(book_id="b05").exercise is None
+
+    def test_exercise_defaults_are_the_empty_standalone_shape(self):
+        face = KpExerciseOut()
+        assert (face.kind, face.target_book_id, face.done) == ("standalone", None, False)
+        assert (face.items, face.packs, face.pending_reparse, face.unmatched) == ([], 0, 0, [])
+
+    def test_exercise_done_is_a_plain_boolean(self):
+        """完成读数只由服务端派生（题行>0 ∧ 题包齐 ∧ 待重解析零枚），根侧不另算。"""
+        assert KpExerciseOut(items=[], packs=0, pending_reparse=0, done=False).done is False

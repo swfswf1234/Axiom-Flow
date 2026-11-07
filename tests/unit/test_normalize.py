@@ -20,12 +20,17 @@ from axiom_flow.normalize.furniture import (
 from axiom_flow.normalize.toc import (
     TOC_PAGE_SAMPLE_MAX_CHARS,
     TOC_PAGE_SCAN_LIMIT,
+    BodyNameIndex,
     TocEntry,
     anchor_block_for_name,
     clean_entry_rows,
     estimate_print_offset,
+    exercise_entries,
+    exercise_item_entries,
+    is_exercise_label,
     locate_entries,
     page_sample_text,
+    pick_in_window,
     reference_role_for_name,
     toc_entries,
 )
@@ -1061,6 +1066,154 @@ class TestPrintOffsetAndLocating:
         ]
 
 
+class TestTolerantBodyMatch:
+    """`KA-49`／`KA-50`：第一遍前缀查不中的条目再过一趟容错比对，名字取正文那一行。
+
+    四形命中各取真机在册的一枚脏锚形状（b05 的 `$e$`／`\\Gamma`／`\\mathscr{L}^2`／OCR 断词与 b07 的
+    标题折两块），四形不认是它的四条边界＝短名没有鉴别力、窗口外的回声是假锚、家具块不是标题行、
+    前缀是段落起头而不是整行同形。名字腿只吃「条目名＋正文块序列」，不读偏移也不读窗口（`KA-50`）。
+    """
+
+    def test_a_math_delimiter_folds_to_the_same_name(self):
+        """`数 e`（目录）↔ `数 $e$`（正文）：定界符只是排版壳（真机 `afkp-f3bdab5f3d02` 那一形）。"""
+        index = BodyNameIndex([_paragraph_page(62, "数 $e$", "正文。")])
+
+        readings = index.find("数 e")
+
+        assert [(item.name, item.page_no, item.block_index) for item in readings] == [("数 $e$", 62, 0)]
+
+    def test_a_greek_macro_name_folds_to_its_letter(self):
+        """目录把 `$\\Gamma$ 函数` 抄成 `Γ函数`：宏名折其字符后同串（真机 `afkp-1c8c7a0bed99`）。"""
+        index = BodyNameIndex([_paragraph_page(181, "一些正文。", "$\\Gamma$ 函数", "正文。")])
+
+        readings = index.find("Γ函数")
+
+        assert [(item.name, item.page_no, item.block_index) for item in readings] == [
+            ("$\\Gamma$ 函数", 181, 1)
+        ]
+
+    def test_two_macro_shells_around_the_same_letter_fold_together(self):
+        """`\\mathscr{L}^2` 与 `\\mathcal{L}^2` 是同一枚符号的两种写法（真机 `afkp-6e7b1e3f29a0`）。"""
+        index = BodyNameIndex([_paragraph_page(305, "$\\mathcal{L}^2$ 类的函数", "正文。")])
+
+        readings = index.find("$\\mathscr{L}^2$ 类的函数")
+
+        assert [item.name for item in readings] == ["$\\mathcal{L}^2$ 类的函数"]
+
+    def test_a_letter_dropped_by_ocr_still_matches_the_body_line(self):
+        """断词掉字那一形（真机 `afkp-cee53be7edef`）：`STIEI.` 与 `STIEL` 差一枚字符，近似腿认、前缀腿不认。"""
+        index = BodyNameIndex([_paragraph_page(115, "第 6 章 RIEMANN-STIELTJES 积分", "正文。")])
+
+        readings = index.find("第6章 RIEMANN-STIEI. TJES积分")
+
+        assert [item.name for item in readings] == ["第 6 章 RIEMANN-STIELTJES 积分"]
+
+    def test_a_title_split_across_two_blocks_is_one_candidate(self):
+        """正文标题折成两块是产物常态（真机 b07 `afkp-3b9b932264e6`）：锚取第一块，名取两块以一枚空格相连。"""
+        index = BodyNameIndex(
+            [_paragraph_page(93, "§ 2. 反函数的导数. 用参数形式给出的函数的导数.", "隐函数的导数", "正文。")]
+        )
+
+        readings = index.find("§ 2. 反函数的导数。用参数形式给出的函数的导数.隐函数的导数")
+
+        assert [(item.name, item.page_no, item.block_index) for item in readings] == [
+            ("§ 2. 反函数的导数. 用参数形式给出的函数的导数. 隐函数的导数", 93, 0)
+        ]
+
+    def test_candidates_come_back_ordered_by_page_then_block(self):
+        """候选序列的序就是「最早一枚」的判据（`KA-50`）：名字按 `(页号, 块序)` 取，不靠插入序。"""
+        index = BodyNameIndex(
+            [
+                _paragraph_page(50, "级数收敛判别", "正文。"),
+                _paragraph_page(12, "正文。", "级数收敛判别"),
+            ]
+        )
+
+        readings = index.find("级数收敛判别")
+
+        assert [(item.page_no, item.block_index) for item in readings] == [(12, 1), (50, 0)]
+
+    def test_a_short_name_is_never_matched_approximately(self):
+        """`习题`／`数 e` 这一类短名没有鉴别力：近似腿有长度下限，短名只走整行同形。"""
+        index = BodyNameIndex([_paragraph_page(30, "习题选登")])
+
+        assert index.find("习题") == ()
+
+    def test_a_prefix_is_not_a_whole_line_match(self):
+        """前缀是正文段落起头的形状：`函数的极限` 不得认 `函数的极限与连续` 那一行（否则题干会被抄成名字）。"""
+        index = BodyNameIndex([_paragraph_page(79, "函数的极限与连续")])
+
+        assert index.find("函数的极限") == ()
+
+    def test_a_furniture_block_never_enters_the_candidates(self):
+        """判成页眉／页脚／页码的块不是标题行：家具块里撞见的同名行是书眉回声，救回来就是假锚。"""
+        page = BlocksPage(
+            page=62,
+            image_size=[1000, 1400],
+            source="mineru",
+            blocks=[
+                _typed_block(0, "数 $e$", 58, BlockType.HEADER),
+                _typed_block(1, "正文。", 300, BlockType.PARAGRAPH),
+            ],
+        )
+
+        assert BodyNameIndex([page]).find("数 e") == ()
+
+    def test_only_the_first_line_of_a_block_is_a_title_candidate(self):
+        """首行才是标题行的形状：块中间那一行是正文句子，不是这一节的题目。"""
+        index = BodyNameIndex([_paragraph_page(62, "正文开头。\n数 $e$\n正文结尾。")])
+
+        assert index.find("数 e") == ()
+
+    def test_the_earliest_candidate_inside_the_window_is_the_anchor(self):
+        """命中仍只接受 `印刷页＋偏移 ± slack` 窗口内的最早一枚（`KA-49` 的位置腿）：回声页一律不认。"""
+        index = BodyNameIndex(
+            [
+                _paragraph_page(20, "数 $e$"),
+                _paragraph_page(62, "一些正文。", "数 $e$", "正文。"),
+                _paragraph_page(160, "数 $e$"),
+            ]
+        )
+
+        readings = index.find("数 e")
+
+        assert [(item.page_no, item.block_index) for item in readings] == [(20, 0), (62, 1), (160, 0)]
+        assert pick_in_window(readings, printed_page=54, offset=8) == readings[1]
+        assert pick_in_window(readings, printed_page=54, offset=8, slack=0) == readings[1]
+        assert pick_in_window(readings, printed_page=152, offset=8) == readings[2]
+        assert pick_in_window(readings, printed_page=30, offset=8) is None
+
+    def test_no_offset_and_no_printed_page_give_no_anchor(self):
+        """偏移标定不出、或条目行末没有印刷页码时不造锚——与 `KA-33` 的第一遍判据同形。"""
+        index = BodyNameIndex([_paragraph_page(62, "数 $e$")])
+        readings = index.find("数 e")
+
+        assert pick_in_window(readings, printed_page=54, offset=None) is None
+        assert pick_in_window(readings, printed_page=None, offset=8) is None
+
+    def test_the_first_pass_readings_are_not_changed_by_the_tolerant_leg(self):
+        """容错腿是第二遍：`locate_entries` 的偏移标定与逐条读数一字不动（页级复核因此也不会被拖走）。"""
+        toc_page = _paragraph_page(
+            7, "第1章 集合论 …… 1\n第2章 实数 …… 49\n数 e …… 54\nΓ函数 …… 173"
+        )
+        body_pages = (
+            _paragraph_page(45, "第1章 集合论\n正文。", "更多正文。", "正文。"),
+            _paragraph_page(93, "第2章 实数\n正文。", "更多正文。", "正文。"),
+            _paragraph_page(62, "数 $e$", "正文。", "正文。"),
+            _paragraph_page(181, "$\\Gamma$ 函数", "正文。", "正文。"),
+        )
+
+        location = locate_entries(toc_entries(toc_page), body_pages)
+
+        assert location.offset == 44, "偏移只由第一遍标定：容错才会命中的 62／181 两页不进众数"
+        assert [(item.page_no, item.located) for item in location.entries] == [
+            (45, True),
+            (93, True),
+            (None, False),
+            (None, False),
+        ]
+
+
 class TestPageSampleAndIdentityBits:
     """`KA-37`／`KA-38`／`KA-39` 的三枚纯函数腿：判页样本的封顶、锚块指认、附件名判类。"""
 
@@ -1127,4 +1280,101 @@ class TestPageSampleAndIdentityBits:
         assert anchor_block_for_name(page, "第1章 集合论") == 1
         assert anchor_block_for_name(page, "正文里查不到的名字") == 0
         assert anchor_block_for_name(_page_of(8), "任意名字") == 0
+
+
+class TestExerciseLabels:
+    """`KA-46`：章末习题段的确定性识别——整块短标签、编号可选，带解答／答案／提示的另成一类。"""
+
+    def test_the_four_label_shapes_are_recognised_with_an_optional_number(self):
+        """中英各两枚；编号认书里真在用的三种写法（`1.1`、`1-3`、`三`），全角数字按 NFKC 折过也算。"""
+        for text in (
+            "习题",
+            "习 题",
+            "习题 1.1",
+            "习题1-3",
+            "习题 三",
+            "练习",
+            "练习2.3",
+            "Exercises",
+            "Exercises 1.1",
+            "Problems",
+            "Problems 3",
+            "  习题  ",
+            "习题１.１",
+        ):
+            assert is_exercise_label(text), text
+
+    def test_live_text_and_answer_labels_are_not_exercise_labels(self):
+        """整块判：带题干的不是标签；`习题解答`／`习题提示`／`练习答案` 是答案侧，不成习题行。"""
+        for text in (
+            "习题 1.1 求下列函数的极限。",
+            "习题解答",
+            "习题提示",
+            "练习答案",
+            "本章习题",
+            "第一章 习题课",
+            "",
+            "   ",
+        ):
+            assert not is_exercise_label(text), text
+
+    def test_a_page_yields_its_exercise_blocks_with_their_block_indexes(self):
+        """一页里命中的块各成一枚、按块序给出：锚点要指回它自己那一块，不能全落到页首。"""
+        page = _paragraph_page(12, "上一节正文的结尾。", "习题 1.1", "1. 求极限 ……", "练习")
+
+        entries = exercise_entries(page)
+
+        assert [(entry.name, entry.block_index) for entry in entries] == [
+            ("习题 1.1", 1),
+            ("练习", 3),
+        ]
+
+    def test_a_page_without_exercise_blocks_yields_nothing(self):
+        """认不出就是零枚：本腿不猜「这一段看起来像习题」。"""
+        assert exercise_entries(_paragraph_page(12, "第 1 章 极限", "1.1 数列极限")) == ()
+
+
+class TestExerciseItemEntries:
+    """`KA-53`：一行行首的题号闭集与同父单调序——题号是书自己写的，只做空白与全半角折叠。"""
+
+    def test_the_closed_set_forms_keep_the_printed_number(self):
+        """六种在册形状各认一枚：题号按书里的写法回给人看，单调序只另记一枚数字键。"""
+        entries = exercise_item_entries(
+            [
+                "【5】设 $a^{[n]} = a(a - h)$",
+                "6. 证明伯努利不等式。",
+                "7、设 $c$ 为正整数。",
+                "(8) 若 $m$ 为偶数。",
+                "（9）同理，容易得知。",
+                "10-12 证明下列不等式。",
+            ]
+        )
+
+        assert [(entry.index, entry.item_no, entry.order_key) for entry in entries] == [
+            (0, "【5】", 5),
+            (1, "6.", 6),
+            (2, "7、", 7),
+            (3, "(8)", 8),
+            (4, "(9)", 9),
+            (5, "10-12", 10),
+        ]
+
+    def test_a_number_that_does_not_move_forward_is_body_text(self):
+        """小问的 (1)(2) 从 1 重新起算、重复题号也回退：只有严格大于上一枚已接受的才开新题。"""
+        entries = exercise_item_entries(
+            [
+                "【5】题面。",
+                "(1) 小问重新从 1 起。",
+                "(2) 另一枚小问。",
+                "【5】重复题号。",
+                "【6】下一题。",
+            ]
+        )
+
+        assert [(entry.index, entry.item_no) for entry in entries] == [(0, "【5】"), (4, "【6】")]
+
+    def test_lines_without_the_closed_shape_yield_nothing(self):
+        """章名、年份、小数与空白都不是题号：认不出＝零行，不猜、不回落模型（`KA-53`）。"""
+        for line in ("1 分析引论", "2017年，公司与上海华谊公司签署协议。", "3.14 是圆周率", "第 1 章 极限", "", "   "):
+            assert exercise_item_entries([line]) == (), line
 

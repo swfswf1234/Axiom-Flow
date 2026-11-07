@@ -3,7 +3,7 @@
 设计状态：Accepted（四表形状的方向与列清单已经确认，列由守护与 ORM 逐列对账）
 确认状态：已确认（四表形状、两模块的通路判据与 `links` 越闸例外均已终审；分析模块 `af_kp` 的判据与本侧写者均已落地，见「af_kp 列清单」节末）
 实现状态：Implemented（四表与迁移 base 已落；本侧梳理通路已交付；缺文本引擎适配器与根侧提升作业）
-最后更新：2026-10-24
+最后更新：2026-11-06
 关联代码：`src/axiom_flow/db/`（models/repositories）、`src/axiom_flow/migrations/`（Alembic 迁移）
 关联测试：`tests/unit/test_db.py`、`tests/unit/test_db_table_family_governance.py`、`tests/unit/test_db_migrations.py`、`tests/integration/test_parse_persistence.py`、`tests/integration/test_concurrency_criteria.py`、`tests/contract/test_api_v1_contract.py`、`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
@@ -88,7 +88,7 @@
 
 | 模块 | 表 | 一行 = | 作用域键 | 谁写 | 列清单 |
 | --- | --- | --- | --- | --- | --- |
-| 解析 | `af_books` | 一册已验证书（qt_books 只读快照 + ingest/解析进度与结局 + 生效解析版本指针 + 扩展槽） | `book_id` | 同步、ingest 与解析收尾 | [↓](#af_books-列清单) |
+| 解析 | `af_books` | 一册已验证书（qt_books 只读快照 + ingest/解析进度与结局 + 生效解析版本指针 + 种类与梳理结局 + 扩展槽） | `book_id` | 同步、ingest、解析收尾与梳理收尾 | [↓](#af_books-列清单) |
 | 解析 | `af_operations` | 一次操作＝一行：解析版本（事件）／块编辑／结构声明／页确认／ingest／同步／清除／检索索引版本／梳理批次流水 | `op_id`（意图行另由 `intent_key` 唯一定位） | 任务生命周期、人工校验与结构声明；余值建而不写 | [↓](#af_operations-列清单) |
 | 解析 | `af_pages` | 一页**在某个解析版本内**的状态、质量、在位产物索引、确认态与页域 | (`book_id`, `job_id`, `page_no`) | 逐页持久化（产物写先于页行） | [↓](#af_pages-列清单) |
 | 分析 | `af_kp` | 一个节点（章／节／知识点）的当前结论 | `node_id`（梳理作用域＝`book_id`，不含版本） | **本侧写者已就位**：批次作业、复核与导出端点、批次流水与清除面；未落＝检索面与 8900 侧提升作业 | [↓](#af_kp-列清单) |
@@ -187,7 +187,7 @@ parse 行 `op_id`。页表以 `job_id` 为作用域键的一分子，因此同�
 | 判据 | 内容 | 代价／反面 |
 | --- | --- | --- |
 | 事件行只答「发生过什么」 | `lifecycle='event'` 只可读出与计数，任何端点与状态机不得据它决定「现在是什么状态」 | 块编辑与结构声明的**逐次修改史不保留**（与前身一致，非回归）；一条流水被读成状态就要求读侧自己排序，判据会从库里漂到代码里 |
-| 当前态只有四个来源 | ① `af_books`（书目进度/结局/生效指针）② `af_pages`（页级就绪与确认）③ `af_operations` 的 `lifecycle='intent'` 行（人工意图）④ `op_kind='parse'` 行的状态列（版本自身进度） | 四源之外的读数一律是派生视图，不得再落列 |
+| 当前态只有四个来源 | ① `af_books`（书目进度/结局/生效指针/种类/梳理结局）② `af_pages`（页级就绪与确认）③ `af_operations` 的 `lifecycle='intent'` 行（人工意图）④ `op_kind='parse'` 行的状态列（版本自身进度） | 四源之外的读数一律是派生视图，不得再落列 |
 | 生效指针仍只有一列 | `af_books.active_job_id` → `af_operations.op_id`（同值同形状），`NULL` = 根视图 `legacy`；`af_operations` 不设任何布尔「生效」列 | 同一事实两处存必漂移 |
 | 排序不用时钟 | 同一坐标取「最新」由唯一键保证只有一行，读侧不需要按时刻排序 | 意图行定位靠 `intent_key`，不靠 `updated_at` 精度 |
 | 就绪与激活仍只读 DB | 就绪判据＝`af_pages.status` + `af_books.active_job_id` + parse 行状态；`artifacts` **只作完整性披露，不作判据** | `artifacts` 与判据同时可读会造出第二事实源（磁盘） |
@@ -234,12 +234,14 @@ parse 行 `op_id`。页表以 `job_id` 为作用域键的一分子，因此同�
 | `display_title` | VARCHAR(500) | 否 | — | 展示用标题 |
 | `authors` | JSON | 否 | — | `list[{name, role}]` |
 | `file_path` | VARCHAR(512) | 否 | — | 源 PDF 的数据根相对路径（同源 `qt_books.file_path`） |
+| `doc_kind` | VARCHAR(16) | 否 | — | 书种类两值闭集 `textbook`／`exercise`，由同步行 `roles` 派生写（两义并存按教材）；`''` = 未声明（不受理梳理） |
 | `page_count` | INT | 是 | — | 全书页数（ingest 写入；`NULL` = 尚未 ingest，页清单枚举域唯一来源） |
 | `sha256` | VARCHAR(64) | 否 | — | 源 PDF SHA-256（ingest 写入；根 `book.json` 退役后的唯一事实源） |
 | `ingest_status` | VARCHAR(16) | 否 | — | `none` / `ingesting` / `ingested` / `failed` |
 | `ingested_at` | DATETIME | 是 | — | ingest 完成时刻（UTC naive）；`NULL` = 从未 ingest |
 | `parse_status` | VARCHAR(24) | 否 | i | **只表达进度**：`pending` / `parsing` |
 | `last_parse_result` | VARCHAR(16) | 否 | — | 最近一次任务结局：`completed`/`partial`/`failed`/`interrupted`；`''` = 从未有任务 |
+| `last_curation_result` | VARCHAR(16) | 否 | — | 最近一次梳理批次结局：`completed`/`partial`/`failed`/`interrupted`；`''` = 从未梳理。只由批次收尾与启动期归一写 |
 | `pages_done` | INT | 否 | — | 生效版本已 `parsed` 页数（描述的是指针所指版本） |
 | `active_job_id` | VARCHAR(64) | 是 | — | 生效解析版本＝`af_operations.op_id`；`NULL` = 根视图 `legacy` |
 | `notes` | TEXT | 是 | — | 人工备注（自由文本只落在这一列） |
@@ -250,7 +252,9 @@ parse 行 `op_id`。页表以 `job_id` 为作用域键的一分子，因此同�
 索引：`ix_af_books_course(course_id)`、`ix_af_books_status(parse_status)`。引擎 InnoDB / utf8mb4。
 
 **同步与进度语义**：同步以 `book_id` 为幂等键，重复同步只 upsert 不产生重复行；qt_books 侧删除或
-变更不回写已同步行（快照语义）。`ingest_status` / `ingested_at` / `parse_status` / `pages_done` 由
+变更不回写已同步行（快照语义）。`doc_kind` 是同步域的派生物：只由同步行的 `roles` 按两值闭集重算
+（两义并存按教材，缺位落 `''`），人工端点与状态机不写本列。`last_curation_result` **不在同步写域内**，
+只由梳理批次收尾与启动期归一写。`ingest_status` / `ingested_at` / `parse_status` / `pages_done` 由
 本侧维护，不依赖 `qt_books` 之外的上游字段；`ingested_at` 每次 ingest 成功即刷新。进度与结局分列：
 `parse_status` 只表达做到哪，结局落在
 `last_parse_result` 且**只在终态写入**，因此运行中刷新列表不会看到结局被进度覆盖；重新 ingest 只
@@ -610,6 +614,10 @@ SQLite 上 `with_for_update()` 是空操作，因此锁类判据（意图 upsert
 | 迁移 | 结构变化 | 存量处置判据 |
 | --- | --- | --- |
 | `20261022_0001` | 四表一次建全：`af_books`（含 `meta`）、`af_operations`（27 列：`intent_key` 唯一键 + 三个索引 + `parser_signature`／`embedding_signature` 两个**分列**签名 + `render_profile`）、`af_pages`（含 `artifacts`／`confirm_state`／`section_kind`／`meta`）、`af_kp`（23 列、四个索引） | 无存量可迁（档 B 整族重建）：前身作业行随 `DROP` 清除、**不迁移**；`af_pages` **不回填**，唯一恢复路径是逐本重新 ingest + 重新解析——不提供「从盘上产物反向灌页行」的脚本，那会让 DB 行成为产物的派生物，与「DB 是就绪唯一事实源」反向 |
+| `20261106_0001` | `af_books` 加两列：`doc_kind`（种类两值闭集，同步腿派生写）、`last_curation_result`（梳理结局闭集，批次收尾与启动期归一写）；表族仍四表、既有无索引变更 | 不回填：存量行两列取默认 `''`＝「未声明／从未梳理」。`doc_kind` 不可由本仓数据重算，唯一补法是同步腿再灌一次（幂等） |
+
+base 之后的结构变更一律以新 revision **线性追加**（不改写 base、不重排链序）：base 可能已在某个库上
+执行过，改写它等于让已迁移库与文档静默分歧。
 
 **双栈一致**：同一份迁移 DDL 必须同时通过 SQLite（临时库）与 MySQL（`qed_test`）的升降级往返；
 任何只对单一方言成立的写法都算缺陷。**降级有损且显式**：`downgrade` 回更早结构时整族 `DROP`

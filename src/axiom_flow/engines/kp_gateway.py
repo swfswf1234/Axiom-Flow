@@ -41,15 +41,20 @@ from axiom_flow.engines.base import (
     ChapterInput,
     ChapterReply,
     EngineError,
+    ExerciseDraft,
+    ExerciseInput,
+    ExerciseReply,
     OutlineEntry,
     PageSample,
     ReferencePage,
+    RevisionContext,
     SectionInput,
     SectionPoints,
     TocPagePick,
     TocVerifyAnswer,
     TocVerifyItem,
 )
+from axiom_flow.normalize.exercise import item_number
 from axiom_flow.normalize.toc import TOC_REFERENCE_KINDS
 
 logger = logging.getLogger(__name__)
@@ -110,24 +115,35 @@ _POINTS_PROMPT = """\
 
 任务：抽出这一节里的知识点，并为这一节写一段节级总结。
 
-输出要求（不合形状的回复会让整节作废，请严格遵守）：
-- 只输出一个 JSON 对象，不写解释、不写代码围栏，形如
+输出要求（只输出一个 JSON 对象，不写解释、不写代码围栏，形如
   {"section_summary": "这一节的一段话总结",
    "points": [
      {"name": "知识点名", "type": "concept", "role": "core", "summary": "1~3 句说明它是什么、怎么用",
+      "must_master": ["学完要能做到的一件事", "再看能做到的第二件事"],
+      "key_definitions": [{"term": "术语原文", "definition": "一句话定义"}],
       "anchors": [{"page": 7, "snippet": "该页支撑它的原文片段"}],
       "links": [{"kind": "prerequisite", "to": "另一端的名字", "note": "一句话"}],
       "parent_ref": "本节标题原文"}
-   ]}
-- section_summary：写成一段通顺连贯的话（约 80~200 字），先讲这一节说的是什么，再讲它的结论
-  怎么用，最后讲它在本章里承接了什么、引出了什么；用完整的句子把它们串成一段，而不是把要点
-  用分号排成一串。只写本节正文里有的内容。
+   ]}）：
+- section_summary：一段通顺连贯的话（约 80~200 字），目标是让没读过本节的人也能抓住这一节。
+  写法：
+  · 第一句落到本节要处理的对象与问题，把它问得具体（带上对象，例如「怎样用有限的手段刻画无限接近」）；
+  · 接着顺着正文把定义、定理或做法推进到结论，每个结论带上它的条件与适用范围（哪条定义、对什么成立）；
+  · 最后一两句说清这个结果接下来在哪一节、被什么用到——落笔前先想清楚这一节在所在章里的位置；
+  · 让读者第一遍就读懂：先给结论再给依据，术语第一次出现时随手给一句白话解释，长句拆成短句；
+  · 材料以本节正文为准；材料里混入了相邻节的内容时，只取与本节标题相符的部分；
+  · 定理名、条件与例子都取自正文，正文没有的不写。
 - name：简短可读（不超过约 50 字），用本节出现的说法或通行术语。
 - type 只能取四值之一：memory＝要记住的定义或结论；procedure＝会做的做法与计算步骤；
   concept＝要理解的概念与思想；design＝方法的选择与设计思路。
 - role 只能取四值之一：core＝这一节的主干；explainer＝帮助讲解的辅助点；example＝例题或实例；
   拿不准就留空串。
 - summary 是学习者先看到的那一行：先说它是什么，再说用它做什么。
+- must_master：这个点学完要能做到什么，给 2~4 条，每条一句、不超过 60 字，用可检验的动作写
+  （例如「能写出 ε-N 定义的三处量词顺序」「会用定义判断给定数列是否收敛」），不写「理解了」这类空话。
+- key_definitions：这个点的关键定义，给 2~6 条，每条是一枚只含 term 与 definition 的对象；
+  term 照正文里的写法（术语原文，不超过 30 字），definition 用一句话说清它指什么、条件是什么
+  （不超过 120 字）。本节正文没有给出定义时，这一项给 []——不要拿别处的定义补。
 - anchors 至少一条：page 必须落在本轮给出的页里，snippet 抄该页原文（不超过 200 字）。
 - links 可以整体省略；要写时 kind 取 prerequisite／co_requisite／explains／exemplifies／extends 之一，
   to 只能指向本数组里排在它之前的某个 name，或本节标题——指向别处的名字会让这一条被判为无效行。
@@ -282,7 +298,29 @@ def _review_note_block(review_note: str) -> list[str]:
     ]
 
 
-def _points_prompt(section: SectionInput, review_note: str = "") -> str:
+def _revision_block(revision: RevisionContext | None) -> list[str]:
+    """重写上下文段（`KA-48`）：修改建议与现有成品成对出现，两样都空＝整段不出现。
+
+    与批次备注（`_review_note_block`）分两段：备注是「上一轮批注哪里错了」，本段是「这一篇怎么写更好」。
+    建议只调写法与详略，事实与结论仍以正文材料为准——底稿因此标成「可以增删改写的底稿」而不是事实源。
+    """
+    if revision is None:
+        return []
+    note = revision.note.strip()
+    previous = revision.previous.strip()
+    if not note and not previous:
+        return []
+    lines: list[str] = [""]
+    if note:
+        lines.extend(["本次修改建议（按它调整写法与详略；事实与结论以正文材料为准）：", note, ""])
+    if previous:
+        lines.extend([f"现有{revision.previous_kind}（这次重写以它为底稿，可以增删改写）：", previous, ""])
+    return lines
+
+
+def _points_prompt(
+    section: SectionInput, review_note: str = "", revision: RevisionContext | None = None
+) -> str:
     parent = section.parent_id or "（无：本段不在目录树上）"
     lines = [
         _POINTS_PROMPT,
@@ -298,28 +336,42 @@ def _points_prompt(section: SectionInput, review_note: str = "") -> str:
         lines.append(page.markdown.rstrip())
         lines.append("")
     lines.extend(_review_note_block(review_note))
+    lines.extend(_revision_block(revision))
     return "\n".join(lines)
 
 
 _CHAPTER_PROMPT = """\
-你是教材章节导读器。本轮只处理一章，材料分两块：章首正文（按页给出，每页以「[页 N]」起头）
+你是教材章节导读作者。本轮只处理一章，材料分两块：章首正文（按页给出，每页以「[页 N]」起头）
 与其下各知识点的节级总结清单。
 
-任务：为这一章写一段章级总结与一篇章级导读。
+任务：为这一章写「本章学习内容」（`chapter_summary`）与「本章导读」（`chapter_narrative`）。
+两者都从整章的全局落笔：语言精炼、专业、准确，让学习者第一遍就能读懂这一章在学什么、为什么这样学。
 
-输出要求（不合形状的回复会让整章作废，请严格遵守）：
-- 只输出一个 JSON 对象，不写解释、不写代码围栏，形如
-  {"chapter_summary": "这一章的一段话总结", "chapter_narrative": "这一章的导读"}
-- chapter_summary：一段通顺连贯的话（约 80~200 字），先讲这一章要解决什么问题，再讲它给出了
-  哪些主要结论，最后讲它在这一门课里承接了什么、为后面哪一章做了准备；不要用分号把要点排成串。
-- chapter_narrative：一篇导读（约 300~600 字），分三段写：第一段讲这一章的总问题与为什么难；
-  第二段按顺序讲各个知识点怎样一层层推进到结论；第三段讲学完这一章应当能做什么、看什么时
-  会用到它。只用材料里有的内容，不编造材料里没有的定理与例子。
-- 材料里的「节级总结清单」是逐节已经写好的总结，导读要在此基础上串成一条线，不要逐条复述。
+输出要求（只输出一个 JSON 对象，不写解释、不写代码围栏，形如
+  {"chapter_summary": "这一章的一段话总结", "chapter_narrative": "这一章的导读"}）：
+- chapter_summary 就是学习者看到的「本章学习内容」：一段通顺连贯的话（约 80~200 字），
+  让人一眼看清这一章学什么、解决什么问题。
+  写法：
+  · 开头点名这一章要学的对象与要解决的具体问题（例如「实数系为什么需要完备性」）；
+  · 中段给结论链：由哪几个定义、定理或构造把问题解决到什么程度，条件和结论都点出具体名称；
+  · 结尾说清这条链在整门课里接到哪里；
+  · 先给结论再给依据，术语第一次出现时给一句白话解释，长句拆成短句；
+  · 节级总结是素材：把它们各自还原成该节的结论，再串成本章的链条；
+  · 事实、定理名与例子都取自材料，材料之外的不写。
+- chapter_narrative：一篇导读（约 300~600 字），分三段，像一位老师带着学生走一遍这一章：
+  · 第一段讲这一章的总问题，以及它难在哪个具体环节；
+  · 第二段按材料顺序讲各知识点怎样推进到结论：每一层点明用到的定义、定理或构造，说清它解决了
+    上一层留下的什么，相邻两节之间写出「上一步留下了什么，下一步要做什么」；
+  · 第三段讲学完这一章能做什么、后面哪一章会直接用到它；
+  · 第二段写推进关系而不是逐条复述节级总结；语言像讲课时的口语引导，短句、具体的比喻都可以，
+    空泛的口号不要；
+  · 每一段的论断都能在材料里找到依据，材料之外的定理与例子不写。
 """
 
 
-def _chapter_prompt(material: ChapterInput, review_note: str = "") -> str:
+def _chapter_prompt(
+    material: ChapterInput, review_note: str = "", revision: RevisionContext | None = None
+) -> str:
     lines = [
         _CHAPTER_PROMPT,
         f"章标题：{material.title}",
@@ -343,7 +395,60 @@ def _chapter_prompt(material: ChapterInput, review_note: str = "") -> str:
         lines.append("- （其下各知识点都没有总结）")
     lines.append("")
     lines.extend(_review_note_block(review_note))
+    lines.extend(_revision_block(revision))
     return "\n".join(lines)
+
+
+_EXERCISE_PROMPT = """\
+你是习题集的题目与解答切分器。本轮只处理一节；题号与每题的正文边界已由规则给出，不得增删题号、
+不得改题号、不得自行分题。
+
+任务：对给出的每一道题，只看这一题自己的正文（每行前面有行号），判断解答从第几行开始——
+只报行号，不要抄写任何正文。
+
+输出要求（只输出一个 JSON 对象，不写解释、不写代码围栏）：
+{"items": [{"item_no": "题号原文", "solution_start": 行号}]}
+- item_no 照抄输入方括号里的题号，一个字不改。
+- solution_start：解答第一行前面的行号；这一题没有解答给 0；整段都是解答（题面为空）给 1。
+- 判不出解答起点时给 -1，不要猜；行号按输入里每行前面的数字，空行也有行号。
+- 每道题给且只给一个对象，对象数必须与输入题数相同。
+"""
+
+
+def _exercise_prompt(section: ExerciseInput, review_note: str = "") -> str:
+    """题腿 prompt（`KA-56`）：题号边界由规则给，模型只判解答起始行，正文由程序切出。"""
+    lines = [
+        _EXERCISE_PROMPT,
+        f"节标题：{section.title or '（目录未覆盖区间）'}",
+        f"页区间：{section.page_start}..{section.page_end}",
+        f"本节题数：{len(section.items)}",
+        "",
+        "各题正文（方括号里是题号；每行前面的数字是行号）：",
+        "",
+    ]
+    for item in section.items:
+        lines.append(f"[{item.item_no}]（第 {item.page_start}..{item.page_end} 页）")
+        for index, line in enumerate(item.text.splitlines(), start=1):
+            lines.append(f"  {index}| {line}")
+        lines.append("")
+    lines.extend(_review_note_block(review_note))
+    return "\n".join(lines)
+
+
+def _slice_exercise_text(text: str, start: Any) -> tuple[str, str]:
+    """题腿的正文拼装（`KA-56`）：模型只给解答起始行号，两段从输入原文切出。
+
+    0＝这一题没有解答（整段都是题面）；越界、非整数或 -1＝切分点没确认，两段都取空串，
+    由编排层按「题面未取到」披露——不猜、也不把整段当题面。行序与公式原样保留。
+    """
+    lines = text.splitlines()
+    if isinstance(start, bool) or not isinstance(start, int):
+        return "", ""
+    if start == 0:
+        return "\n".join(lines).strip(), ""
+    if 1 <= start <= len(lines):
+        return "\n".join(lines[: start - 1]).strip(), "\n".join(lines[start - 1 :]).strip()
+    return "", ""
 
 
 def _toc_pages_prompt(samples: Sequence[PageSample], review_note: str = "") -> str:
@@ -396,9 +501,15 @@ class KpGatewayEngine:
         self._owns_client = client is None
         self._batch: tuple[str, str] | None = None
         self._review_note = ""
+        self._revision: RevisionContext | None = None
 
     def bind_batch(
-        self, *, book_id: str, gen_batch: str, review_note: str = ""
+        self,
+        *,
+        book_id: str,
+        gen_batch: str,
+        review_note: str = "",
+        revision: RevisionContext | None = None,
     ) -> KpGatewayEngine:
         """把当前批次身份交给适配器（返回自身，装配点一行接完）。
 
@@ -406,10 +517,12 @@ class KpGatewayEngine:
         不会把后一批的调用记到前一批头上。
 
         `review_note` 一并交进来（AF-T5 甲）：它是**这一轮**的上下文，跟着批次身份走同样的
-        一次性绑定，执行体不必再为备注开第二条通路。
+        一次性绑定，执行体不必再为备注开第二条通路。`revision` 属于单点重写（`KA-48`），每次
+        绑定都会整个换掉——没传即清空，免得上一枚请求的建议漏进下一枚。
         """
         self._batch = (book_id, gen_batch)
         self._review_note = review_note
+        self._revision = revision
         return self
 
     def _http(self) -> httpx.Client:
@@ -531,7 +644,7 @@ class KpGatewayEngine:
     def points(self, section: SectionInput) -> SectionPoints:
         reply = self._post_text(
             "points",
-            _points_prompt(section, self._review_note),
+            _points_prompt(section, self._review_note, self._revision),
             {
                 "section": section.title,
                 "page_start": section.page_start,
@@ -549,7 +662,7 @@ class KpGatewayEngine:
         """
         reply = self._post_text(
             "chapter",
-            _chapter_prompt(material, self._review_note),
+            _chapter_prompt(material, self._review_note, self._revision),
             {
                 "chapter": material.title,
                 "page_start": material.page_start,
@@ -575,6 +688,46 @@ class KpGatewayEngine:
             summary=summary.strip() if isinstance(summary, str) else "",
             narrative=narrative.strip() if isinstance(narrative, str) else "",
         )
+
+    def exercise(self, section: ExerciseInput) -> ExerciseReply:
+        """题腿（`KA-53`）：规则给出的题边界 ＋ 模型只确认切分点（`KA-56`）。
+
+        模型回一行一题的行号（解答从第几行起），题面与解答的正文由程序按原文切出——模型不再转写
+        原文，既省输出也免抄错。题号在适配层折回归一键（`【7】` 与 `7` 同键），切分点按同一键取回
+        对应的原文；模型多给的题号丢弃，少给的由编排层按「题面未取到」披露。行号非法（缺键、
+        非整数、`-1`、越界）一律切成两段空串，不替模型猜位置，也不因一条坏对象判整节失败。
+        """
+        reply = self._post_text(
+            "exercise",
+            _exercise_prompt(section, self._review_note),
+            {
+                "exercise_section": section.title,
+                "page_start": section.page_start,
+                "page_end": section.page_end,
+                "item_count": len(section.items),
+            },
+        )
+        if not reply.strip():
+            raise EngineError("模型空回复（exercise）：不折算成零题，按节失败披露")
+        payload = self._object(reply, "exercise")
+        raw = payload.get("items")
+        if not isinstance(raw, list):
+            raise EngineError("题腿回复缺 items 数组（exercise）")
+        sources: dict[str, str] = {}
+        for item in section.items:
+            sources.setdefault(item_number(item.item_no) or item.item_no.strip(), item.text)
+        drafts: list[ExerciseDraft] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            number = item_number(str(entry.get("item_no") or "")) or str(entry.get("item_no") or "").strip()
+            if not number:
+                continue
+            problem, solution = _slice_exercise_text(
+                sources.get(number, ""), entry.get("solution_start")
+            )
+            drafts.append(ExerciseDraft(item_no=number, problem=problem, solution=solution))
+        return ExerciseReply(items=tuple(drafts))
 
     def _post_text(self, step: str, prompt: str, meta: dict[str, Any]) -> str:
         """一次调用：出站唯一、归因随体、四类故障各归一条 `EngineError` 文案。"""

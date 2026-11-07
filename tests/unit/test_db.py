@@ -230,6 +230,52 @@ class TestBookRepository:
         assert book.title == "数学分析原理（第 3 版）", "同步字段照覆盖，保护区才只有 meta 一列"
         assert book.meta == {"draft_recall": 0.41, "reviewed_by": "swf"}
 
+    def test_new_book_is_undeclared_and_never_curated(self, session):
+        """两列默认空串：未声明种类＝不受理梳理，空结局＝从未梳理（ADR 0019）。"""
+        repo = BookRepository(session)
+        repo.upsert_many([_row()])
+
+        book = repo.get("mathanalysis-b05")
+        assert book.doc_kind == ""
+        assert book.last_curation_result == ""
+
+    @pytest.mark.parametrize(
+        ("roles", "expected"),
+        [
+            (["textbook"], "textbook"),
+            (["textbook", "exercises"], "textbook"),
+            (["exercises"], "exercise"),
+            (["solutions"], "exercise"),
+            ([], ""),
+            (["slides"], ""),
+        ],
+    )
+    def test_sync_derives_doc_kind_from_roles(self, session, roles, expected):
+        """派生口径两义并存按教材；闭集外的取值不猜（落未声明，由受理门拒）。"""
+        repo = BookRepository(session)
+        repo.upsert_many([_row(roles=roles)])
+
+        assert repo.get("mathanalysis-b05").doc_kind == expected
+
+    def test_resync_rederives_doc_kind(self, session):
+        """同步是 `doc_kind` 的唯一写者：重跑即按新 `roles` 重算，不保留旧值。"""
+        repo = BookRepository(session)
+        repo.upsert_many([_row(roles=["exercises"])])
+        repo.upsert_many([_row(roles=["textbook"])])
+
+        assert repo.get("mathanalysis-b05").doc_kind == "textbook"
+
+    def test_sync_never_writes_last_curation_result(self, session):
+        """梳理结局只由批次收尾与启动期归一写；同步重跑不得吃掉已写结局。"""
+        repo = BookRepository(session)
+        repo.upsert_many([_row()])
+        repo.get("mathanalysis-b05").last_curation_result = "partial"
+        session.flush()
+
+        repo.upsert_many([_row(title="数学分析原理（第 3 版）")])
+
+        assert repo.get("mathanalysis-b05").last_curation_result == "partial"
+
     def test_update_meta_is_whole_column_overwrite(self, session):
         """CW-5：人工侧不做「读 JSON→改一键→写回」，整列覆写才是可预测的写法。"""
         repo = BookRepository(session)
@@ -1242,11 +1288,13 @@ class TestKpLedgerRow:
         assert (stored.intent_key, stored.parser_signature, stored.embedding_signature) == (None, "", "")
 
     def test_kp_row_payload_and_result_stay_inside_their_closed_shape(self, session):
-        """载荷五键、`result` 只取闭集读数：流水答「这一批做了什么」，自由键即账面失真。
+        """载荷八键、`result` 只取闭集读数：流水答「这一批做了什么」，自由键即账面失真。
 
         `review_note` 是入参不是计数（AF-T5 甲），故与页区间同列 `payload`；缺省落空串而不是
         `null`——读侧不必为「有没有备注」维持两种形状。`stage` 同列（`KA-34`）：它也是入参，
-        缺省 `full` 与早期批次的实际形态一致。
+        缺省 `full` 与早期批次的实际形态一致。`only_failed` 是第六键（`KA-52`）：它答「这一批是
+        整批还是按失败节点重跑」，缺省 `False` 与早期批次的实际形态一致。`target_book_id` 与
+        `retry_node_ids` 是习题腿的两枚范围（`KA-53`）：缺省空串／空表，只在习题集批次里给值。
         """
         row = self._ledger(session)
 
@@ -1256,10 +1304,15 @@ class TestKpLedgerRow:
             "page_end",
             "review_note",
             "stage",
+            "only_failed",
+            "target_book_id",
+            "retry_node_ids",
         }
         assert (row.payload["page_start"], row.payload["page_end"]) == (3, 7)
         assert row.payload["review_note"] == "第 3 章的节标题把书眉粘进来了"
         assert row.payload["stage"] == "full"
+        assert row.payload["only_failed"] is False
+        assert (row.payload["target_book_id"], row.payload["retry_node_ids"]) == (None, [])
         assert set(row.result) <= set(KP_RESULT_KEYS)
         assert row.result["failed_sections"] == 1
         assert (row.progress, row.failed_pages, row.pages, row.meta) == ({}, [], None, None)
