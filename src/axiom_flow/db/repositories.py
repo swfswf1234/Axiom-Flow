@@ -85,7 +85,11 @@ KP_PAYLOAD_KEYS = (
 #: 后两枚属习题题的来源位（`KA-53`）：配套模式的来源书与解答页只进扩展槽、不建列——解答页不是
 #: 锚点（`KA-18` 要求锚点与行的取证版本同书同版），建列会诱使读侧把它当锚解释。
 #: 末两枚属点行详情（`KA-57`）：掌握要点与关键定义只给屏侧渲染、不进 WHERE，故不进实体列；
-#: 章行不写这两枚（章级「学什么」由 `summary` 承担）。
+#: 章行不写这两枚（章级「学什么」由 `summary` 承担）。`material_ranges` 属点行详情（`KA-66`）：
+#: 本次取材块区间同样只供复核回指，不进 WHERE。`optional` 是目录行自己的印刷语义（选学 `\*`
+#: 标记，`KA-41`）：名字成行时已卸标，标记本身留在扩展槽，读面暂不外发。
+#: `chapter_check` 属章行异常注记（PLAN-033 W6）：只在「同模型重试后仍不过」时写
+#: `{passed, issues, model}`，通过的行不写；它是披露位而不是判据位，不参与受理、去重与确认。
 KP_META_KEYS = (
     "toc_role",
     "toc_kind",
@@ -93,11 +97,46 @@ KP_META_KEYS = (
     "source_pages",
     "must_master",
     "key_definitions",
+    "material_ranges",
+    "optional",
+    "chapter_check",
+    "verify_state",
+    "verify_verdict",
+    "verify_note",
 )
+
+
+def sanitize_material_ranges(values: Any) -> list[dict[str, Any]]:
+    """`KA-66`：取材区间的净化——坏项丢弃，页与块序升序去重。
+
+    写库与读面共用这一份口径：坏值不牵连点行，空表即「没有可写的区间」。
+    """
+    if not isinstance(values, list):
+        return []
+    grouped: dict[int, set[int]] = {}
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        page = item.get("page")
+        indexes = item.get("block_indexes")
+        if not isinstance(page, int) or page < 1 or not isinstance(indexes, list):
+            continue
+        good = {index for index in indexes if isinstance(index, int) and index >= 0}
+        if good:
+            grouped.setdefault(page, set()).update(good)
+    return [
+        {"page": page, "block_indexes": sorted(grouped[page])} for page in sorted(grouped)
+    ]
 #: `outline_summary_rows`（第二十三键，`KA-43`）＝`content` 批次里被写上节级总结的在册目录行数。
 #: 习题腿五键（`KA-53`）：`exercise_item_rows`（第二十九）＝成出的题行数；`exercise_pack_rows`
 #: （第三十）＝落盘的题包篇数；`merged_exercise_rows`（第三十一）＝配套模式合并命中并写出的行数；
 #: `unmatched_solutions`／`unmatched_solution_details`（第三十二／三十三）＝只披露的未匹配解答。
+#: `outline_judged_pages`（第三十四）＝逐页判页腿实判过的页（PLAN-031 P-1~P-5）：空集即「这一轮
+#: 没有逐页判定」，整本条目腿接手时它就是兜底读数的指认面。
+#: `duplicate_outline_rows`（第三十五）＝成行处折叠掉的重影目录行数（PLAN-031 D-11／D-12）：
+#: 同父同名只留书序第一枚、书级附件名全书唯一，屏上少的行在账上留一枚计数。
+#: `folded_sub_items`（第三十六）＝折入二级的三级细目枚数（KA-62）：它们不单独成行，
+#: 所属二级的显示段因此覆盖它们的页范围。
 KP_RESULT_KEYS = (
     "outline_rows",
     "point_rows",
@@ -124,14 +163,23 @@ KP_RESULT_KEYS = (
     "dropped_toc_pages",
     "outline_toc_pages",
     "outline_fallback_pages",
+    "outline_judged_pages",
     "verified_outline_entries",
     "reference_rows",
+    "duplicate_outline_rows",
     "superseded_rows",
     "exercise_item_rows",
     "exercise_pack_rows",
     "merged_exercise_rows",
     "unmatched_solutions",
     "unmatched_solution_details",
+    "folded_sub_items",
+    "type_review_rows",
+    "type_review_flags",
+    "split_exercise_rows",
+    "point_windows",
+    "point_merges",
+    "material_ranges_rows",
 )
 
 #: 页确认门是否已启用（`KA-3` 的第二个析取支）。`af_pages.confirm_state` 的写者属另一条线
@@ -2004,6 +2052,111 @@ class KpRepository:
         self.session.flush()
         return bool(result.rowcount)
 
+    def set_material_ranges(
+        self, *, book_id: str, node_id: str, ranges: Sequence[dict[str, Any]]
+    ) -> bool:
+        """点行取材区间的唯一系统腿（`KA-66`）：只往 `meta` 里并一枚键，坏项丢弃、空表不写。
+
+        `meta` 的其余键逐键保留（`toc_role` 等身份位不得因这次写入消失）；`node_kind` 钉
+        `outline`，`confirmed=0` 护住人的背书——取材区间是在册点行的机器读数，不是人工结论。
+        `rev` **不递增**，与 `set_outline_summary` 同一条理由：机器自己补一份读数不该让人工的
+        `if_rev` 平白撞一次 409。同值重算不算写入，重跑同一批不制造无意义的 `updated_at` 走样。
+        """
+        cleaned = sanitize_material_ranges(list(ranges))
+        if not cleaned:
+            return False
+        node = self.session.get(AfKp, node_id)
+        if (
+            node is None
+            or node.book_id != book_id
+            or node.node_kind != "outline"
+            or node.confirmed
+        ):
+            return False
+        meta = dict(node.meta or {})
+        if meta.get("material_ranges") == cleaned:
+            return False
+        meta["material_ranges"] = cleaned
+        node.meta = meta
+        node.updated_at = utc_now()
+        self.session.flush()
+        return True
+
+    def set_chapter_check(
+        self, *, book_id: str, node_id: str, issues: Sequence[str], model: str = ""
+    ) -> bool:
+        """章行异常注记的唯一系统腿（PLAN-033 W6）：重试后仍不过时并一枚 `meta.chapter_check`。
+
+        只在**未通过**时调用：`{passed: False, issues, model}` 是披露位，通过的行不写这一键。
+        `meta` 其余键逐键保留，`node_kind` 钉 `outline`、`confirmed=0` 护住人的背书；`rev` 不递增
+        （与 `set_material_ranges` 同一条理由：机器读数不该让屏侧的 `if_rev` 平白撞 409）。
+        空 `issues` 不写：没有命中项就没有要披露的事实。
+        """
+        cleaned = [str(issue).strip()[:200] for issue in issues if str(issue).strip()]
+        if not cleaned:
+            return False
+        check = {"passed": False, "issues": cleaned[:10], "model": (model or "").strip()[:120]}
+        node = self.session.get(AfKp, node_id)
+        if (
+            node is None
+            or node.book_id != book_id
+            or node.node_kind != "outline"
+            or node.confirmed
+        ):
+            return False
+        meta = dict(node.meta or {})
+        if meta.get("chapter_check") == check:
+            return False
+        meta["chapter_check"] = check
+        node.meta = meta
+        node.updated_at = utc_now()
+        self.session.flush()
+        return True
+
+    def set_exercise_verify(
+        self, *, book_id: str, node_id: str, state: str, verdict: str = "", note: str = ""
+    ) -> bool:
+        """题行配对校验读数的唯一系统腿（`KA-70`）：只往 `meta` 并 `verify_*` 三键。
+
+        `state` 闭集 `done`／`failed`；`verdict` 闭集 `ok`／`suspect`／`reject`，`note` 截 300 字。
+        `failed` 只记失败、不补假结论，且把该行上一次的 `verify_note` 清掉——同一行重跑后结论
+        不能留着旧理由。`meta` 其余键逐键保留；`node_kind` 钉 `point`，`confirmed=0` 护住人的
+        背书。`rev` **不递增**，与 `set_material_ranges` 同一条理由：机器读数不该让屏侧的
+        `if_rev` 平白撞 409。同值重算不算写入。
+        """
+        if state not in ("done", "failed"):
+            return False
+        fragment: dict[str, Any] = {"verify_state": state}
+        if state == "done":
+            cleaned_verdict = (verdict or "").strip()
+            if cleaned_verdict not in ("ok", "suspect", "reject"):
+                return False
+            fragment["verify_verdict"] = cleaned_verdict
+            cleaned_note = (note or "").strip()
+            if cleaned_note:
+                fragment["verify_note"] = cleaned_note[:300]
+        node = self.session.get(AfKp, node_id)
+        if (
+            node is None
+            or node.book_id != book_id
+            or node.node_kind != "point"
+            or node.confirmed
+        ):
+            return False
+        meta = dict(node.meta or {})
+        merged = {
+            key: value
+            for key, value in meta.items()
+            if key not in ("verify_verdict", "verify_note")
+        }
+        merged.update(fragment)
+        if merged == meta:
+            return False
+        node.meta = merged
+        node.updated_at = utc_now()
+        self.session.flush()
+        return True
+
     def regenerate_outline_summary(
         self, node_id: str, *, summary: str, if_rev: int | None = None
     ) -> KpWriteResult:
@@ -2084,6 +2237,37 @@ class KpRepository:
             update(AfKp)
             .where(AfKp.node_id == node_id, AfKp.confirmed == 0)
             .values(meta=meta, rev=AfKp.rev + 1, updated_at=utc_now())
+        )
+        self.session.flush()
+        return bool(result.rowcount)
+
+    def set_exercise_reading(
+        self, node_id: str, *, state: str, target: str = "", kind: str = ""
+    ) -> bool:
+        """题行的逐题机器读数（REQ-161 W5）：`match_state` 随本批，两枚读数只补空位。
+
+        `skipped`（引擎没有这条腿）不写任何键——旧引擎的题行形状不因新腿出现而无故多出空值。
+        与 `set_exercise_source` 同纪律：`confirmed=1` 的行不碰（`KA-13`），别的 meta 键原样并回；
+        同一道题被第二本习题集认领时，先到的 `target_item`／`exercise_type` 不被后到的覆盖。
+        """
+        if state not in ("done", "failed"):
+            return False
+        node = self.get(node_id)
+        if node is None or node.confirmed:
+            return False
+        current = dict(node.meta or {})
+        updated = dict(current)
+        updated["match_state"] = state
+        if target:
+            updated.setdefault("target_item", target)
+        if kind:
+            updated.setdefault("exercise_type", kind)
+        if updated == current:
+            return False
+        result = self.session.execute(
+            update(AfKp)
+            .where(AfKp.node_id == node_id, AfKp.confirmed == 0)
+            .values(meta=updated, rev=AfKp.rev + 1, updated_at=utc_now())
         )
         self.session.flush()
         return bool(result.rowcount)

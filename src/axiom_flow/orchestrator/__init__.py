@@ -20,6 +20,7 @@ from axiom_flow.orchestrator.pipeline import (
     rebuild_chunks,
     run_parse_job,
 )
+from axiom_flow.orchestrator.versions import resolve_visible_version
 
 __all__ = [
     "MODEL_UNAVAILABLE",
@@ -31,6 +32,7 @@ __all__ = [
     "anchor_review_flags",
     "finalize_batch",
     "rebuild_chunks",
+    "resolve_visible_version",
     "run_knowledge_job",
     "run_parse_job",
 ]

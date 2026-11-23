@@ -158,7 +158,7 @@ erDiagram
         varchar role "core/explainer/example 或空"
         json links "关系简单写"
         json anchors "回指页与块"
-        varchar narrative_ref "长文在数据根下的相对路径"
+        varchar narrative_ref "长文单段文件名；路径按 kp/ 目录读时派生"
         int rev "乐观并发序号"
         varchar gen_batch "梳理批次，保留最新 2 批的分组键"
     }
@@ -406,7 +406,7 @@ JSON 取值，既违「只读不筛」纪律，也让 JSON 反向闸失去意义
 | `summary` | VARCHAR(1000) | 否 `''` | — | 一句话总结（章与点都可写），上限与根侧同值使提升原样平移零截断；**长叙述不落本列** |
 | `links` | JSON | 是 | — | 关系简单写：`[{kind, to, note}]`，`kind` 闭集 `prerequisite`（先学，有向、参与 DAG）/`co_requisite`（需同时掌握，对称，写前按 `min,max` 归一端点序使反向重复声明幂等）/`explains`/`exemplifies`/`extends`（有向，参与 DAG）。闭集外一律先入 `note`，不随意扩 `kind`。**本列是 JSON 反向闸的明文越闸例外**，判据见「准入守则的答卷与例外登记」 |
 | `anchors` | JSON | 是 | — | 来源锚点 `[{kind, ref_id, page, block_indexes, snippet}]`，页序＝**PDF 页序**（印刷页码只存在于解析草稿）；梳理结论必须能回指到第几页哪几块，否则无从复核 |
-| `narrative_ref` | VARCHAR(200) | 否 `''` | — | 长文在数据根下的**相对路径**：讲解/证明/例题正文写文件，本列只存指针，`''`＝无。路径基准与数据根双闸沿用产物约定（单段名 + 根内路径，拒绝越根） |
+| `narrative_ref` | VARCHAR(200) | 否 `''` | — | 长文在书目录 `kp/` 下的**单段文件名**（`<node_id>.md`）：讲解/证明/例题正文写文件，本列只存指针，`''`＝无。完整路径由「数据根 + `parsed/<domain>/<course>/<book>` + `kp/<narrative_ref>`」读时派生，**不存数据根相对路径**——书目录含 `domain_id`／`course_id`，重新同步可能带回新值，存全串会让长文指向不存在；写入方只能给单段名，路径与越根双闸沿用产物约定 |
 | `gen_status` | VARCHAR(16) | 否 `candidate` | i | 闭集 `draft`/`candidate`/`rejected`，**只有机器写**。域内**不设**表达「人已采纳」的值：人工终态的唯一判据位是 `confirmed`，同一事实两处存是族内红线 |
 | `confirmed` | INTEGER | 否 0 | — | 人工确认位（0/1），**只有人工可置**。与 `gen_status` 分列＝机器与人工各写一列互不覆据；置位才可被提升 |
 | `gen_batch` | VARCHAR(64) | 否 `''` | i | 梳理批次＝一次重编排作业。整批复核、整批清理、整批回滚与「保留最新 2 批」全据此，**故不需要批次表** |

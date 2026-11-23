@@ -1,8 +1,8 @@
 # 书级三态派生读数请求（kp-book-stage-derived-read-request）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-11-06
+最后更新：2026-11-07
 关联 ADR：[ADR 0007](../adr/0007-parse-status-semantics.md)（进度与结局分列：书级「梳理到哪」不能靠批次流水反推）、
 [ADR 0013](../adr/0013-ledger-row-three-elements.md)／[ADR 0018](../adr/0018-task-column-bound-and-progress-ban.md)（本行台账三列口径）、
 [ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（本案零表零列，四表封闭与「当前态只有四个来源」照旧）
@@ -79,10 +79,27 @@ unlocated_rows == 0`。
 
 | ID | 工作项 | 状态 |
 | --- | --- | --- |
-| W1 | 判据纯函数＝统计域取活行与 `node_type`、四键计数、`done` 三条件合取；未定位按当前锚点与目录页集合判，四例单测 | 未开始 |
-| W2 | 读面接线＝`KpWorkspaceOut.stage` 与 `get_kp_workspace` 的派生调用；既有三键逐字不变 | 未开始 |
-| W3 | 契约与文档＝`test_api_v1_contract.py` 断言 `stage` 五键、类型与零行 `false`；`api.md` ④ 类端点表随步 | 未开始 |
-| W4 | 回执＝在本行与根仓库 REQ-156 行登记最终形状与两侧读数 | 未开始 |
+| W1 | 判据纯函数＝统计域取活行与 `node_type`、四键计数、`done` 三条件合取；未定位按当前锚点与目录页集合判，四例单测 | 已完成（`orchestrator/knowledge.py:BookStageReading`／`book_stage_reading`／`book_toc_pages`；四例在 `tests/unit/test_knowledge_pipeline.py::TestBookStageReading`。本项先于本稿落地＝PLAN-028 W10 的配套模式「目标教材整本绿」门直接复用同一函数，故受理面 `accept_kp_job` 已在用它） |
+| W2 | 读面接线＝`KpWorkspaceOut.stage` 与 `get_kp_workspace` 的派生调用；既有三键逐字不变 | 已完成（`schemas.py:KpStageOut`／`KpWorkspaceOut.stage`＋`api/main.py:get_kp_workspace`：行集复用同一次 `list_for_book`，目录页集合只从本版批次流水取一次，零写库） |
+| W3 | 契约与文档＝`test_api_v1_contract.py` 断言 `stage` 五键、类型与零行 `false`；`api.md` ④ 类端点表随步 | 已完成（先红后绿：新增 `TestKpStageReading` 四例，首跑 `KeyError: 'stage'` 四红；`api.md` 工作区回包与 `KA-58` 随步） |
+| W4 | 回执＝在本行与根仓库 REQ-156 行登记最终形状与两侧读数 | 已完成（回执正文见下节；本仓不写根仓库文件，由根侧自读登记） |
+
+## 2026-11-07 交付读数
+
+- **最终形状**：`GET /api/v1/books/{book_id}/kp` 的 `stage`＝
+  `{"rows": int, "endorsed_rows": int, "blank_summaries": int, "unlocated_rows": int, "done": bool}`；
+  统计域与三条件合取按本稿「统计域」节，判据本体晋升为 `KA-58`。既有 `nodes`／`in_flight_batch`／
+  `review_flags`／`exercise` 逐字不变。
+- **本地读数（8902，桩引擎）**：
+  - 零行书：五键齐、四计数 0、`done=false`；
+  - 两行（章＋点）皆非空总结、皆 `confirmed=1`、锚在正文页且本版目录页为 `[1,2]`：`done=true`；
+  - 一行空总结：`blank_summaries=1`、`done=false`；
+  - 一行锚在目录页 p1：`unlocated_rows=1`、`done=false`.
+- **目录页集合取不到时的口径**：`done` 恒 `false`（宁可黄、不假绿）；本仓不因取不到集合改判零行。
+- **两侧读数**：本仓（8902）自带 `stage` 后，根侧 8900 的读时派生兜底按「AF 自带 `stage` 时原样让位」
+  自动退场，不构成第二事实源；根侧无需改码。本仓未写根仓库任何文件。
+- **门禁**：`pytest tests -q` 全绿、`ruff check src tests scripts` 全绿；无 DDL、无迁移、无新端点。
+- **回执去向**：根仓库 REQ-156 行由其自读本稿登记关闭；本仓 todo 的 PLAN-029 镜像行随之迁入 `completed.md`。
 
 ## 过程与证据
 
@@ -123,5 +140,6 @@ unlocated_rows == 0`。
 ## 关闭与归档
 
 - 关闭条件＝W1~W4 逐项达成且根侧 REQ-156 收到回执。
-- 归档判定 Retain，理由见首节；判据本体按 `doc-governance.md` 随步晋升到 `knowledge-analysis.md`
-  的新 `KA-` 条（编号从在册最大号起）。
+- **2026-11-07 关闭判定＝Achieved**：W1~W4 逐项达成（W1 的纯函数与四例先于本稿落地并被受理面复用，
+  W2~W4 本批交付）；回执正文成文于上节，根侧 REQ-156 由其自读登记。判据本体已按 `doc-governance.md`
+  晋升为 `knowledge-analysis.md` 的 `KA-58`（编号从在册最大号起）。归档判定 Retain，理由见首节。

@@ -102,11 +102,20 @@ $env:QED_TEST_MYSQL = "1"
 
 ### 标准映射机制
 
-技能与工具层为 **Qoder 单端**（2026-10-20 起；opencode 接线层经用户授权取消，不立 ADR，机器级配置目录
-改名停用为 `~/.config/opencode.disabled-2026-10-20` 备查）。全局 L1 通用技能正本在机器级 `~/.qoder/skills/`
-（由 Qoder 自动发现，无需清单配置），本仓 L2 治理四件套正本在 `.qoder/skills/`，agent 端直读正本、不持有副本。
-技能只引用「概念」（如「文档治理」「任务生命周期」）：不硬编码本仓库路径，不写单一 agent 端的专有工具名，
-`description` 值长 ≤200 字符（技能清单每会话全量注入，属常驻成本）。`.qoder/` 的版本控制取白名单形态
-`.qoder/*` ＋ `!.qoder/skills/` ＋ `!.qoder/settings.json`——技能正本与权限边界入库，`tmp/`、缓存等本机面
-继续忽略（目录模式必须改成内容模式，否则被排除目录的子项无法重新纳入）。本仓库实际文件由 `AGENTS.md`
-「标准映射（概念 → 本仓库文件）」表定位。新增或改名标准后，同步更新该表与 `docs/standards/index.md`。
+技能与工具层为**双端并存**（2026-11-22 起；此前为 Qoder 单端，opencode 接线层经用户授权取消，
+不立 ADR，机器级配置目录改名停用为 `~/.config/opencode.disabled-2026-10-20` 备查）：
+
+- **Qoder 端**：本仓 L2 治理四件套正本在 `.qoder/skills/`，全局 L1 通用技能在机器级
+  `~/.qoder/skills/`；版本控制取白名单形态 `.qoder/*` ＋ `!.qoder/skills/` ＋ `!.qoder/settings.json`。
+- **DSH 端**：本仓正本在 `.dsh/skills/`（DSH 扫描 rank 100＝`<项目根>/.dsh/skills`），
+  版本控制取 `.dsh/*` ＋ `!.dsh/skills/`。技能目录被 watch，改动热更新到下一次模型请求。
+  机器绑定事实（完整性级别边界、扫描根实况、缓存目录坑）见[本地开发环境](../standards/local-dev.md)
+  「Agent 工具层（DSH 端）」节。
+
+两端技能**各自演进、不互为镜像**，靠「同骨架、受控差异」约束：受控差异只允许作用域改写、
+编号改写与本机实测事实三类，H2 骨架与状态枚举一律不动（对账表见 local-dev.md 同上节）。
+
+技能只引用「概念」（如「文档治理」「任务生命周期」）：不硬编码本仓库路径，不写单一 agent 端的
+专有工具名，`description` 值长 ≤200 字符（技能清单每会话全量注入，属常驻成本）。本仓库实际文件
+由 `AGENTS.md`「标准映射（概念 → 本仓库文件）」表定位。新增或改名标准后，同步更新该表与
+`docs/standards/index.md`。

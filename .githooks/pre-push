@@ -1,0 +1,12 @@
+#!/bin/sh
+# Credential leakage guard: block pushes containing private keys or credential files.
+# 仅检查本次新增文件；凭证明文文件（setting.ini / .env / 私钥 / 证书）一律拒绝推送。
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+  git diff --name-only --diff-filter=A "$remote_sha" "$local_sha" 2>/dev/null |
+    grep -Ei '(^|/)(id_[a-z0-9_]*|.*\.(pem|key|pfx)|setting\.ini|\.env)(\.|$)' && {
+      echo "pre-push: refusing to push credential-like files" >&2
+      exit 1
+    }
+done
+exit 0

@@ -19,7 +19,7 @@
 
 ## 背景
 
-根仓库 REQ-099（承接壳 [PLAN-018](../plans/2026-09-26-parsing-region-edit-typography-request.md)）
+根仓库 REQ-099（承接壳 [PLAN-018](../history/plans/2026-09/2026-09-26-parsing-region-edit-typography-request.md)）
 要求本仓库具备三项能力：R1 区域驱动页解析（框图作为该页解析输入，画 3 框→解析→恰 3 块且文字为
 框内内容）、R2 块结构编辑持久化（删除/合并/新增区域，重启仍在、重解析后删除块不复活）、R3 页框图
 读取视图（返回当前生效区域集合，作 8903 画布唯一数据源）。把这三条对照到现状，现有机制表达不了：
@@ -114,6 +114,6 @@
 [ADR 0005](0005-mysql-integration-test-isolation.md)（`qed_test` 隔离边界）；
 [PP-7/PP-9](../design/parsing-pipeline.md)（块类型与 index 成对约束）、
 [PM-3](../design/parsing-management.md)（编辑绑定版本）；实施载体
-[PLAN-018](../plans/2026-09-26-parsing-region-edit-typography-request.md)（REQ-099 承接壳）；
+[PLAN-018](../history/plans/2026-09/2026-09-26-parsing-region-edit-typography-request.md)（REQ-099 承接壳）；
 跨仓库只读引用：根仓库 ADR 0014（解析能力归属）、根仓库 ADR 0018（数据根白名单与元数据 JSON 岛禁止）、
 根仓库 REQ-098/REQ-099。

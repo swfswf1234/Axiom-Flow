@@ -65,6 +65,7 @@ from axiom_flow.ingest import (
 )
 from axiom_flow.normalize.blocks import block_from_raw, blocks_to_markdown, compute_quality, normalize_page
 from axiom_flow.normalize.chunking import build_chunks, chunk_set_payload
+from axiom_flow.orchestrator.versions import resolve_visible_version
 from axiom_flow.schemas import (
     Block,
     BlocksPage,
@@ -515,16 +516,15 @@ def run_parse_job(
 
     source_pdf = resolve_source_pdf(data_root, book.file_path or meta.source_file)
     jobs.record_source_snapshot(job_id, source_sha256=sha256_file(source_pdf), page_count=meta.page_count)
-    # 版本基线：新版本从当前生效作用域继承产物（active 为空 = 根视图/legacy 作用域）
-    baseline_dir = book_dir
-    baseline_job_id = LEGACY_JOB_ID
+    # 版本基线：与读面共用同一解析器（PLAN-030）——从「已解析页最多的可见版本」继承，
+    # 补页任务因此不会把更全的既有版本覆盖成小版本；无带内容版本时才是根视图/legacy 作用域。
+    visible_dir, visible_job_id = resolve_visible_version(
+        session, data_root=data_root, book=book
+    )
+    baseline_dir = visible_dir if visible_dir is not None else book_dir
+    baseline_job_id = visible_job_id if visible_dir is not None else LEGACY_JOB_ID
     # 被替换版本在指针被本任务改写之前就取好：激活后要按它删除旧版本目录（W4）
     replaced_job_id = book.active_job_id
-    if book.active_job_id and book.active_job_id != job_id:
-        candidate = version_dir_for(data_root, book.domain_id, book.course_id, book_id, book.active_job_id)
-        if candidate.is_dir():
-            baseline_dir = candidate
-            baseline_job_id = book.active_job_id
     seed_version_from(baseline_dir, version_dir)
     # 版本 book.json 由本次任务从 af_books 生成（PP-15 / REQ-097 W3）：不继承基线旧副本——
     # 引擎名与 ingest 时刻必须与本版本自证一致，继承会带回上一版的陈旧值。
@@ -758,14 +758,17 @@ def run_parse_job(
     _commit()  # 终态与 progress 收尾必写：不依赖调用方提交
     if complete:
         # W4：指针已提交，旧版本从此刻起不再是生效视图——删除它才安全（顺序不可颠倒）。
-        _retire_replaced_version(
-            data_root=data_root,
-            domain_id=book.domain_id,
-            course_id=book.course_id,
-            book_id=book_id,
-            replaced_job_id=replaced_job_id,
-            new_job_id=job_id,
-        )
+        # 基线版本也被本版本完整继承（`seed_version_from` 硬链接 + `_inherit_page_rows`），
+        # 激活后一并清理，盘上只留生效版本。
+        for retired_job_id in dict.fromkeys((replaced_job_id, baseline_job_id)):
+            _retire_replaced_version(
+                data_root=data_root,
+                domain_id=book.domain_id,
+                course_id=book.course_id,
+                book_id=book_id,
+                replaced_job_id=retired_job_id,
+                new_job_id=job_id,
+            )
     return ParseOutcome(
         job_id=job_id,
         status=status,

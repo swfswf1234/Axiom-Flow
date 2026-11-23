@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -20,13 +21,22 @@ import pytest
 from axiom_flow.engines.base import (
     ChapterInput,
     EngineError,
+    ExerciseClassifyInput,
     ExerciseInput,
     ExerciseItemInput,
+    ExerciseMatchCandidate,
+    ExerciseMatchInput,
+    ExerciseVerifyInput,
+    ExerciseVerifyItem,
     PageBody,
     PageSample,
+    ReferenceNote,
     ReferencePage,
     RevisionContext,
+    SectionBlock,
     SectionInput,
+    SectionMember,
+    TocOutlineRow,
     TocVerifyItem,
 )
 from axiom_flow.engines.kp_gateway import (
@@ -265,6 +275,7 @@ class TestPointsDetailPrompt:
         assert "2~6" in prompt, "关键定义的条数上限写在提示词里"
         assert "term" in prompt and "definition" in prompt
 
+
     def test_the_chapter_prompt_names_the_summary_as_learning_content(self):
         """章侧不加新键（`KA-57`）：`chapter_summary` 就是「本章学习内容」，措辞要写明。"""
         sent: list[dict] = []
@@ -276,8 +287,7 @@ class TestPointsDetailPrompt:
                 title="第2章 极限",
                 page_start=5,
                 page_end=8,
-                intro_pages=(PageBody(page_no=5, markdown="章首正文。"),),
-                title_pages=(),
+                blocks=(SectionBlock(page=5, block_index=0, text="章前正文。"),),
                 point_summaries=(),
             )
         )
@@ -291,6 +301,33 @@ class TestPointsDetailPrompt:
             "key_definitions": [{"term": "数列极限", "definition": "存在 L 使任意 ε 有 N。"}],
         }
         assert _engine(_reply([draft])).points(_section()).drafts == [draft]
+
+
+class TestPointSummarySemantics:
+    """PLAN-033 W2：`section_summary` 是「本点核心要点与关键定义的梳理」，不是原文压缩，
+    也不替读者安排章节位置或后续用途。"""
+
+    @staticmethod
+    def _prompt() -> str:
+        sent: list[dict] = []
+        _engine(_capturing(sent)).points(_section())
+        return sent[0]["prompt"]
+
+    def test_the_summary_is_asked_for_core_points_and_key_definitions(self):
+        prompt = self._prompt()
+        assert "核心要点" in prompt
+        assert "关键定义" in prompt
+        assert "不是原文压缩" in prompt
+
+    def test_the_summary_forbids_chapter_position_and_followup_use(self):
+        prompt = self._prompt()
+        assert "不写本节的章节位置" in prompt
+        assert "不写后续用在哪里" in prompt
+
+    def test_the_old_chapter_placement_instruction_is_gone(self):
+        prompt = self._prompt()
+        assert "所在章里的位置" not in prompt
+        assert "接下来在哪一节" not in prompt
 
 
 class TestReplyParsing:
@@ -443,6 +480,43 @@ class TestFailureNormalization:
             raise httpx.ConnectError("8900 未在听")
 
         assert KpGatewayEngine(GW, client=_client(handler), timeout=5.0).health() is False
+
+
+class TestModelNameProbe:
+    """PLAN-033 W5：只读探当前文字槽位模型名，只给异常注记；失败回空串，不阻断、不切换。"""
+
+    def test_the_probe_reads_the_default_slot_model(self):
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            return httpx.Response(
+                200,
+                json={"default": {"model": "qwen3.5-9b", "provider": "vllm", "configured": True}},
+            )
+
+        engine = KpGatewayEngine(GW, client=_client(handler), timeout=5.0)
+
+        assert engine.current_model_name() == "qwen3.5-9b"
+        assert seen == ["/api/v1/config/models"]
+
+    @pytest.mark.parametrize(
+        "handler",
+        [
+            lambda request: httpx.Response(503, text="down"),
+            lambda request: httpx.Response(200, text="<html>not json</html>"),
+            lambda request: httpx.Response(200, json={}),
+            lambda request: httpx.Response(200, json={"default": {"model": ""}}),
+        ],
+    )
+    def test_an_unreadable_probe_is_an_empty_name(self, handler):
+        assert KpGatewayEngine(GW, client=_client(handler), timeout=5.0).current_model_name() == ""
+
+    def test_an_unreachable_gateway_does_not_raise(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("8900 未在听")
+
+        assert KpGatewayEngine(GW, client=_client(handler), timeout=5.0).current_model_name() == ""
 
 
 class TestEngineIdentity:
@@ -611,7 +685,8 @@ class TestTocPageSelectionAndOrganizeLegs:
         reply = "\n".join(
             [
                 "1|12|好的行",
-                "3|12|层级越界",
+                "3|12|三级细目",
+                "4|12|层级越界",
                 "1|12|只有两段",
                 "1|12|",
                 "名字 12",
@@ -620,7 +695,9 @@ class TestTocPageSelectionAndOrganizeLegs:
 
         entries = _engine(_capturing(sent, reply=reply)).toc_entries(5, "该页原文")
 
-        assert [e.name for e in entries] == ["好的行", "只有两段"]
+        assert [e.name for e in entries] == ["好的行", "三级细目", "只有两段"], (
+            "三级是合法层级（KA-62 折入二级）；越界的是四段及以上"
+        )
 
     def test_none_is_an_empty_page_not_a_failure(self):
         """`NONE` 是模型自己说「这页没有条目」⇒ 空列表；它和「抄坏了」是两回事。"""
@@ -643,12 +720,46 @@ class TestTocPageSelectionAndOrganizeLegs:
 
         assert [e.name for e in entries] == ["第 1 章 极限"]
 
+    @staticmethod
+    def _outline_rows() -> tuple[TocOutlineRow, ...]:
+        return (
+            TocOutlineRow(index=0, level=1, name="四章 利用导数研究函数"),
+            TocOutlineRow(index=1, level=2, name="1. 前言"),
+            TocOutlineRow(index=2, level=2, name="§1. 有理数域"),
+        )
+
+    def test_outline_corrections_keep_the_row_identity_and_drop_unknown_rows(self):
+        """校订腿只回改动行：序号认得出、层级照旧、名字照收；输入里没有的序号整条弃用。"""
+        sent: list[dict] = []
+        reply = "0|第四章 利用导数研究函数\n2|1|改名 | 带竖线\n9|不存在的行\n这不是表格\n"
+
+        corrections = _engine(_capturing(sent, reply=reply)).toc_outline(self._outline_rows())
+
+        assert [(row.index, row.level, row.name) for row in corrections] == [
+            (0, 1, "第四章 利用导数研究函数"),
+            (2, 2, "改名 | 带竖线"),
+        ]
+        assert sent[0]["step"] == "toc_outline"
+        assert sent[0]["meta"]["count"] == 3
+
+    def test_none_or_unparsable_outline_replies_are_no_corrections(self):
+        """校订是可选腿：`NONE` 与整段不可解析都只意味着「名字保持原文」，不是故障。"""
+        assert _engine(_capturing([], reply="NONE")).toc_outline(self._outline_rows()) == []
+        assert _engine(_capturing([], reply="这不是表格")).toc_outline(self._outline_rows()) == []
+
+    def test_an_empty_outline_reply_is_a_failure(self):
+        """空回复多半是输出被截断：判故障交编排层记警告，不冒充「没有订正」。"""
+        with pytest.raises(EngineError):
+            _engine(_capturing([], reply="")).toc_outline(self._outline_rows())
+
     def test_the_note_reaches_all_three_toc_legs(self):
-        """备注跟批次走（AF-T5 甲）：目录三条腿都读到人工上一轮的意见，也都不写进归因 meta。"""
+        """备注跟批次走（AF-T5 甲）：目录四腿都读到人工上一轮的意见，也都不写进归因 meta。"""
         note = "页眉粘进目录了，剔掉"
         legs = (
             ("toc_pages", _pick([2]), lambda engine: engine.toc_pages(_samples())),
+            ("toc_page", "NOT_TOC", lambda engine: engine.toc_page(3, "该页原文")),
             ("toc_entries", "1|12|第 1 章 极限", lambda engine: engine.toc_entries(3, "该页原文")),
+            ("toc_outline", "NONE", lambda engine: engine.toc_outline(self._outline_rows())),
             (
                 "toc_verify",
                 "[]",
@@ -664,20 +775,93 @@ class TestTocPageSelectionAndOrganizeLegs:
             ).bind_batch(book_id="b", gen_batch="g", review_note=note)
             invoke(engine)
 
-        assert [body["step"] for body in sent] == ["toc_pages", "toc_entries", "toc_verify"]
+        assert [body["step"] for body in sent] == [
+            "toc_pages",
+            "toc_page",
+            "toc_entries",
+            "toc_outline",
+            "toc_verify",
+        ]
         assert all(note in body["prompt"] for body in sent)
         assert all("review_note" not in body["meta"] for body in sent)
 
     def test_an_unbound_adapter_refuses_every_toc_leg(self):
-        """未绑定批次身份就拒跑（R8 甲）：三条目录腿一条都不放过，否则这条调用查不到主人。"""
+        """未绑定批次身份就拒跑（R8 甲）：四条目录腿一条都不放过，否则这条调用查不到主人。"""
         engine = KpGatewayEngine(GW, client=_client(_reply([])), timeout=5.0)
         item = TocVerifyItem(name="1 函数的极限", printed_page=None, candidates=())
         with pytest.raises(EngineError, match="toc_pages"):
             engine.toc_pages(_samples())
+        with pytest.raises(EngineError, match="toc_page"):
+            engine.toc_page(3, "该页原文")
         with pytest.raises(EngineError, match="toc_entries"):
             engine.toc_entries(3, "该页原文")
+        with pytest.raises(EngineError, match="toc_outline"):
+            engine.toc_outline(self._outline_rows())
         with pytest.raises(EngineError, match="toc_verify"):
             engine.toc_verify((item,))
+
+
+class TestSequentialPageLeg:
+    """P-2／P-3 逐页判页腿：判定与条目同一次读数回来；坏判定行与「行全坏」判该页失败。"""
+
+    def test_a_toc_page_returns_the_verdict_and_its_rows_in_one_reading(self):
+        sent: list[dict] = []
+        reply = "TOC\n1|1|第 1 章 集合论\n2|2|序的关系与集合的势\n"
+
+        reading = _engine(_capturing(sent, reply=reply)).toc_page(2, "[paragraph] 目录\n…… 2")
+
+        assert reading.is_toc is True
+        assert [(entry.level, entry.printed_page, entry.name) for entry in reading.entries] == [
+            (1, 1, "第 1 章 集合论"),
+            (2, 2, "序的关系与集合的势"),
+        ]
+        assert len(sent) == 1
+        assert sent[0]["step"] == "toc_page"
+        assert sent[0]["meta"]["toc_page"] == 2
+        assert "本页页号：2" in sent[0]["prompt"]
+
+    def test_the_whole_page_text_reaches_the_prompt_untruncated(self):
+        """P-2：判「这一页是不是目录」要看整页，不与判页样本的 400 字封顶共用。"""
+        sent: list[dict] = []
+        long = "第1章 实数与完备性 …… " + "·" * 900
+
+        _engine(_capturing(sent, reply="NOT_TOC")).toc_page(3, f"[paragraph] {long}")
+
+        assert long in sent[0]["prompt"]
+
+    def test_a_non_toc_verdict_ends_the_range_and_has_no_rows(self):
+        reading = _engine(_capturing([], reply="NOT_TOC")).toc_page(4, "[paragraph] 正文")
+
+        assert reading.is_toc is False
+        assert reading.entries == ()
+
+    @pytest.mark.parametrize("head", ["not_toc", "NOT TOC", "否", "NOT-TOC"])
+    def test_the_verdict_tolerates_spacing_and_case(self, head):
+        reading = _engine(_capturing([], reply=head)).toc_page(5, "[paragraph] 正文")
+
+        assert reading.is_toc is False
+
+    def test_a_toc_verdict_with_none_has_no_rows(self):
+        reading = _engine(_capturing([], reply="TOC\nNONE")).toc_page(6, "[paragraph] 目录")
+
+        assert reading.is_toc is True
+        assert reading.entries == ()
+
+    @pytest.mark.parametrize(
+        "reply",
+        ["", "抱歉，这一轮我无法判断。", "1|12|第 1 章 极限\n1.1 数列的极限\n"],
+    )
+    def test_an_unparsable_reply_is_a_page_failure(self, reply):
+        """空回复与坏判定行 ⇒ 判该页失败、回落条目腿；静默答 NOT_TOC 会让目录在那一页断掉。"""
+        with pytest.raises(EngineError):
+            _engine(_capturing([], reply=reply)).toc_page(7, "[paragraph] 目录")
+
+    def test_a_toc_verdict_whose_rows_are_all_broken_is_a_page_failure(self):
+        """判成目录页却一行都解不出 ⇒ 故障，该页回落确定性抄录，不冒充「这一页没有条目」。"""
+        with pytest.raises(EngineError):
+            _engine(_capturing([], reply="TOC\n第 1 章 极限\n1.1 数列的极限\n")).toc_page(
+                8, "[paragraph] 目录"
+            )
 
 
 class TestTocVerifyLeg:
@@ -743,16 +927,18 @@ def _material() -> ChapterInput:
         title="第 2 章 数列",
         page_start=9,
         page_end=28,
-        intro_pages=(PageBody(page_no=9, markdown="章首正文甲。"),),
-        title_pages=(),
+        blocks=(
+            SectionBlock(page=9, block_index=0, text="# 第 2 章 数列"),
+            SectionBlock(page=9, block_index=1, text="章前正文甲。"),
+        ),
         point_summaries=(("2.1 数列的极限", "这一节把收敛写成 ε-N 语言。"),),
     )
 
 
 class TestChapterLegOutbound:
-    """`KA-45` 章腿的出站形状：一次调用、`step='chapter'`、章首正文与节级总结清单都在 prompt 里。"""
+    """`KA-65` 章文件夹的出站形状：一次调用、`step='chapter'`、章前块与节级总结清单都在 prompt 里。"""
 
-    def test_the_call_carries_the_intro_pages_and_the_summary_list(self):
+    def test_the_call_carries_the_intro_blocks_and_the_summary_list(self):
         sent: list[dict] = []
         engine = _engine(_capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}'))
 
@@ -761,12 +947,13 @@ class TestChapterLegOutbound:
         body = sent[0]
         assert body["step"] == "chapter"
         assert body["meta"]["point_count"] == 1
-        assert body["meta"]["intro_pages"] == [9]
-        assert "章首正文甲。" in body["prompt"]
+        assert body["meta"]["material_pages"] == [9]
+        assert "p9·b0" in body["prompt"] and "p9·b1" in body["prompt"], "章前块带坐标"
+        assert "章前正文甲。" in body["prompt"]
         assert "- 2.1 数列的极限：这一节把收敛写成 ε-N 语言。" in body["prompt"]
         assert (reply.summary, reply.narrative) == ("章总结", "章导读")
 
-    def test_a_chapter_without_intro_pages_falls_back_to_the_title_page(self):
+    def test_a_chapter_without_intro_blocks_states_so_in_the_prompt(self):
         sent: list[dict] = []
         engine = _engine(_capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}'))
         material = ChapterInput(
@@ -774,16 +961,65 @@ class TestChapterLegOutbound:
             title="第 2 章 数列",
             page_start=9,
             page_end=28,
-            intro_pages=(),
-            title_pages=(PageBody(page_no=9, markdown="第 2 章 数列 章标题页正文。"),),
+            blocks=(),
             point_summaries=(),
         )
 
         engine.chapter(material)
 
         prompt = sent[0]["prompt"]
-        assert "章标题页正文。" in prompt
+        assert "没有单独的章前正文" in prompt
         assert "其下各知识点都没有总结" in prompt
+
+    def test_reference_notes_reach_the_chapter_prompt(self):
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}'))
+        material = replace(
+            _material(),
+            reference_notes=(
+                ReferenceNote(source="维基百科", title="连续性", text="函数在一点连续指极限等于函数值。"),
+            ),
+        )
+
+        engine.chapter(material)
+
+        prompt = sent[0]["prompt"]
+        assert "检索资料（只用于校准术语与定义；教材结论优先）" in prompt
+        assert "[维基百科·连续性] 函数在一点连续指极限等于函数值。" in prompt
+
+    def test_no_reference_block_when_there_are_no_notes(self):
+        sent: list[dict] = []
+        _engine(
+            _capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}')
+        ).chapter(_material())
+
+        assert "检索资料（只用于校准术语与定义；教材结论优先）" not in sent[0]["prompt"]
+
+    def test_retry_issues_become_a_modification_request(self):
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}'))
+        material = replace(_material(), retry_issues=("出现了页数「共 32 页」",))
+
+        engine.chapter(material)
+
+        prompt = sent[0]["prompt"]
+        assert "本次修改要求" in prompt
+        assert "出现了页数「共 32 页」" in prompt
+
+    def test_the_prompt_bans_book_level_and_later_chapter_talk(self):
+        sent: list[dict] = []
+        _engine(
+            _capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}')
+        ).chapter(_material())
+
+        prompt = sent[0]["prompt"]
+        assert "不写页数" in prompt
+        assert "不写「本章位于全书…」" in prompt
+        assert "不写「为第 X 章…」" in prompt
+        assert "整门课里接到哪里" not in prompt
+        assert "后面哪一章会直接用到它" not in prompt
+        assert "只谈本章" in prompt
+        assert "页区间：" not in prompt
 
 
 class TestTruncatedReplyTolerance:
@@ -908,6 +1144,15 @@ class TestExerciseSplitPointReply:
             draft = engine.exercise(_exercise_section()).items[0]
             assert (draft.problem, draft.solution) == ("", ""), boundary
 
+    def test_an_ascii_bracketed_item_number_still_finds_its_text(self):
+        """prompt 用 `[N]` 展示题号，模型照抄带方括号回来：同一把键必须命中本节原文。"""
+        engine = _engine(_exercise_reply([{"item_no": "[1]", "solution_start": 3}]))
+
+        draft = engine.exercise(_exercise_section()).items[0]
+
+        assert draft.problem == "1. 求极限 lim(x→0) sin x / x。\n小问：说明理由。"
+        assert draft.solution.startswith("解：由洛必达法则得 1。")
+
     def test_an_old_transcription_object_is_not_taken_as_content(self):
         engine = _engine(
             _exercise_reply([{"item_no": "1", "problem": "抄来的题面", "solution": "抄来的解答"}])
@@ -916,3 +1161,326 @@ class TestExerciseSplitPointReply:
         draft = engine.exercise(_exercise_section()).items[0]
 
         assert (draft.problem, draft.solution) == ("", "")
+
+    def test_the_prompt_also_asks_for_the_solution_end_line(self):
+        """REQ-179 R4：解答边界双端化——prompt 同时要 `solution_end`（含），判不出给 -1。"""
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply=json.dumps({"items": []}, ensure_ascii=False)))
+
+        engine.exercise(_exercise_section())
+
+        prompt = sent[0]["prompt"]
+        assert "solution_end" in prompt
+
+    def test_the_solution_end_line_trims_the_tail_of_the_solution(self):
+        """`solution_end`（含）截住解答尾部：越界到下一题的长尾被去掉。"""
+        engine = _engine(
+            _exercise_reply([{"item_no": "【1】", "solution_start": 3, "solution_end": 3}])
+        )
+
+        draft = engine.exercise(_exercise_section()).items[0]
+
+        assert draft.problem == "1. 求极限 lim(x→0) sin x / x。\n小问：说明理由。"
+        assert draft.solution == "解：由洛必达法则得 1。"
+
+    def test_a_missing_or_invalid_end_falls_back_to_the_section_tail(self):
+        """end 缺席 / 非法 / -1 ＝ 判不出，回退「切到本题末尾」（现状行为），不猜。"""
+        for end in (None, -1, "3", 0, True, 99):
+            engine = _engine(
+                _exercise_reply([{"item_no": "【1】", "solution_start": 3, "solution_end": end}])
+            )
+            draft = engine.exercise(_exercise_section()).items[0]
+            assert draft.solution == "解：由洛必达法则得 1。\n所以极限为 1。", end
+
+    def test_an_end_before_the_start_is_not_guessed_into_content(self):
+        """end < start 是矛盾读数：解答按空处理（与 start 域外同一「不猜」档），不硬切。"""
+        engine = _engine(
+            _exercise_reply([{"item_no": "【1】", "solution_start": 3, "solution_end": 2}])
+        )
+
+        draft = engine.exercise(_exercise_section()).items[0]
+
+        assert draft.solution == ""
+
+
+class TestExerciseMatchLeg:
+    """REQ-161 W4：匹配腿只做选择与章对应；域外书号按「没有对得上」，空回复不折算成无匹配。"""
+
+    @staticmethod
+    def _material() -> ExerciseMatchInput:
+        return ExerciseMatchInput(
+            title="数学分析习题集",
+            chapters=("第 1 章 函数",),
+            candidates=(
+                ExerciseMatchCandidate(
+                    book_id="b05",
+                    title="数学分析原理",
+                    chapters=("第 1 章 函数与极限", "1.1 映射"),
+                ),
+            ),
+        )
+
+    def test_the_prompt_carries_both_sides_and_the_step_is_its_own(self):
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply=json.dumps({"book_id": None, "chapters": []})))
+
+        engine.exercise_match(self._material())
+
+        prompt = sent[0]["prompt"]
+        assert "第 1 章 函数" in prompt
+        assert "[b05] 数学分析原理" in prompt
+        assert "第 1 章 函数与极限" in prompt
+        assert sent[0]["step"] == "exercise_match"
+
+    def test_a_choice_keeps_the_book_and_its_chapter_pairs(self):
+        reply = json.dumps(
+            {"book_id": "b05", "chapters": [{"source": "第 1 章 函数", "target": "第 1 章 函数与极限"}]},
+            ensure_ascii=False,
+        )
+        engine = _engine(_capturing([], reply=reply))
+
+        choice = engine.exercise_match(self._material())
+
+        assert choice.book_id == "b05"
+        assert choice.chapters == (("第 1 章 函数", "第 1 章 函数与极限"),)
+
+    def test_an_out_of_scope_book_id_is_no_match(self):
+        engine = _engine(_capturing([], reply=json.dumps({"book_id": "b99", "chapters": []})))
+
+        choice = engine.exercise_match(self._material())
+
+        assert (choice.book_id, choice.chapters) == (None, ())
+
+    def test_an_empty_reply_is_a_failure_not_a_silent_no_match(self):
+        engine = _engine(_capturing([], reply=""))
+
+        with pytest.raises(EngineError) as caught:
+            engine.exercise_match(self._material())
+
+        assert "空回复" in str(caught.value)
+
+
+class TestExerciseClassifyLeg:
+    """REQ-161 W5：读数腿只判「对应哪道教材题＋题型」；空回复判故障，不折算成没有读数。"""
+
+    @staticmethod
+    def _material() -> ExerciseClassifyInput:
+        return ExerciseClassifyInput(
+            title="习题 1.1",
+            items=(("1", "证明：任意实数的平方非负。"),),
+            targets=(("1", "求证：任意实数的平方非负。"),),
+            target_title="数学分析原理",
+        )
+
+    def test_both_sides_reach_the_prompt_and_the_step_is_its_own(self):
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply=json.dumps({"items": []})))
+
+        engine.exercise_classify(self._material())
+
+        prompt = sent[0]["prompt"]
+        assert "[1] 证明：任意实数的平方非负。" in prompt
+        assert "[1] 求证：任意实数的平方非负。" in prompt
+        assert "数学分析原理" in prompt
+        assert sent[0]["step"] == "exercise_classify"
+
+    def test_the_reply_keeps_item_number_target_and_type(self):
+        reply = json.dumps(
+            {"items": [{"item_no": "1", "target": "1", "kind": "证明题"}]}, ensure_ascii=False
+        )
+        engine = _engine(_capturing([], reply=reply))
+
+        reading = engine.exercise_classify(self._material())
+
+        assert [(item.item_no, item.target, item.kind) for item in reading.items] == [
+            ("1", "1", "证明题")
+        ]
+
+    def test_an_empty_reply_is_a_failure_not_an_empty_reading(self):
+        engine = _engine(_capturing([], reply=""))
+
+        with pytest.raises(EngineError) as caught:
+            engine.exercise_classify(self._material())
+
+        assert "空回复" in str(caught.value)
+
+
+class TestExerciseVerifyLeg:
+    """REQ-170 第三步：校验腿判「切分对否、题面与解答是否同一题」；空回复判故障，不折算成全部合格。"""
+
+    @staticmethod
+    def _material() -> ExerciseVerifyInput:
+        return ExerciseVerifyInput(
+            title="第 1 章 函数",
+            items=(
+                ExerciseVerifyItem(
+                    item_no="1",
+                    problem="1. 求证：任意实数的平方非负。",
+                    solution="证明：由 $x^2\\ge 0$ 得证。",
+                ),
+            ),
+        )
+
+    def test_both_segments_reach_the_prompt_and_the_step_is_its_own(self):
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply=json.dumps({"items": []})))
+
+        engine.exercise_verify(self._material())
+
+        prompt = sent[0]["prompt"]
+        assert "第 1 章 函数" in prompt
+        assert "[1]" in prompt
+        assert "1. 求证：任意实数的平方非负。" in prompt
+        assert "证明：由" in prompt
+        assert sent[0]["step"] == "exercise_verify"
+
+    def test_the_reply_keeps_the_verdict_and_the_note(self):
+        reply = json.dumps(
+            {"items": [{"item_no": "1", "verdict": "suspect", "note": "解答像下一题的开头"}]},
+            ensure_ascii=False,
+        )
+        engine = _engine(_capturing([], reply=reply))
+
+        reading = engine.exercise_verify(self._material())
+
+        assert [(item.item_no, item.verdict, item.note) for item in reading.items] == [
+            ("1", "suspect", "解答像下一题的开头")
+        ]
+
+    def test_an_out_of_scope_verdict_is_read_as_suspect(self):
+        reply = json.dumps({"items": [{"item_no": "1", "verdict": "good", "note": ""}]})
+        engine = _engine(_capturing([], reply=reply))
+
+        reading = engine.exercise_verify(self._material())
+
+        assert reading.items[0].verdict == "suspect", "没听清的结论不许冒充合格"
+
+    def test_an_empty_reply_is_a_failure_not_all_ok(self):
+        engine = _engine(_capturing([], reply=""))
+
+        with pytest.raises(EngineError) as caught:
+            engine.exercise_verify(self._material())
+
+        assert "空回复" in str(caught.value)
+
+    def test_reject_is_a_first_class_verdict(self):
+        """`KA-70` 三态：否认是合法结论，不因闭集漏项被钳成存疑。"""
+        reply = json.dumps(
+            {"items": [{"item_no": "1", "verdict": "reject", "note": "解答从第 2 题起"}]},
+            ensure_ascii=False,
+        )
+        engine = _engine(_capturing([], reply=reply))
+
+        reading = engine.exercise_verify(self._material())
+
+        assert reading.items[0].verdict == "reject"
+
+    def test_the_prompt_asks_four_judgments_and_translates_to_chinese_first(self):
+        """`KA-70`：四判（切分／同一题／数学结论／补全）＋英文先译后判，结论闭集含 reject。"""
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply=json.dumps({"items": []})))
+
+        engine.exercise_verify(self._material())
+
+        prompt = sent[0]["prompt"]
+        for needle in ("切分", "同一题", "数学结论", "补全", "译成中文", "reject"):
+            assert needle in prompt
+
+    def test_the_prompt_shows_a_bracketless_output_sample(self):
+        """配对机械失败（REQ-178）：输出样例必须是裸题号，并明说不要带回外层方括号。
+
+        旧口径「照抄输入方括号里的题号」有歧义，b07 有 472 笔把 `[N]` 原样抄回、98 笔抄成
+        `（N）`，全部对不上——样例外壳去括号，禁令写在同一行。
+        """
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent, reply=json.dumps({"items": []})))
+
+        engine.exercise_verify(self._material())
+
+        prompt = sent[0]["prompt"]
+        assert '"item_no": "2.5"' in prompt, "输出样例本身不带括号"
+        assert '输入 [2.5] → 输出 "2.5"' in prompt, "给一枚带点的对照样例"
+        assert "外层方括号不要带回来" in prompt, "禁令要明确到方括号"
+
+
+class TestBlockMaterial:
+    """`KA-64`／`KA-66`：内容批次的块材料带「p{页}·b{序}」坐标，公式与表格原文进提示词。"""
+
+    @staticmethod
+    def _block_section() -> SectionInput:
+        return SectionInput(
+            parent_id="afkp-s21",
+            title="2.1 数列的极限",
+            page_start=7,
+            page_end=8,
+            pages=(),
+            blocks=(
+                SectionBlock(page=7, block_index=2, text="设 $x_n$ 为数列。"),
+                SectionBlock(
+                    page=8,
+                    block_index=3,
+                    text=r"<table><tr><td>$\lim a_n$</td></tr></table>",
+                ),
+            ),
+        )
+
+    def test_each_block_carries_its_page_and_index_prefix(self):
+        sent: list[dict] = []
+        engine = _engine(_capturing(sent))
+
+        engine.points(self._block_section())
+
+        prompt = sent[0]["prompt"]
+        assert "p7·b2" in prompt
+        assert "p8·b3" in prompt
+        assert "设 $x_n$ 为数列。" in prompt, "公式定界符原样透传"
+        assert r"<table><tr><td>$\lim a_n$</td></tr></table>" in prompt, "表格 HTML 原文透传"
+        assert sent[0]["meta"]["page_count"] == 2, "按块取材时页数由块坐标给出"
+
+    def test_a_merged_reply_is_parsed_by_member_id(self):
+        reply = json.dumps(
+            {
+                "sections": [
+                    {"id": "afkp-s11", "section_summary": "甲", "points": []},
+                    {
+                        "id": "afkp-s12",
+                        "section_summary": "乙",
+                        "points": [{"name": "点一", "anchors": []}],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+        engine = _engine(lambda request: httpx.Response(200, json={"reply": reply, "success": True}))
+        section = SectionInput(
+            parent_id="afkp-ch1",
+            title="1.1 数列极限 等 2 节",
+            page_start=2,
+            page_end=5,
+            pages=(),
+            members=(
+                SectionMember(node_id="afkp-s11", title="1.1 数列极限", blocks=()),
+                SectionMember(node_id="afkp-s12", title="1.2 函数极限", blocks=()),
+            ),
+        )
+
+        produced = engine.points(section)
+
+        assert [(member.node_id, member.summary, len(member.drafts)) for member in produced.members] == [
+            ("afkp-s11", "甲", 0),
+            ("afkp-s12", "乙", 1),
+        ]
+
+    def test_a_merged_reply_without_sections_is_a_shape_failure(self):
+        engine = _engine(_reply_object("甲", []))
+        section = SectionInput(
+            parent_id="afkp-ch1",
+            title="合批组",
+            page_start=2,
+            page_end=5,
+            pages=(),
+            members=(SectionMember(node_id="afkp-s11", title="1.1 数列极限"),),
+        )
+
+        with pytest.raises(EngineError, match="缺可用的 sections"):
+            engine.points(section)

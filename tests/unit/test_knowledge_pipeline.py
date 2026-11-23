@@ -25,6 +25,8 @@ import json
 import logging
 import re
 from collections.abc import Sequence
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +34,7 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+import axiom_flow.orchestrator.knowledge as knowledge_module
 from axiom_flow.db.llm_ledger import LlmCallIdentity, LlmCallLedger
 from axiom_flow.db.models import OP_KIND_KP, AfBook, AfKp, AfOperation, Base
 from axiom_flow.db.repositories import (
@@ -46,21 +49,32 @@ from axiom_flow.db.repositories import (
     PageRepository,
 )
 from axiom_flow.engines.base import (
+    ChapterInput,
     ChapterReply,
     EngineError,
+    ExerciseClassifyReply,
     ExerciseDraft,
+    ExerciseMatchChoice,
     ExerciseReply,
+    ExerciseVerifyReading,
+    ExerciseVerifyReply,
     KnowledgeEngine,
+    MemberPoints,
     OutlineEntry,
     PageBody,
+    ReferenceNote,
     ReferencePage,
+    SectionBlock,
     SectionInput,
     SectionPoints,
+    TocOutlineRow,
     TocPagePick,
+    TocPageReading,
     TocVerifyAnswer,
 )
 from axiom_flow.ingest import scan_transient_residue
 from axiom_flow.normalize.toc import (
+    CONTENT_INPUT_BUDGET_CHARS,
     NODE_TYPE_CHAPTER,
     NODE_TYPE_EXERCISE,
     NODE_TYPE_OTHER,
@@ -74,17 +88,28 @@ from axiom_flow.orchestrator.jobs import JobRunner, KpLedgerWiringError
 from axiom_flow.orchestrator.knowledge import (
     CONTENT_LEGS_BY_NODE_TYPE,
     EXERCISE_CHUNK_TEXT_BUDGET,
+    EXERCISE_SPLIT_MODEL_REF,
+    DisplaySpan,
+    EvidencePage,
+    EvidenceSet,
     KpGateError,
     LedgeredKnowledgeEngine,
+    OutlineReading,
+    SectionSpan,
     SpanRow,
+    _OutlineAssembler,
+    _section_block_bodies,
     accept_kp_job,
     anchor_review_flags,
     book_stage_reading,
     book_toc_pages,
     build_evidence_set,
     build_outline,
+    chapter_issues,
+    collapse_outline_duplicates,
     content_legs_for,
     curation_result_for,
+    display_spans_of,
     exercise_pack_status,
     exercise_pack_text,
     exercise_workspace,
@@ -94,6 +119,7 @@ from axiom_flow.orchestrator.knowledge import (
     norm_key_for,
     order_for_export,
     read_exercise_meta,
+    regenerate_chapter_narrative,
     regenerate_section_summary,
     remove_node,
     run_knowledge_job,
@@ -102,7 +128,7 @@ from axiom_flow.orchestrator.knowledge import (
     write_exercise_meta,
     write_narrative,
 )
-from axiom_flow.schemas import LastCurationResult
+from axiom_flow.schemas import Block, BlocksPage, BlockType, LastCurationResult
 from tests.support.llm_ledger_schema import create_ledger_table, read_ledger_rows
 
 
@@ -126,10 +152,12 @@ def _book(
     active_job_id: str | None = "job-a1",
     page_count: int = 20,
     roles: list[str] | None = None,
+    title: str = "数学分析原理",
 ) -> None:
     """一台「已 ingest＋已生效」的书目：受理门只看这两件事，不看磁盘。
 
     `roles` 缺省＝教材（`KA-51` 的两值闭集里最常见的形状）；传 `[]` 即未声明种类。
+    `title` 缺省取教材名——习题集用例按书名同族判据的需要各自换名（`KA-71`）。
     """
     BookRepository(session).upsert_many(
         [
@@ -139,7 +167,7 @@ def _book(
                 course_id="math_analysis",
                 course_name="数学分析",
                 knowledge_id="kt-mathanalysis-3",
-                title="数学分析原理",
+                title=title,
                 part="教程",
                 display_title="Rudin 数学分析原理",
                 authors="Walter Rudin",
@@ -516,9 +544,10 @@ def _scene(
     unparsed: tuple[int, ...] = (),
     section_kinds: dict[int, str] | None = None,
     roles: list[str] | None = None,
+    title: str = "数学分析原理",
 ) -> Path:
     """一台「已生效且逐页有产物」的书：页行 + 版本目录页产物一起造，磁盘与 DB 不自洽由参数点名。"""
-    _book(session, book_id, active_job_id=job_id, page_count=page_count, roles=roles)
+    _book(session, book_id, active_job_id=job_id, page_count=page_count, roles=roles, title=title)
     pages_dir = _pages_dir(tmp_path, book_id=book_id, job_id=job_id)
     layout = _HEADING_LAYOUT if layout is None else layout
     repo = PageRepository(session)
@@ -578,9 +607,20 @@ class FakeKnowledgeEngine:
         on_toc_verify=None,
         chapters_by_title: dict[str, tuple[str, str]] | None = None,
         failing_chapters: tuple[str, ...] = (),
+        on_chapter=None,
+        model_name: str = "",
         exercise_by_title: dict[str, list[ExerciseDraft]] | None = None,
         failing_exercise: tuple[str, ...] = (),
         on_exercise=None,
+        exercise_match_choice: ExerciseMatchChoice | None = None,
+        failing_exercise_match: bool = False,
+        on_exercise_match=None,
+        exercise_classify_reply: ExerciseClassifyReply | None = None,
+        failing_exercise_classify: bool = False,
+        on_exercise_classify=None,
+        exercise_verify_reply: ExerciseVerifyReply | None = None,
+        failing_exercise_verify: bool = False,
+        on_exercise_verify=None,
     ) -> None:
         self.points_by_section = dict(points_by_section or {})
         self.summaries_by_section = dict(summaries_by_section or {})
@@ -591,9 +631,20 @@ class FakeKnowledgeEngine:
         self.on_toc_verify = on_toc_verify
         self.chapters_by_title = dict(chapters_by_title or {})
         self.failing_chapters = set(failing_chapters)
+        self.on_chapter = on_chapter
+        self.model_name = model_name
         self.exercise_by_title = dict(exercise_by_title or {})
         self.failing_exercise = set(failing_exercise)
         self.on_exercise = on_exercise
+        self.exercise_match_choice = exercise_match_choice
+        self.failing_exercise_match = failing_exercise_match
+        self.on_exercise_match = on_exercise_match
+        self.exercise_classify_reply = exercise_classify_reply
+        self.failing_exercise_classify = failing_exercise_classify
+        self.on_exercise_classify = on_exercise_classify
+        self.exercise_verify_reply = exercise_verify_reply
+        self.failing_exercise_verify = failing_exercise_verify
+        self.on_exercise_verify = on_exercise_verify
         self.calls: list[tuple[str, object]] = []
 
     def health(self) -> bool:
@@ -621,8 +672,28 @@ class FakeKnowledgeEngine:
         """一节的两半回复（`KA-43`）：草稿数组＋节级总结。
 
         `on_points` 的老形状（返回列表）照旧接受——总结缺省空串，用例不必为一枚不关心的键改写法。
+        合批调用（`KA-64`）按成员逐点作答：成员按自己的标题取草稿与总结，`failing_sections`
+        点到的成员整员缺席——与真引擎「回了但漏掉那一员」同形，其余成员照收。
         """
         self.calls.append(("points", section))
+        if section.members:
+            if self.on_points is not None:
+                produced = self.on_points(section)
+                if isinstance(produced, SectionPoints):
+                    return produced
+            return SectionPoints(
+                [],
+                "",
+                tuple(
+                    MemberPoints(
+                        node_id=member.node_id,
+                        drafts=list(self.points_by_section.get(member.title, [])),
+                        summary=self.summaries_by_section.get(member.title, ""),
+                    )
+                    for member in section.members
+                    if member.title not in self.failing_sections
+                ),
+            )
         if section.title in self.failing_sections:
             raise EngineError(f"模型服务中断：{section.title}")
         produced = self.on_points(section) if self.on_points is not None else self.points_by_section.get(
@@ -633,12 +704,20 @@ class FakeKnowledgeEngine:
         return SectionPoints(list(produced), self.summaries_by_section.get(section.title, ""))
 
     def chapter(self, material) -> ChapterReply:
-        """章腿（`KA-45`）：缺省回两段空串——不关心章总结的用例不必为一枚不看的键改写法。"""
+        """章腿（`KA-45`）：缺省回两段空串——不关心章总结的用例不必为一枚不看的键改写法。
+
+        `on_chapter` 是状态化替身（PLAN-033 W6 的重试链）：按调用次序给不同回复，重试才能被看见。
+        """
         self.calls.append(("chapter", material))
         if material.title in self.failing_chapters:
             raise EngineError(f"模型服务中断：{material.title}")
+        if self.on_chapter is not None:
+            return self.on_chapter(material)
         summary, narrative = self.chapters_by_title.get(material.title, ("", ""))
         return ChapterReply(summary=summary, narrative=narrative)
+
+    def current_model_name(self) -> str:
+        return self.model_name
 
     def exercise(self, section) -> ExerciseReply:
         """习题集一节的桩（`KA-53`）：缺省回空表——不关心题面／解答内容的用例不必逐题给草稿。"""
@@ -648,6 +727,33 @@ class FakeKnowledgeEngine:
         if self.on_exercise is not None:
             return self.on_exercise(section)
         return ExerciseReply(tuple(self.exercise_by_title.get(section.title, [])))
+
+    def exercise_match(self, request) -> ExerciseMatchChoice:
+        """习题集目录匹配的桩（REQ-161 W4）：缺省回「没有教材对得上」。"""
+        self.calls.append(("exercise_match", request))
+        if self.failing_exercise_match:
+            raise EngineError("模型服务中断：exercise_match")
+        if self.on_exercise_match is not None:
+            return self.on_exercise_match(request)
+        return self.exercise_match_choice or ExerciseMatchChoice()
+
+    def exercise_classify(self, request) -> ExerciseClassifyReply | None:
+        """逐题读数的桩（REQ-161 W5）：缺省回 `None`＝引擎没有这条腿，旧用例的题行形状不变。"""
+        self.calls.append(("exercise_classify", request))
+        if self.failing_exercise_classify:
+            raise EngineError("模型服务中断：exercise_classify")
+        if self.on_exercise_classify is not None:
+            return self.on_exercise_classify(request)
+        return self.exercise_classify_reply
+
+    def exercise_verify(self, request) -> ExerciseVerifyReply | None:
+        """配对校验的桩（REQ-170 第三步）：缺省回 `None`＝引擎没有这条腿，题行不写 `verify_*` 键。"""
+        self.calls.append(("exercise_verify", request))
+        if self.failing_exercise_verify:
+            raise EngineError("模型服务中断：exercise_verify")
+        if self.on_exercise_verify is not None:
+            return self.on_exercise_verify(request)
+        return self.exercise_verify_reply
 
 
 def _accepted(session: Session, book_id: str = "b05", **kwargs):
@@ -1023,8 +1129,9 @@ class TestTocEntryLeg:
     """`KA-33` 回落腿进管线：整本零 `heading` 的书照样出目录行，锚点只认窗口内命中。
 
     本条腿现在是**回落腿**（`KA-35` 改判）：判页腿拿不到可用地、或模型整理全书零条目时才发起。
-    桩引擎不交判页读数，所以本类走的正是这条回落通路——未定位的那些仍成目录行（读数落回目录页）
-    并把条目名送进批次流水点名。产物文件与 `af_pages` 的任何列都不经这条腿（读数只补「页与块」两个坐标）。
+    桩引擎不交判页读数，所以本类走的正是这条回落通路——未定位的那些不成行（目录页不当正文锚，
+    `KA-33` 改判）并把条目名送进批次流水点名。产物文件与 `af_pages` 的任何列都不经这条腿
+    （读数只补「页与块」两个坐标）。
     """
 
     def test_a_book_with_zero_heading_blocks_still_feeds_the_outline_stage(self, session, tmp_path):
@@ -1043,8 +1150,7 @@ class TestTocEntryLeg:
             (2, "第1章 集合论", 1, [0]),
             (3, "序的关系与集合的势", 2, [0]),
             (4, "第2章 实数与极限", 1, [0]),
-            (1, "附录 习题解答", 2, [0]),  # 未定位条目落回目录页自身，仍成一行
-        ]
+        ], "未定位条目不成行（KA-33 改判）：目录页不当正文锚，名字只在账面点名"
         assert all(page.headings == () for page in evidence.pages), "条目腿不再合成 heading 读数"
         assert outline.unlocated == ("附录 习题解答",)
         assert {node.row.model_ref for node in outline.nodes} == {"rule:toc"}
@@ -1065,7 +1171,6 @@ class TestTocEntryLeg:
             ("第1章 集合论", 1, 2),
             ("序的关系与集合的势", 2, 3),
             ("第2章 实数与极限", 1, 4),
-            ("附录 习题解答", 2, 1),  # 未定位条目落回目录页，仍按条目序排在末位
         ]
 
     def test_the_unlocated_entries_are_named_in_the_batch_ledger(self, session, tmp_path):
@@ -1325,8 +1430,7 @@ class TestModelLedOutline:
             ("第2章 实数与极限", "rule:toc"),
             ("第3章 连续", "llm:toc"),
             ("第4章 微分", "llm:toc"),
-            ("附录 习题解答", "llm:toc"),
-        ]
+        ], "未定位条目不成行（KA-33 改判），名字只进账面点名"
         assert outline.fallback_pages == (1,)
         assert outline.toc_pages == (1, 2)
         assert outline.unlocated == ("附录 习题解答",)
@@ -1360,7 +1464,7 @@ class TestModelLedOutline:
         assert {"outline_toc_pages", "outline_fallback_pages", "verified_outline_entries", "reference_rows"} <= set(
             KP_RESULT_KEYS
         )
-        assert len(KP_RESULT_KEYS) == 33, "三十三键（`KA-27`／`KA-53`）：新键不进闭集就是自由键"
+        assert len(KP_RESULT_KEYS) == 42, "四十二键（`KA-27`／`KA-53`／PLAN-031／`KA-62`／`KA-63`~`KA-66`）：新键不进闭集就是自由键"
 
     def test_an_empty_page_pick_falls_back_to_the_entry_leg_for_the_whole_book(self, session, tmp_path):
         """判页空集 ⇒ 整本退条目腿，整理腿一次都不发起（`KA-35` 第二段优先级）。"""
@@ -1375,7 +1479,8 @@ class TestModelLedOutline:
         outline = build_outline(accepted, evidence, engine)
 
         assert {node.row.model_ref for node in outline.nodes} == {"rule:toc"}
-        assert len(outline.nodes) == 6
+        assert len(outline.nodes) == 5, "偏移标定成功的书里查不中的行不成行（KA-33 改判）"
+        assert outline.unlocated == ("附录 习题解答",), "丢行要在账面点名，不许静默消失"
         assert outline.toc_pages == (1, 2), "全书回落时账面点名的目录页由条目腿自己扫出来"
         assert [step for step, _ in engine.calls] == ["toc_pages", "toc_verify"]
 
@@ -1396,7 +1501,7 @@ class TestModelLedOutline:
         outline = build_outline(accepted, evidence, engine)
 
         assert {node.row.model_ref for node in outline.nodes} == {"rule:toc"}
-        assert len(outline.nodes) == 6
+        assert len(outline.nodes) == 5, "偏移标定成功的书里查不中的行不成行（KA-33 改判）"
 
     def test_every_organize_page_failing_still_yields_an_outline(self, session, tmp_path):
         """整理腿全坏 ⇒ 逐页回落，目录照样出行（`KA-37`「任一失败形态都不产生目录零行」）。"""
@@ -1415,10 +1520,10 @@ class TestModelLedOutline:
 
         assert outline.fallback_pages == (1, 2)
         assert {node.row.model_ref for node in outline.nodes} == {"rule:toc"}
-        assert len(outline.nodes) == 6
+        assert len(outline.nodes) == 5, "偏移标定成功的书里查不中的行不成行（KA-33 改判）"
 
     def test_a_third_level_row_is_counted_and_never_becomes_a_node(self, session, tmp_path):
-        """层级越界计数（`KA-35`／`KA-6`）：模型给 `level=3` 的行不进节点，但要数得出丢了几行。"""
+        """三级细目折入（`KA-62`）：`level=3` 的行不成节点，只折进所属二级并把枚数记在账上。"""
         _toc_scene(session, tmp_path)
         accepted = _accepted(session)
         evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
@@ -1433,7 +1538,69 @@ class TestModelLedOutline:
         outline = build_outline(accepted, evidence, engine)
 
         assert [node.row.name for node in outline.nodes] == ["第1章 集合论"]
-        assert outline.dropped_depth == 1
+        assert outline.folded_sub_items == 1
+        assert outline.dropped_depth == 0, "三级不是越界：越界的是四级及更深"
+
+    def test_numbered_sub_items_under_a_section_fold_into_its_display_span(self, session, tmp_path):
+        """b12 形（`KA-62`）：`§` 节后的编号细目不单独成行，二级节的内容段因此盖住细目页。"""
+        pages_dir = _scene(session, tmp_path, page_count=8)
+        bodies = {
+            1: "第 1 章 极限 …… 1\n§ 1. 极限的定义 …… 2\n1. 数列极限 …… 3\n2. 函数极限 …… 4\n"
+            "§ 2. 连续性 …… 5\n1. 连续的定义 …… 6",
+            2: "第 1 章 极限\n正文开始。",
+            3: "§ 1. 极限的定义\n正文。",
+            4: "1. 数列极限\n正文。",
+            5: "2. 函数极限\n正文。",
+            6: "§ 2. 连续性\n正文。",
+            7: "1. 连续的定义\n正文。",
+            8: "正文收尾。",
+        }
+        for page_no, body in bodies.items():
+            _write_page_artifacts(pages_dir, page_no, [], body=body)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = FakeKnowledgeEngine(
+            on_toc_pages=lambda samples: TocPagePick(toc_pages=(1,)),
+            on_toc_entries=lambda page_no, text: [
+                OutlineEntry(level=1, printed_page=1, name="第 1 章 极限"),
+                OutlineEntry(level=2, printed_page=2, name="§ 1. 极限的定义"),
+                OutlineEntry(level=2, printed_page=3, name="1. 数列极限"),
+                OutlineEntry(level=2, printed_page=4, name="2. 函数极限"),
+                OutlineEntry(level=2, printed_page=5, name="§ 2. 连续性"),
+                OutlineEntry(level=2, printed_page=6, name="1. 连续的定义"),
+            ],
+        )
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [(node.row.name, node.row.depth) for node in outline.nodes] == [
+            ("第 1 章 极限", 1),
+            ("§ 1. 极限的定义", 2),
+            ("§ 2. 连续性", 2),
+        ], "三枚编号细目不成行（没有三级概念）"
+        assert outline.folded_sub_items == 3
+        spans = display_spans_of(
+            [
+                SpanRow(
+                    node_id=node.row.node_id,
+                    name=node.row.name,
+                    order_hint=node.row.order_hint,
+                    page=node.row.anchors[0]["page"],
+                    depth=node.row.depth,
+                    toc_role=(node.row.meta or {}).get("toc_role", ""),
+                    toc_kind=(node.row.meta or {}).get("toc_kind", ""),
+                    parent_id=node.row.parent_id,
+                )
+                for node in outline.nodes
+            ],
+            last_page=8,
+        )
+        names = {node.row.node_id: node.row.name for node in outline.nodes}
+        assert [(names[span.node_id], span.page_start, span.page_end) for span in spans] == [
+            ("第 1 章 极限", 2, 2),
+            ("§ 1. 极限的定义", 3, 5),
+            ("§ 2. 连续性", 6, 8),
+        ], "§ 1 的显示段含 p4／p5 两枚细目页——二级内容显示完全"
 
     def test_a_section_before_any_chapter_gets_no_parent(self, session, tmp_path):
         """无前置章不造父（`KA-26` 同轴）：正腿第一条就是节时父为空，其后的节挂前面最近那条章。"""
@@ -1514,6 +1681,608 @@ class TestModelLedOutline:
 
         samples = [payload for step, payload in engine.calls if step == "toc_pages"][0]
         assert [sample.page_no for sample in samples] == [1, 2, 3, 4, 5, 6]
+
+
+class TestOutlineRowDedup:
+    """目录行去重（D-11／D-12）：同父同名只留书序第一枚；书级附件名全书唯一；习题段不受全书唯一约束。
+
+    去重发生在**成行**这一步，不是批次收尾：行的身份、`order_hint` 与父位都在这里定下，晚一步折叠
+    就会在屏上留下一枚已经被算进树序的重影。键只用 `norm_key` 那一个口径——全角、空白、大小写
+    折出来的差异不该造出第二行。
+    """
+
+    @staticmethod
+    def _assembler() -> _OutlineAssembler:
+        return _OutlineAssembler(book_id="b05", job_id="job-a1", gen_batch="gb-1")
+
+    @staticmethod
+    def _reading(
+        page_no: int, level: int, text: str, *, role: str = "knowledge", kind: str = ""
+    ) -> OutlineReading:
+        return OutlineReading(
+            page_no=page_no,
+            block_index=0,
+            level=level,
+            text=text,
+            model_ref="llm:toc",
+            role=role,
+            kind=kind,
+        )
+
+    def test_a_repeated_name_under_one_parent_is_registered_once(self):
+        """同父同名的第二枚不进行：键走 `norm_key`，空白差异不算另一行。"""
+        assembler = self._assembler()
+        assembler.add(self._reading(2, 1, "第1章 集合论"))
+        kept = assembler.add(self._reading(3, 2, "1.1 极限"))
+        assert assembler.add(self._reading(3, 2, "1.1  极限")) is None
+
+        assert kept is not None
+        assert [node.row.name for node in assembler.nodes] == ["第1章 集合论", "1.1 极限"]
+        assert assembler.dropped_duplicates == 1
+
+    def test_the_same_section_name_under_two_chapters_stays_twice(self):
+        """跨章同名保留：每章的「习题课」是各自章的读数，父位不同就不是重影。"""
+        assembler = self._assembler()
+        for page_no, name in ((2, "第1章 集合论"), (3, "习题课"), (4, "第2章 实数与极限"), (5, "习题课")):
+            assembler.add(self._reading(page_no, 1 if "章" in name else 2, name))
+
+        assert [node.row.name for node in assembler.nodes] == [
+            "第1章 集合论",
+            "习题课",
+            "第2章 实数与极限",
+            "习题课",
+        ]
+        assert assembler.dropped_duplicates == 0
+
+    def test_a_book_level_reference_name_is_unique_wherever_it_hangs(self):
+        """书级附件的键不带父位：目录行与附件页行同名时只留先到的一枚（D-12）。"""
+        assembler = self._assembler()
+        assembler.add(self._reading(2, 1, "第1章 集合论"))
+        assembler.add(self._reading(3, 2, "前言", role="reference", kind="front_matter"))
+        assert assembler.add(self._reading(4, 1, "前言", role="reference", kind="front_matter")) is None
+
+        assert [node.row.name for node in assembler.nodes] == ["第1章 集合论", "前言"]
+
+    def test_exercise_rows_are_not_book_unique(self):
+        """习题段是章的子行（D-12 例外）：跨章同名照旧各留一行。"""
+        assembler = self._assembler()
+        assembler.add(self._reading(2, 1, "第1章 集合论"))
+        assembler.add(self._reading(3, 2, "习题", role="reference", kind="exercise"))
+        assembler.add(self._reading(4, 1, "第2章 实数与极限"))
+        assembler.add(self._reading(5, 2, "习题", role="reference", kind="exercise"))
+
+        assert len(assembler.nodes) == 4
+        assert assembler.dropped_duplicates == 0
+
+    def test_an_optional_marker_is_stripped_from_the_name_and_recorded(self):
+        """真机 b18：印刷的选学星号被排版器抄成 `\\*`，它不属于书写的名字——成行时卸掉，语义进 meta。"""
+        assembler = self._assembler()
+        marked = assembler.add(self._reading(42, 2, r"\*2.5 集合的覆盖性质"))
+        spaced = assembler.add(self._reading(91, 1, r"\* 第 5 章 作为微分方程解的初等函数"))
+
+        assert marked is not None and marked.row.name == "2.5 集合的覆盖性质"
+        assert marked.row.meta is not None and marked.row.meta.get("optional") is True
+        assert spaced is not None and spaced.row.name == "第 5 章 作为微分方程解的初等函数"
+        assert spaced.row.meta is not None and spaced.row.meta.get("optional") is True
+
+    def test_a_markerless_name_and_a_marked_twin_fold_together(self):
+        """卸标记发生在算 `norm_key` 之前：同一节的两份读数不再因为一枚排版星号各留一行。"""
+        assembler = self._assembler()
+        assembler.add(self._reading(42, 2, r"\*2.5 集合的覆盖性质"))
+        assert assembler.add(self._reading(42, 2, "2.5 集合的覆盖性质")) is None
+
+        assert [node.row.name for node in assembler.nodes] == ["2.5 集合的覆盖性质"]
+
+    def test_the_batch_ledger_counts_the_folded_rows(self, session, tmp_path):
+        """去重枚数进批次流水（第三十五键）：屏上少一行，账上必须看得见少的是哪一行。"""
+        _toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        engine = FakeKnowledgeEngine(
+            on_toc_pages=lambda samples: TocPagePick(toc_pages=(1,)),
+            on_toc_entries=lambda page_no, text: [
+                OutlineEntry(level=1, printed_page=1, name="第1章 集合论"),
+                OutlineEntry(level=2, printed_page=2, name="序的关系与集合的势"),
+                OutlineEntry(level=2, printed_page=2, name="序的关系与集合的势"),
+                OutlineEntry(level=1, printed_page=3, name="第2章 实数与极限"),
+            ],
+        )
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+
+        assert outcome.outline_rows == 3
+        assert outcome.duplicate_outline_rows == 1
+        assert kp_batch_row(accepted, outcome).result["duplicate_outline_rows"] == 1
+        assert "duplicate_outline_rows" in KP_RESULT_KEYS, "新键不进闭集就是自由键（`KA-27`）"
+        assert len(KP_RESULT_KEYS) == 42, "四十二键（`KA-27`／PLAN-031／`KA-62`／`KA-63`~`KA-66`）：去重与折入读数也是账面"
+
+    def test_a_landed_row_the_final_pass_folds_away_is_removed(self, session, tmp_path):
+        """早落与定稿的折叠面不同一时，定稿不认的那枚必删：批次翻面是无条件的 draft→candidate。
+
+        `KA-33` 改判后，这枚行在定稿的成行处就折掉了（偏移标定成功、查不中者不成行），不再走到
+        重影折叠那一步——删行判据不变，账面读数从 `duplicate_outline_rows` 变成 `unlocated`。
+        """
+        _marked_toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        engine = SequentialKnowledgeEngine(
+            {
+                1: TocPageReading(
+                    is_toc=True,
+                    entries=(
+                        OutlineEntry(level=1, printed_page=1, name="第1章 集合论"),
+                        OutlineEntry(level=2, printed_page=2, name="序的关系与集合的势"),
+                        OutlineEntry(level=1, printed_page=3, name="第2章 实数与极限"),
+                        OutlineEntry(level=1, printed_page=None, name="前言"),
+                    ),
+                ),
+                2: TocPageReading(is_toc=False),
+            },
+            on_toc_pages=lambda samples: TocPagePick(
+                reference_pages=(ReferencePage(page_no=2, name="前言", kind="front_matter"),)
+            ),
+        )
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+
+        rows = _rows(session, node_kind="outline")
+        assert len(rows) == 4, [row.name for row in rows]
+        assert [row.name for row in rows].count("前言") == 1, "「前言」只留附件页那一行，早落的目录行必须删掉"
+        assert (rows[0].name, rows[0].anchors[0]["page"]) == ("前言", 2)
+        assert outcome.duplicate_outline_rows == 0, "未定位行在成行前已折掉，不走重影折叠"
+        assert "前言" in outcome.unlocated_outline_entries, "屏上少的行在账上点名"
+
+
+class TestCollapseOutlineDuplicates:
+    """D-13 读面折叠：同键先留书序第一枚，但**作废行不压过未作废行**；被折掉的 id 重挂到留下的那枚。
+
+    真机 b18：存量批次里每章/节都有一对「rejected 旧读数 ＋ candidate 新读数」，旧的排在书序前面。
+    只认「书序第一枚」会把保留下来的章换成作废行，而孩子仍指向被折掉的候选行——整棵子树在屏上消失。
+    """
+
+    @staticmethod
+    def _row(
+        node_id: str,
+        name: str,
+        *,
+        parent: str | None = None,
+        kind: str = "outline",
+        status: str = "candidate",
+        depth: int = 1,
+        order: int = 1,
+    ) -> AfKp:
+        now = datetime(2026, 11, 9, tzinfo=UTC)
+        meta = {"toc_role": "knowledge"}
+        return AfKp(
+            node_id=node_id,
+            book_id="b18",
+            job_id="job-a1",
+            node_kind=kind,
+            parent_id=parent,
+            depth=depth if kind == "outline" else None,
+            order_hint=order,
+            name=name,
+            norm_key=norm_key_for(name),
+            role="",
+            type="",
+            summary="",
+            links=None,
+            anchors=[{"kind": "page_block", "page": order, "block_indexes": [0]}],
+            narrative_ref="",
+            gen_status=status,
+            confirmed=0,
+            gen_batch="gb-1",
+            model_ref="llm:test",
+            rev=0,
+            meta=meta,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def test_the_live_twin_is_kept_over_the_rejected_one_and_the_children_follow(self):
+        """b18 第1章：旧读数（rejected）排在书序前面时，留下的必须是 candidate，节行跟着它。"""
+        rows = [
+            self._row("ch-old", "第1章 分析的工具", status="rejected", order=1),
+            self._row("s-old", "1.1 完备性公理", parent="ch-old", status="rejected", depth=2, order=2),
+            self._row("ch-new", "第1章 分析的工具", status="candidate", order=3),
+            self._row("s-new", "1.1 完备性公理", parent="ch-new", status="candidate", depth=2, order=4),
+        ]
+
+        kept = collapse_outline_duplicates(order_for_export(rows))
+
+        assert [row.node_id for row in kept] == ["ch-new", "s-new"]
+        assert kept[1].parent_id == "ch-new"
+
+    def test_a_child_of_the_dropped_twin_is_remapped_to_the_kept_one(self):
+        """被折掉那一行的孩子不能指向一个已不在屏上的父：父位改指留下的那枚。"""
+        rows = [
+            self._row("ch-old", "第1章 分析的工具", status="rejected", order=1),
+            self._row("orphan", "1.2 整数与有理数", parent="ch-old", status="rejected", depth=2, order=2),
+            self._row("ch-new", "第1章 分析的工具", status="candidate", order=3),
+        ]
+
+        kept = collapse_outline_duplicates(order_for_export(rows))
+
+        assert {row.node_id: row.parent_id for row in kept} == {"ch-new": None, "orphan": "ch-new"}
+
+    def test_two_live_twins_still_keep_the_first_in_book_order(self):
+        """两枚都未作废时仍按书序留第一枚：这一条是原口径，改判只加了「作废行让位」。"""
+        rows = [
+            self._row("a", "第1章 分析的工具", status="candidate", order=1),
+            self._row("b", "第1章 分析的工具", status="candidate", order=2),
+            self._row("child", "1.1 完备性公理", parent="b", status="candidate", depth=2, order=3),
+        ]
+
+        kept = collapse_outline_duplicates(order_for_export(rows))
+
+        assert [(row.node_id, row.parent_id) for row in kept] == [("a", None), ("child", "a")]
+
+    def test_point_rows_follow_the_surviving_outline_parent(self):
+        """点行不参与目录去重，但它的父位同样要改指留下的那枚目录行（内容批次的点在屏上不能悬空）。"""
+        rows = [
+            self._row("ch-old", "第1章 分析的工具", status="rejected", order=1),
+            self._row("ch-new", "第1章 分析的工具", status="candidate", order=2),
+            self._row("p1", "极限的定义", parent="ch-old", kind="point", order=3),
+        ]
+
+        kept = collapse_outline_duplicates(order_for_export(rows))
+
+        assert [(row.node_id, row.parent_id) for row in kept] == [
+            ("ch-new", None),
+            ("p1", "ch-new"),
+        ]
+
+
+class StreamingKnowledgeEngine(FakeKnowledgeEngine):
+    """整段抄录通路的桩（`KA-57`）：在逐页腿之上再加 `toc_outline` 一条腿。
+
+    `toc_outline` 的存在本身就是通路分岔口（`build_outline` 按 `getattr` 探测），所以这条腿不能挂到
+    基桩上——那会让所有既有用例改走新通路。
+    """
+
+    def __init__(self, *, corrections=None, failing_outline: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.corrections = list(corrections or [])
+        self.failing_outline = failing_outline
+
+    def toc_outline(self, rows):
+        self.calls.append(("toc_outline", tuple((row.index, row.name) for row in rows)))
+        if self.failing_outline:
+            raise EngineError("模型服务中断：toc_outline")
+        return list(self.corrections)
+
+
+class SequentialKnowledgeEngine(FakeKnowledgeEngine):
+    """逐页判页通路的桩（P-2／P-3）：在基桩之上再加 `toc_page` 一条腿。
+
+    这条腿的存在本身就是通路分岔口（`build_outline` 按属性探测），所以不能挂到基桩上——
+    那会让所有既有用例改走新通路。
+    """
+
+    def __init__(self, readings=None, *, failing_pages=(), **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.readings = dict(readings or {})
+        self.failing_pages = set(failing_pages)
+        self.page_texts: dict[int, str] = {}
+
+    def toc_page(self, page_no, text):
+        self.calls.append(("toc_page", page_no))
+        self.page_texts[page_no] = text
+        if page_no in self.failing_pages:
+            raise EngineError(f"模型服务中断：p{page_no}")
+        return self.readings.get(page_no, TocPageReading())
+
+
+def _marked_toc_scene(
+    session: Session, tmp_path: Path, *, book_id: str = "b05", job_id: str = "job-a1"
+) -> Path:
+    """带「目录」标记的两页目录＋四页正文（P-1~P-3）：绝对页＝印刷页＋2。"""
+    _book(session, book_id, active_job_id=job_id, page_count=6)
+    pages_dir = _pages_dir(tmp_path, book_id=book_id, job_id=job_id)
+    bodies = {
+        1: "目录\n第1章 集合论 …… 1\n序的关系与集合的势 …… 2",
+        2: "目录（续）\n第2章 实数与极限 …… 3",
+        3: "第1章 集合论\n正文开始。",
+        4: "序的关系与集合的势\n正文继续。",
+        5: "第2章 实数与极限\n正文又起。",
+        6: "无关正文。",
+    }
+    repo = PageRepository(session)
+    for page_no in range(1, 7):
+        _write_page_artifacts(pages_dir, page_no, [], body=bodies[page_no])
+        repo.upsert(book_id, job_id, page_no, status="parsed", source="mineru", error="")
+    session.commit()
+    return pages_dir
+
+
+class TestSequentialTocPages:
+    """P-1~P-5 逐页判页腿：标记页起逐页整页判，判到第一张非目录页为止，条目与判定同一次读数。"""
+
+    @staticmethod
+    def _marked() -> tuple[TocPageReading, ...]:
+        return (
+            TocPageReading(
+                is_toc=True,
+                entries=(
+                    OutlineEntry(level=1, printed_page=1, name="第1章 集合论"),
+                    OutlineEntry(level=2, printed_page=2, name="序的关系与集合的势"),
+                ),
+            ),
+            TocPageReading(
+                is_toc=True, entries=(OutlineEntry(level=1, printed_page=3, name="第2章 实数与极限"),)
+            ),
+        )
+
+    def test_the_range_runs_page_by_page_until_the_first_non_toc_page(self, session, tmp_path):
+        _marked_toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        first, second = self._marked()
+        engine = SequentialKnowledgeEngine({1: first, 2: second})
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [step for step, _ in engine.calls] == ["toc_page", "toc_page", "toc_page", "toc_pages"]
+        assert [page for step, page in engine.calls if step == "toc_page"] == [1, 2, 3], "p3 判成非目录页即收住"
+        assert outline.toc_pages == (1, 2)
+        assert outline.judged_pages == (1, 2, 3)
+        assert outline.fallback_pages == ()
+        assert [(node.row.name, node.row.depth, node.row.model_ref) for node in outline.nodes] == [
+            ("第1章 集合论", 1, "llm:toc"),
+            ("序的关系与集合的势", 2, "llm:toc"),
+            ("第2章 实数与极限", 1, "llm:toc"),
+        ]
+        assert [node.row.anchors[0]["page"] for node in outline.nodes] == [3, 4, 5]
+        assert "toc_entries" not in [step for step, _ in engine.calls], "判定与条目同一次读数，不再逐页抄"
+
+    def test_each_judged_page_carries_its_whole_text_with_block_types(self, session, tmp_path):
+        """P-2：整页不截断，块类型随行——判页看的是整页形状，不是 400 字样本。"""
+        _marked_toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = SequentialKnowledgeEngine({1: self._marked()[0]})
+
+        build_outline(accepted, evidence, engine)
+
+        assert engine.page_texts[1].startswith("[paragraph] ")
+        assert "目录" in engine.page_texts[1]
+        assert "序的关系与集合的势 …… 2" in engine.page_texts[1]
+
+    def test_the_marker_scan_falls_forward_when_the_first_ten_pages_have_none(self, session, tmp_path):
+        """P-1：前 10 页没有「目录」标记时按页序向后递推，p11 的标记才起头。"""
+        _book(session, page_count=12)
+        pages_dir = _pages_dir(tmp_path)
+        bodies = {page_no: "正文一。" for page_no in range(1, 11)}
+        bodies[11] = "目录\n第1章 集合论 …… 1"
+        bodies[12] = "第1章 集合论\n正文开始。"
+        repo = PageRepository(session)
+        for page_no in range(1, 13):
+            _write_page_artifacts(pages_dir, page_no, [], body=bodies[page_no])
+            repo.upsert("b05", "job-a1", page_no, status="parsed", source="mineru", error="")
+        session.commit()
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = SequentialKnowledgeEngine(
+            {11: TocPageReading(is_toc=True, entries=(OutlineEntry(1, 1, "第1章 集合论"),))}
+        )
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert outline.toc_pages == (11,)
+        assert outline.judged_pages == (11, 12)
+        assert [node.row.name for node in outline.nodes] == ["第1章 集合论"]
+
+    def test_without_any_marker_the_page_leg_is_never_called(self, session, tmp_path):
+        """P-4：全书没有标记 ⇒ 逐页腿零调用，整本条目腿接手，逐页实判面为空。"""
+        _toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = SequentialKnowledgeEngine({1: TocPageReading(is_toc=True)})
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert "toc_page" not in [step for step, _ in engine.calls]
+        assert outline.toc_pages == (1,), "整本条目腿从页 1 抄出条目"
+        assert outline.judged_pages == ()
+
+    def test_a_single_page_failure_falls_back_for_that_page_and_the_walk_goes_on(self, session, tmp_path):
+        """P-5：坏一页只坏那一页——该页退确定性条目腿，下一页照判并抄行。"""
+        _marked_toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = SequentialKnowledgeEngine({2: self._marked()[1]}, failing_pages={1})
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [page for step, page in engine.calls if step == "toc_page"] == [1, 2, 3]
+        assert outline.toc_pages == (1, 2), "失败页仍在目录区间里，不能留在正文面当回声"
+        assert outline.fallback_pages == (1,)
+        assert ("第2章 实数与极限", "llm:toc") in [
+            (node.row.name, node.row.model_ref) for node in outline.nodes
+        ]
+
+    def test_two_failures_in_a_row_stop_the_walk_and_the_book_leg_takes_over(self, session, tmp_path):
+        """P-5 的边界：连续两页失败＝这条腿不可用，不再把整本正文逐页当目录问。"""
+        _marked_toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = SequentialKnowledgeEngine(failing_pages={1, 2})
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [page for step, page in engine.calls if step == "toc_page"] == [1, 2]
+        assert outline.judged_pages == (1, 2)
+        assert len(outline.nodes) >= 1, "整本条目腿接手，目录零行不发生"
+
+
+class TestStreamedToc:
+    """`KA-57`：引擎持 `toc_outline` 腿时走整段抄录——页码只由原文给，逐页整理腿一次不发起。"""
+
+    def test_the_pages_are_copied_verbatim_and_the_per_page_leg_is_not_used(self, session, tmp_path):
+        """整段抄录的读数与条目腿逐字一致，但调用面只有判页与校订：`toc_entries` 不在通路上。"""
+        _toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = StreamingKnowledgeEngine(on_toc_pages=lambda samples: TocPagePick(toc_pages=(1,)))
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [(node.row.name, node.row.depth, node.row.model_ref) for node in outline.nodes] == [
+            ("第1章 集合论", 1, "rule:toc"),
+            ("序的关系与集合的势", 2, "rule:toc"),
+            ("第2章 实数与极限", 1, "rule:toc"),
+        ], "未定位的附件行不成行（KA-33 改判），名字仍进账面"
+        assert [node.row.anchors[0]["page"] for node in outline.nodes] == [2, 3, 4]
+        assert "toc_entries" not in {step for step, _ in engine.calls}
+        assert outline.toc_pages == (1,)
+        assert outline.unlocated == ("附录 习题解答",)
+
+    def test_the_toc_range_expands_past_the_sampled_window(self, session, tmp_path):
+        """判页范围连续扩展（`KA-57`）：采样只认到 p2，p3 由外探一轮补进整段。"""
+        pages_dir = _scene(session, tmp_path, page_count=15)
+        bodies = {
+            1: "第1章 集合论 …… 1\n序的关系与集合的势 …… 2",
+            2: "第2章 实数与极限 …… 3\n第3章 连续 …… 4",
+            3: "第4章 微分 …… 5",
+            4: "第1章 集合论\n正文开始。",
+            5: "序的关系与集合的势\n正文继续。",
+            6: "第2章 实数与极限\n正文又起。",
+            7: "第3章 连续\n正文再续。",
+            8: "第4章 微分\n正文收尾。",
+        }
+        for page_no, body in bodies.items():
+            _write_page_artifacts(pages_dir, page_no, [], body=body)
+        rounds: list[tuple[int, ...]] = []
+
+        def pick(samples):
+            rounds.append(tuple(sample.page_no for sample in samples))
+            if len(rounds) == 1:
+                return TocPagePick(toc_pages=(1, 2))
+            if len(rounds) == 2:
+                return TocPagePick(toc_pages=(3,))
+            return TocPagePick()
+
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+
+        outline = build_outline(
+            accepted, evidence, StreamingKnowledgeEngine(on_toc_pages=pick)
+        )
+
+        assert rounds[1] == (3, 4, 5, 6, 7), "外探只问已知区间两侧各五页"
+        assert rounds[2] == (4, 5, 6, 7, 8)
+        assert outline.toc_pages == (1, 2, 3)
+        assert [node.row.name for node in outline.nodes] == [
+            "第1章 集合论",
+            "序的关系与集合的势",
+            "第2章 实数与极限",
+            "第3章 连续",
+            "第4章 微分",
+        ]
+        assert [node.row.anchors[0]["page"] for node in outline.nodes] == [4, 5, 6, 7, 8]
+
+    def test_an_empty_sample_probes_the_front_window_for_the_toc(self, session, tmp_path):
+        """首尾采样一条目录页都没有时，从前段窗口找起头（`KA-57`）——目录可以起在采样之后。"""
+        pages_dir = _scene(session, tmp_path, page_count=25)
+        _write_page_artifacts(pages_dir, 1, [], body="第1章 集合论\n正文开始。")
+        _write_page_artifacts(pages_dir, 2, [], body="第2章 实数与极限\n正文继续。")
+        _write_page_artifacts(pages_dir, 12, [], body="第1章 集合论 …… 1\n第2章 实数与极限 …… 2")
+        rounds: list[tuple[int, ...]] = []
+
+        def pick(samples):
+            rounds.append(tuple(sample.page_no for sample in samples))
+            if len(rounds) == 2:
+                return TocPagePick(toc_pages=(12,))
+            return TocPagePick()
+
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+
+        outline = build_outline(
+            accepted, evidence, StreamingKnowledgeEngine(on_toc_pages=pick)
+        )
+
+        assert rounds[1] == (11, 12, 13, 14, 15)
+        assert outline.toc_pages == (12,)
+        assert [(node.row.name, node.row.anchors[0]["page"]) for node in outline.nodes] == [
+            ("第1章 集合论", 1),
+            ("第2章 实数与极限", 2),
+        ]
+
+    def test_the_review_leg_corrects_names_only(self, session, tmp_path):
+        """校订腿（`KA-57`）：只改名字，页码与层级照抄录给的；候选面只收章级行。"""
+        pages_dir = _toc_scene(session, tmp_path)
+        _write_page_artifacts(pages_dir, 2, [], body="第一章 集合论\n正文开始。")
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = StreamingKnowledgeEngine(
+            on_toc_pages=lambda samples: TocPagePick(toc_pages=(1,)),
+            corrections=[TocOutlineRow(index=0, level=1, name="第一章 集合论")],
+        )
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [node.row.name for node in outline.nodes] == [
+            "第一章 集合论",
+            "序的关系与集合的势",
+            "第2章 实数与极限",
+        ]
+        assert [node.row.anchors[0]["page"] for node in outline.nodes] == [2, 3, 4], "校订不碰页码"
+        assert outline.unlocated == ("附录 习题解答",), "偏移标定成功后查不中的行不成行（KA-33 改判）"
+        reviews = [payload for step, payload in engine.calls if step == "toc_outline"]
+        assert reviews == [
+            ((0, "第1章 集合论"), (2, "第2章 实数与极限"), (3, "附录 习题解答"))
+        ], "非章级的正文条目不交校订——名以正文为准（`KA-50`）"
+
+    def test_a_failing_review_leg_keeps_the_copied_names(self, session, tmp_path):
+        """校订是可选腿：调用失败只让名字保持原文，不让整批目录失败。"""
+        _toc_scene(session, tmp_path)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = StreamingKnowledgeEngine(
+            on_toc_pages=lambda samples: TocPagePick(toc_pages=(1,)), failing_outline=True
+        )
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [node.row.name for node in outline.nodes] == [
+            "第1章 集合论",
+            "序的关系与集合的势",
+            "第2章 实数与极限",
+        ], "校订失败只让名字保持原文；未定位的附录行照新判据不成行（KA-33 改判）"
+
+
+    def test_a_reference_group_already_in_the_toc_does_not_get_a_second_row(self, session, tmp_path):
+        """附件页与目录成组条目同名时只留目录行（`KA-57`）：索引五页不再变成六枚顶级「索引」。"""
+        pages_dir = _scene(session, tmp_path, page_count=6)
+        bodies = {
+            1: "第1章 集合论 …… 1\n索引 …… 4",
+            2: "序\n前言正文。",
+            3: "第1章 集合论\n正文开始。",
+            4: "正文。",
+            5: "正文。",
+            6: "索引\n符号与页码清单。",
+        }
+        for page_no, body in bodies.items():
+            _write_page_artifacts(pages_dir, page_no, [], body=body)
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        engine = StreamingKnowledgeEngine(
+            on_toc_pages=lambda samples: TocPagePick(
+                toc_pages=(1,),
+                reference_pages=(
+                    ReferencePage(page_no=2, name="序", kind="front_matter"),
+                    ReferencePage(page_no=6, name="索引", kind="index"),
+                ),
+            ),
+        )
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [node.row.name for node in outline.nodes] == ["序", "第1章 集合论", "索引"]
+        assert outline.reference_rows == 2
 
 
 def _progressive_scene(session: Session, tmp_path: Path, *, book_id: str = "b05", job_id: str = "job-a1") -> Path:
@@ -1656,17 +2425,18 @@ class TestProgressiveOutlineLanding:
 
         outline = build_outline(accepted, evidence, _progressive_engine(), sink=sink)
 
-        assert [node.row.name for batch in sink.repointed for node in batch] == ["第1章 集合论"]
+        assert [node.row.name for batch in sink.repointed for node in batch] == ["第1章 集合论", "第2章 实数与极限"]
         repointed = sink.repointed[0][0].row
         assert repointed.anchors[0]["page"] == 3, "全书偏移标定出来后，锚从目录页改写成正文页"
         assert (repointed.name, repointed.depth) == ("第1章 集合论", 1), "只改锚，不改名与层级"
         landed_by_name = {node.row.name: node.row for batch in sink.landed for node in batch}
         assert landed_by_name["第1章 集合论"].node_id == repointed.node_id, "改写的是已在册那一行，不是新行"
-        assert [[node.row.name for node in batch] for batch in sink.repointed] == [["第1章 集合论"]], (
-            "锚没变的行（含未定位那条）不在改写面内"
-        )
-        assert [node.row.anchors[0]["page"] for node in outline.nodes] == [3, 1, 5]
-        assert len(outline.nodes) == 3, "定稿不增行：早落三行就是本批三行"
+        assert [[node.row.name for node in batch] for batch in sink.repointed] == [
+            ["第1章 集合论", "第2章 实数与极限"]
+        ], "第2章只因未定位行折掉而顺延了序位；锚没变的行也属于读数变了那一批"
+        assert [node.row.anchors[0]["page"] for node in outline.nodes] == [3, 5]
+        assert outline.unlocated == ("一致连续的判别法",)
+        assert len(outline.nodes) == 2, "定稿不增行：早落三行折掉未定位一行，定稿两行"
 
     def test_landed_rows_are_readable_from_the_database_while_the_next_page_is_organized(
         self, session, tmp_path
@@ -1702,9 +2472,8 @@ class TestProgressiveOutlineLanding:
         rows = _rows(session, node_kind="outline")
         assert [(row.name, row.anchors[0]["page"], row.order_hint) for row in rows] == [
             ("第1章 集合论", 3, 1),
-            ("一致连续的判别法", 1, 2),
-            ("第2章 实数与极限", 5, 3),
-        ], "定稿改写落在库里，且改写不增行"
+            ("第2章 实数与极限", 5, 2),
+        ], "定稿改写落在库里且不增行；未定位的早落行随定稿折掉（KA-33 改判）"
         assert {row.gen_status for row in rows} == {"candidate"}, "收尾仍是唯一的一次三态迁移（KA-9）"
 
     def test_the_same_batch_writer_touches_nothing_outside_its_own_unconfirmed_draft(self, session):
@@ -1952,10 +2721,14 @@ class TestPrintPageAnchorAndVerify:
 
         assert outline.verified == ()
         assert outline.unlocated == ("函数的连续性",)
-        assert outline.nodes[3].row.anchors[0]["page"] == 1, "不认 ⇒ 锚落回目录页那一行自己"
+        assert [node.row.name for node in outline.nodes] == [
+            "第1章 集合论",
+            "序的关系与集合的势",
+            "第2章 实数与极限",
+        ], "偏移标定成功后仍未定位的行不成行，只在账面点名（KA-33 改判）"
 
     def test_an_answer_of_absent_is_disclosed_as_unlocated(self, session, tmp_path):
-        """判「正文里没有这一行」⇒ 未定位披露：锚照样可用，只是指向目录页（`KA-38`）。"""
+        """判「正文里没有这一行」⇒ 未定位披露；偏移标定成功时该行不成行（`KA-33` 改判）。"""
         _toc_scene(session, tmp_path)
         accepted = _accepted(session)
         evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
@@ -1970,7 +2743,6 @@ class TestPrintPageAnchorAndVerify:
             ("第1章 集合论", 2),
             ("序的关系与集合的势", 3),
             ("第2章 实数与极限", 4),
-            ("函数的连续性", 1),
         ]
         assert (outline.verified, outline.unlocated) == ((), ("函数的连续性",))
 
@@ -2011,6 +2783,99 @@ class TestPrintPageAnchorAndVerify:
         assert result["verified_outline_entries"] == ["函数的连续性"]
         assert result["unlocated_outline_entries"] == []
         assert len(_rows(session, node_kind="outline")) == 4
+
+    def test_a_page_less_row_is_verified_between_its_anchored_neighbours(self, session, tmp_path):
+        """Q5 甲：无印刷页码的行同样进核对腿，候选页由上下两枚已定锚行夹出（含两端锚页）。"""
+        _book(session, "b05", active_job_id="job-a1", page_count=6)
+        pages_dir = _pages_dir(tmp_path, book_id="b05", job_id="job-a1")
+        bodies = {
+            1: "第1章 集合论 …… 1\n序的关系与集合的势 …… 2\n第2章 实数与极限 …… 3\n"
+            "函数的连续性\n第3章 极限的运算 …… 5",
+            2: "第1章 集合论\n正文开始。",
+            3: "序的关系与集合的势\n正文继续。",
+            4: "第2章 实数与极限\n正文又起。",
+            5: "函数的连续性\n正文这一段。",
+            6: "第3章 极限的运算\n正文收尾。",
+        }
+        repo = PageRepository(session)
+        for page_no in range(1, 7):
+            _write_page_artifacts(pages_dir, page_no, [], body=bodies[page_no])
+            repo.upsert("b05", "job-a1", page_no, status="parsed", source="mineru", error="")
+        session.commit()
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        captured: list = []
+
+        def verify(items):
+            captured.append(items)
+            return [TocVerifyAnswer(name="函数的连续性", page_no=5)]
+
+        engine = self._engine(
+            [
+                OutlineEntry(level=1, printed_page=1, name="第1章 集合论"),
+                OutlineEntry(level=2, printed_page=2, name="序的关系与集合的势"),
+                OutlineEntry(level=1, printed_page=3, name="第2章 实数与极限"),
+                OutlineEntry(level=2, printed_page=None, name="函数的连续性"),
+                OutlineEntry(level=1, printed_page=5, name="第3章 极限的运算"),
+            ],
+            verify,
+        )
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert [item.name for item in captured[0]] == ["函数的连续性"]
+        assert captured[0][0].printed_page is None, "缺印刷页码的行照样交核对（Q5 甲）"
+        assert captured[0][0].candidates == (
+            (4, "第2章 实数与极限"),
+            (5, "函数的连续性"),
+            (6, "第3章 极限的运算"),
+        ), "候选面＝上下两枚已定锚行之间的页（含两端）"
+        assert outline.verified == ("函数的连续性",)
+        assert outline.unlocated == ()
+        assert outline.nodes[3].row.anchors[0]["page"] == 5
+
+    def test_a_page_less_tail_row_takes_its_window_from_the_last_anchor(self, session, tmp_path):
+        """只有上一枚锚时，候选从那一页起取 `TOC_VERIFY_PAGE_SLACK` 页——不猜更远的地方。"""
+        _book(session, "b05", active_job_id="job-a1", page_count=5)
+        pages_dir = _pages_dir(tmp_path, book_id="b05", job_id="job-a1")
+        bodies = {
+            1: "第1章 集合论 …… 1\n序的关系与集合的势 …… 2\n第2章 实数与极限 …… 3\n函数的连续性",
+            2: "第1章 集合论\n正文开始。",
+            3: "序的关系与集合的势\n正文继续。",
+            4: "第2章 实数与极限\n正文又起。",
+            5: "函数的连续性\n正文这一段。",
+        }
+        repo = PageRepository(session)
+        for page_no in range(1, 6):
+            _write_page_artifacts(pages_dir, page_no, [], body=bodies[page_no])
+            repo.upsert("b05", "job-a1", page_no, status="parsed", source="mineru", error="")
+        session.commit()
+        accepted = _accepted(session)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
+        captured: list = []
+
+        def verify(items):
+            captured.append(items)
+            return [TocVerifyAnswer(name="函数的连续性", page_no=5)]
+
+        engine = self._engine(
+            [
+                OutlineEntry(level=1, printed_page=1, name="第1章 集合论"),
+                OutlineEntry(level=2, printed_page=2, name="序的关系与集合的势"),
+                OutlineEntry(level=1, printed_page=3, name="第2章 实数与极限"),
+                OutlineEntry(level=2, printed_page=None, name="函数的连续性"),
+            ],
+            verify,
+        )
+
+        outline = build_outline(accepted, evidence, engine)
+
+        assert captured[0][0].candidates == (
+            (4, "第2章 实数与极限"),
+            (5, "函数的连续性"),
+        ), "缺下一枚锚 ⇒ 从上一枚锚页起、止于取证末页（候选页不存在的不编）"
+        assert outline.nodes[3].row.anchors[0]["page"] == 5
+        assert outline.unlocated == ()
 
 
 #: `_tolerant_scene` 的页形状：一页若干段落块（块序＝下标），目录页 p1 整页一节一行。
@@ -2129,7 +2994,7 @@ class TestTolerantRelocate:
         outline, _engine = self._build(session, tmp_path)
 
         assert [node.row.anchors[0]["page"] for node in outline.nodes] == [
-            2, 3, 4, 5, 6, 7, 8, 9, 21, 31, 41, 51, 1,
+            2, 3, 4, 5, 6, 7, 8, 9, 21, 31, 41, 51,
         ]
         assert [node.row.anchors[0]["block_indexes"] for node in outline.nodes][8:12] == [[1], [0], [0], [1]]
         assert outline.dropped_toc_pages == ()
@@ -2148,12 +3013,13 @@ class TestTolerantRelocate:
         assert outline.unlocated == ("习题",)
         assert [step for step, _ in engine.calls].count("toc_verify") == 1
 
-    def test_an_entry_no_pass_rescues_is_still_disclosed_on_the_toc_page(self, session, tmp_path):
-        """救不回的照旧披露、锚回目录页自己：未定位是读数，不是失败（`KA-26` 同轴）。"""
+    def test_an_entry_no_pass_rescues_is_disclosed_not_rowed(self, session, tmp_path):
+        """救不回的不成行、只在账面点名：偏移标定成功时把目录页当正文页就是假锚（`KA-33` 改判）。"""
         outline, _engine = self._build(session, tmp_path)
 
-        assert [node.row.name for node in outline.nodes][-1] == "习题"
-        assert outline.nodes[-1].row.anchors[0]["page"] == 1
+        assert [node.row.name for node in outline.nodes][-1] == "$\\Gamma$ 函数"
+        assert "习题" not in [node.row.name for node in outline.nodes]
+        assert outline.unlocated == ("习题",)
 
     def test_the_tolerant_leg_never_calibrates_the_offset(self, session, tmp_path):
         """偏移只由第一遍标定：容错命中页（21／31／41／51）与印刷页的差是 1 也是「猜」，不进众数。"""
@@ -2170,15 +3036,18 @@ class TestTolerantRelocate:
         本条走确定性条目腿（`model_ref='rule:toc'`）——页级复核只作用在那条来路上，模型认下的目录页
         不靠命中率反证。
         """
+        # 三枚行形状像目录、正文里根本没有同名行（符号表页的原形）。不能拿容错腿救得回的那几形
+        # 来凑「过半不中」：`KA-61` 的前缀第二遍能把 `数 $e$`／`$\\Gamma$ 函数` 落回正文页，
+        # 那说明这一页的印刷页码与本书偏移真的对得上，它就不是符号表。
         _tolerant_scene(
             session,
             tmp_path,
             toc_lines=[
                 "第1章 实数 …… 1",
                 "第2章 序 …… 2",
-                "数 e …… 20",
-                "Γ函数 …… 50",
-                "习题 …… 92",
+                "符号甲 …… 20",
+                "符号乙 …… 50",
+                "符号丙 …… 92",
             ],
         )
         accepted = _accepted(session, stage="outline")
@@ -2208,8 +3077,7 @@ class TestBodyNameWins:
             "§ 2. 反函数的导数. 用参数形式给出的函数的导数. 隐函数的导数",
             "第 6 章 RIEMANN-STIELTJES 积分",
             "$\\Gamma$ 函数",
-            "习题",
-        ]
+        ], "救不回的「习题」不成行，不进这张名字表"
 
     def test_a_dirty_spacing_in_the_toc_line_is_cleaned_by_the_body_line(self, session, tmp_path):
         """第一遍前缀照样命中的行也改名：`第5章 微分法` 写成正文那一行的 `第 5 章 微分法`（真机在册脏名）。"""
@@ -2398,8 +3266,26 @@ class TestFrontMatterRows:
         assert all(node.row.meta == {"toc_role": "knowledge"} for node in outline.nodes)
 
     def test_the_fallback_leg_tags_rows_by_their_names(self, session, tmp_path):
-        """回落腿按名字判（`KA-39`）：条目腿补出的行里，前言／符号表／附录这些名字要带得出身份位。"""
-        _toc_scene(session, tmp_path)
+        """回落腿按名字判（`KA-39`）：条目腿补出的行里，前言／符号表／附录这些名字要带得出身份位。
+
+        附录印在正文最后一页、能回定位——未定位的行自 `KA-33` 改判后不成行，这里必须给它一个
+        真页，判的才是身份位而不是「查不中」。
+        """
+        _book(session, "b05", active_job_id="job-a1", page_count=6)
+        pages_dir = _pages_dir(tmp_path, book_id="b05", job_id="job-a1")
+        bodies = {
+            1: "第1章 集合论 …… 1\n序的关系与集合的势 …… 2\n第2章 实数与极限 …… 3\n附录 习题解答 …… 5",
+            2: "第1章 集合论\n正文开始。",
+            3: "序的关系与集合的势\n正文继续。",
+            4: "第2章 实数与极限\n正文又起。",
+            5: "正文。",
+            6: "附录 习题解答\n解答正文。",
+        }
+        repo = PageRepository(session)
+        for page_no, body in bodies.items():
+            _write_page_artifacts(pages_dir, page_no, [], body=body)
+            repo.upsert("b05", "job-a1", page_no, status="parsed", source="mineru", error="")
+        session.commit()
         accepted = _accepted(session)
         evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
 
@@ -2413,6 +3299,7 @@ class TestFrontMatterRows:
             ("附录 习题解答", {"toc_role": "reference", "toc_kind": "appendix"}),
         ]
         assert outline.reference_rows == 1
+        assert [node.row.anchors[0]["page"] for node in outline.nodes] == [2, 3, 4, 6]
 
     def test_the_identity_bits_add_no_column(self, session, tmp_path):
         """零 ALTER（`KA-39`）：两枚身份位只在 `meta` JSON 里，`af_kp` 表上一个列都不新加。"""
@@ -2433,11 +3320,12 @@ class TestNodeTypeOf:
     class _Row:
         """认三枚属性就够（`AfKp` 与点腿的 `KpNodeRow` 都长这样）。"""
 
-        def __init__(self, node_id, *, depth, meta, parent_id=None) -> None:
+        def __init__(self, node_id, *, depth, meta, parent_id=None, node_kind="outline") -> None:
             self.node_id = node_id
             self.depth = depth
             self.meta = meta
             self.parent_id = parent_id
+            self.node_kind = node_kind
 
     def test_knowledge_rows_split_into_chapter_and_point_by_depth(self):
         assert node_type_of(depth=1, toc_role="knowledge", toc_kind="") == "chapter"
@@ -2464,6 +3352,50 @@ class TestNodeTypeOf:
         rows = [self._Row("s", depth=2, meta={"toc_role": "knowledge"}, parent_id="gone")]
 
         assert node_types_of(rows) == {"s": "point"}
+
+    def test_a_first_level_row_without_point_children_is_other(self):
+        """`KA-68`（用户裁决 2026-11-09）：预备知识、附录这类一级行不是章。
+
+        判据是结构而不是名字：其下没有任何知识点行（只有拆出的习题行，或干脆没有子行）的一级知识行
+        记「其他」。按名字认（「第X章」）会把 b12 的「绪论 实数」判错——它有四个知识点子行。
+        """
+        rows = [
+            self._Row("pre", depth=1, meta={"toc_role": "knowledge"}),
+            self._Row("appendix", depth=1, meta={"toc_role": "knowledge"}),
+            self._Row(
+                "appendix-ex",
+                depth=2,
+                meta={"toc_role": "reference", "toc_kind": "exercise"},
+                parent_id="appendix",
+            ),
+            self._Row("ch1", depth=1, meta={"toc_role": "knowledge"}),
+            self._Row("ch1-1", depth=2, meta={"toc_role": "knowledge"}, parent_id="ch1"),
+        ]
+
+        types = node_types_of(rows)
+
+        assert types == {
+            "pre": "other",
+            "appendix": "other",
+            "appendix-ex": "exercise",
+            "ch1": "chapter",
+            "ch1-1": "point",
+        }
+
+    def test_a_point_kind_child_keeps_its_first_level_row_a_chapter(self):
+        """习题集形的章（子行是 `node_kind='point'` 的题行）仍是章：题行按章分组要靠它。"""
+        rows = [
+            self._Row("ch1", depth=1, meta={"toc_role": "knowledge"}),
+            self._Row(
+                "item-1",
+                depth=2,
+                meta={"toc_kind": "exercise"},
+                parent_id="ch1",
+                node_kind="point",
+            ),
+        ]
+
+        assert node_types_of(rows) == {"ch1": "chapter", "item-1": "exercise"}
 
     def test_the_whole_book_maps_to_the_four_values(self, session, tmp_path):
         """一台真场景：章／节／习题／符号表各得其一，点行（旧批次遗留）按自己的身份位判。"""
@@ -2499,7 +3431,7 @@ class TestOutlineStage:
     def test_third_level_title_never_becomes_a_node_but_still_reaches_the_point_stage(
         self, session, tmp_path
     ):
-        """`KA-6`：第三层不进 `af_kp`、并计数；它的文字不丢——节正文里仍在，由知识点承载。"""
+        """`KA-6`／`KA-62`：第三层不进 `af_kp`、只折进所属二级并计数；它的文字不丢——节正文里仍在。"""
         _scene(session, tmp_path, page_count=6)
         accepted = _accepted(session)
         seen: dict[str, str] = {}
@@ -2515,7 +3447,8 @@ class TestOutlineStage:
             acceptance=accepted,
         )
 
-        assert outcome.dropped_depth == 1
+        assert outcome.folded_sub_items == 1
+        assert outcome.dropped_depth == 0, "三级是折入，不是越界"
         assert all(row.depth in (1, 2) for row in _rows(session, node_kind="outline"))
         assert "1.2.1 无穷小" in seen["1.2 函数极限"]
 
@@ -4482,6 +5415,24 @@ class TestCallLedger:
 
         assert closed == ["fake-text"]
 
+    def test_the_streamed_review_leg_is_recorded_and_stays_optional(self, tmp_path):
+        """`toc_outline`（`KA-57`）也是模型调用：有这条腿的引擎透传一枚记账过的，没有的照旧没有。
+
+        能力探测靠 `getattr(engine, "toc_outline", None)` 分通路，包装器不能替任何引擎凭空长出一条腿。
+        """
+        store, factory = _ledger_env(tmp_path)
+        with factory() as session:
+            acceptance = _accepted(session)
+
+        wrapped = _accounted(FakeKnowledgeEngine(), factory, acceptance)
+        assert getattr(wrapped, "toc_outline", None) is None
+
+        streamed = _accounted(StreamingKnowledgeEngine(), factory, acceptance)
+        streamed.toc_outline([TocOutlineRow(index=0, level=1, name="第1章 集合论")])
+
+        rows = read_ledger_rows(store)
+        assert [row["step"] for row in rows] == ["toc_outline"]
+
     def test_the_wrapper_does_not_rename_the_engine(self, tmp_path):
         """`model_ref` 写的是 `engine.name`：包装器改名等于把账面模型名写成别的名字（目录行走规则位，不经引擎）。"""
         store, factory = _ledger_env(tmp_path)
@@ -4882,6 +5833,322 @@ class TestSectionSpansOf:
             ("ch2", 29, 317),
         ]
 
+    def test_a_section_reaches_the_page_where_the_next_section_starts_up_to_its_heading(self):
+        """真机 b05：导引的正文延续到「有序集」起始页——终点页取那一页，止于有序集标题块之前。
+
+        页级算式把终点压到「下一行起始页 − 1」，上一节的尾段落在下一节那页开头时整段丢掉；
+        带块号的锚点能把它精确切回来：下一页（含）从页首到标题块前一块。
+        """
+        spans = section_spans_of(
+            [
+                SpanRow(node_id="daoyin", name="导引", order_hint=1, page=9, depth=2, block=1),
+                SpanRow(node_id="order", name="有序集", order_hint=2, page=10, depth=2, block=14),
+                SpanRow(node_id="ch2", name="第2章", order_hint=3, page=29, depth=1),
+            ],
+            first_page=9,
+            last_page=317,
+        )
+
+        assert [
+            (span.parent_id, span.page_start, span.page_end, span.start_block, span.end_block)
+            for span in spans
+        ] == [
+            ("daoyin", 9, 10, 1, 13),
+            ("order", 10, 28, 14, None),
+            ("ch2", 29, 317, None, None),
+        ]
+
+    def test_a_next_heading_at_the_top_of_its_page_ends_the_previous_section_a_page_earlier(self):
+        """下一节标题就是那一页的首块时没有可归属的尾段：上一节仍止于前一页（不造空页）。"""
+        spans = section_spans_of(
+            [
+                SpanRow(node_id="a", name="甲", order_hint=1, page=9, depth=2, block=1),
+                SpanRow(node_id="b", name="乙", order_hint=2, page=10, depth=2, block=0),
+            ],
+            first_page=9,
+            last_page=20,
+        )
+
+        assert [
+            (span.parent_id, span.page_start, span.page_end, span.start_block, span.end_block)
+            for span in spans
+        ] == [
+            ("a", 9, 9, 1, None),
+            ("b", 10, 20, 0, None),
+        ]
+
+
+class TestDisplaySpansOf:
+    """D-1~D-9：显示段与取证区间分离——`section_spans_of` 继续给点腿取材，`display_spans_of` 给
+    `page_start`／`page_end`：DFS 展示序、父先于子、段与段不重合且按页序，同页由先到者占页。
+    """
+
+    @staticmethod
+    def _row(
+        node_id: str,
+        page: int,
+        *,
+        parent: str | None = None,
+        depth: int = 2,
+        role: str = "knowledge",
+        kind: str = "",
+        order: int | None = None,
+        block: int | None = None,
+    ) -> SpanRow:
+        return SpanRow(
+            node_id=node_id,
+            name=node_id,
+            order_hint=order,
+            page=page,
+            depth=depth,
+            toc_role=role,
+            toc_kind=kind,
+            parent_id=parent,
+            block=block,
+        )
+
+    @staticmethod
+    def _read(spans: list[DisplaySpan]) -> list[tuple]:
+        return [(span.node_id, span.page_start, span.page_end) for span in spans]
+
+    def test_a_point_sharing_its_last_page_with_the_next_heading_keeps_that_page(self):
+        """真机 b05：正文延续到下一枚知识点起始页时，显示段也要带到那页，止于下一标题块之前。"""
+        spans = display_spans_of(
+            [
+                self._row("a", 9, block=1),
+                self._row("b", 10, block=14),
+                self._row("c", 29, block=0),
+            ],
+            last_page=317,
+        )
+
+        assert [(span.node_id, span.page_start, span.page_end, span.end_block) for span in spans] == [
+            ("a", 9, 10, 13),
+            ("b", 10, 28, None),
+            ("c", 29, 317, None),
+        ]
+
+    def test_a_chapter_hands_the_pages_after_its_first_child_to_that_child(self):
+        """D-4／D-5：章止于首子之前，知识点之间各管到下一枚锚页之前。"""
+        spans = display_spans_of(
+            [
+                self._row("ch1", 9, depth=1),
+                self._row("p15", 15, parent="ch1"),
+                self._row("p20", 20, parent="ch1"),
+                self._row("ch2", 29, depth=1),
+            ],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [
+            ("ch1", 9, 14),
+            ("p15", 15, 19),
+            ("p20", 20, 28),
+            ("ch2", 29, 317),
+        ]
+
+    def test_a_chapter_sharing_a_page_with_its_first_child_shows_only_that_page(self):
+        """D-4／D-6：章与首点同页，先到者占页——章 [9,9]，首点顺延到 p10 起算。"""
+        spans = display_spans_of(
+            [
+                self._row("ch1", 9, depth=1),
+                self._row("p9", 9, parent="ch1"),
+                self._row("p20", 20, parent="ch1"),
+                self._row("ch2", 29, depth=1),
+            ],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [
+            ("ch1", 9, 9),
+            ("p9", 10, 19),
+            ("p20", 20, 28),
+            ("ch2", 29, 317),
+        ]
+
+    def test_a_chapter_without_children_runs_to_before_the_next_chapter(self):
+        """D-4：无子行时终点＝下一章锚页 − 1，末章到书末。"""
+        spans = display_spans_of(
+            [self._row("ch1", 9, depth=1), self._row("ch2", 29, depth=1)],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [("ch1", 9, 28), ("ch2", 29, 317)]
+
+    def test_points_anchored_on_one_page_take_one_page_each_in_book_order(self):
+        """D-6：同页多枚知识点——先到者占该页，后到者从下一页起算，封顶章末。"""
+        spans = display_spans_of(
+            [
+                self._row("ch1", 9, depth=1),
+                self._row("a", 20, parent="ch1"),
+                self._row("b", 20, parent="ch1"),
+                self._row("ch2", 41, depth=1),
+            ],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [
+            ("ch1", 9, 19),
+            ("a", 20, 20),
+            ("b", 21, 40),
+            ("ch2", 41, 317),
+        ]
+
+    def test_a_point_shifted_past_the_chapter_end_is_disclosed_as_empty(self):
+        """D-6：顺延越过本章末时该行显示段为空并披露，不编造页。"""
+        spans = display_spans_of(
+            [
+                self._row("ch1", 9, depth=1),
+                self._row("a", 20, parent="ch1"),
+                self._row("b", 20, parent="ch1"),
+                self._row("ch2", 21, depth=1),
+            ],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [
+            ("ch1", 9, 19),
+            ("a", 20, 20),
+            ("b", None, None),
+            ("ch2", 21, 317),
+        ]
+
+    def test_front_matter_rows_before_the_first_knowledge_row_take_one_page_each(self):
+        """D-7：书前件（锚页早于第一枚知识点行）单页，不把整段前置页吞掉。"""
+        spans = display_spans_of(
+            [
+                self._row("front", 4, depth=1, role="reference", kind="front_matter"),
+                self._row("sym", 5, depth=1, role="reference", kind="symbol_table"),
+                self._row("ch1", 9, depth=1),
+                self._row("ch2", 29, depth=1),
+            ],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [
+            ("front", 4, 4),
+            ("sym", 5, 5),
+            ("ch1", 9, 28),
+            ("ch2", 29, 317),
+        ]
+
+    def test_back_matter_rows_after_the_last_knowledge_row_run_on_to_the_book_end(self):
+        """D-7：书尾附件区连续，末章止于第一枚附件行之前。"""
+        spans = display_spans_of(
+            [
+                self._row("ch1", 9, depth=1),
+                self._row("ch2", 29, depth=1),
+                self._row("bib", 313, depth=1, role="reference", kind="bibliography"),
+                self._row("index", 315, depth=1, role="reference", kind="index"),
+            ],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [
+            ("ch1", 9, 28),
+            ("ch2", 29, 312),
+            ("bib", 313, 314),
+            ("index", 315, 317),
+        ]
+
+    def test_an_exercise_row_runs_to_the_end_of_its_chapter(self):
+        """D-7：习题段是附件身份位但不退回单页——正文从标题页延伸到本章末（`KA-46`）。"""
+        spans = display_spans_of(
+            [
+                self._row("ch1", 9, depth=1),
+                self._row("p10", 10, parent="ch1"),
+                self._row("ex", 20, parent="ch1", role="reference", kind="exercise"),
+                self._row("ch2", 29, depth=1),
+            ],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [
+            ("ch1", 9, 9),
+            ("p10", 10, 19),
+            ("ex", 20, 28),
+            ("ch2", 29, 317),
+        ]
+
+    def test_an_exercise_row_before_a_later_heading_on_the_same_page_takes_only_its_own_blocks(self):
+        """真机 b18 §8.4／§8.5：习题行在目录里排在章末（order_hint 大），锚点却落在同页第 4 块、
+        下一节标题在同页第 17 块。同级展示序只按 `(锚页, order_hint)` 会把 §8.5 的段算成
+        「第 17 块起、第 3 块止」的倒挂段（屏上整页回落）。同页必须按块号排：习题段止于第 16 块。
+        """
+        spans = display_spans_of(
+            [
+                self._row("ch1", 9, depth=1),
+                self._row("p1", 161, parent="ch1", order=1, block=17),
+                self._row("ex", 161, parent="ch1", order=9, role="reference", kind="exercise", block=4),
+                self._row("ch2", 200, depth=1),
+            ],
+            last_page=317,
+        )
+
+        assert [(span.node_id, span.page_start, span.page_end, span.end_block) for span in spans] == [
+            ("ch1", 9, 160, None),
+            ("ex", 161, 161, 16),
+            ("p1", 161, 199, None),
+            ("ch2", 200, 317, None),
+        ]
+
+    def test_a_row_with_children_ends_before_its_first_child_at_any_depth(self):
+        """D-8：有子的行止于首子之前，叶子行到下一同级行之前——三层时同一算式自然生效。"""
+        spans = display_spans_of(
+            [
+                self._row("ch1", 9, depth=1),
+                self._row("p15", 15, parent="ch1"),
+                self._row("q18", 18, parent="p15", depth=3),
+                self._row("p20", 20, parent="ch1"),
+            ],
+            last_page=317,
+        )
+
+        assert self._read(spans) == [
+            ("ch1", 9, 14),
+            ("p15", 15, 17),
+            ("q18", 18, 19),
+            ("p20", 20, 317),
+        ]
+
+    def test_the_parent_comes_first_whatever_the_input_order(self):
+        """D-3：展示序由锚页与树位给，输入按库里的行序喂进来也不改父先于子。"""
+        rows = [
+            self._row("ch2", 29, depth=1, order=2),
+            self._row("p20", 20, parent="ch1", order=3),
+            self._row("ch1", 9, depth=1, order=1),
+            self._row("p15", 15, parent="ch1", order=2),
+        ]
+
+        assert [span.node_id for span in display_spans_of(rows, last_page=317)] == [
+            "ch1",
+            "p15",
+            "p20",
+            "ch2",
+        ]
+
+    def test_a_missing_page_count_leaves_the_tail_end_open(self):
+        """D-9：书末页数缺时不给尾行终点，不猜书末。"""
+        spans = display_spans_of(
+            [self._row("ch1", 9, depth=1), self._row("ch2", 29, depth=1)],
+            last_page=None,
+        )
+
+        assert self._read(spans) == [("ch1", 9, 28), ("ch2", 29, None)]
+
+    def test_a_row_past_the_book_end_gets_no_segment(self):
+        """起点页超出书末的行夹不出区间，两键为空而不是造一个假终点。"""
+        spans = display_spans_of(
+            [self._row("ch1", 9, depth=1), self._row("ch2", 29, depth=1)],
+            last_page=20,
+        )
+
+        assert self._read(spans) == [("ch1", 9, 20), ("ch2", None, None)]
+
+    def test_an_empty_outline_has_no_display_segments(self):
+        """目录零行时没有可显示的段：显示面只发行自身的段，不编造无主区间。"""
+        assert display_spans_of([], last_page=317) == []
+
 
 class TestContentOnlyStage:
     """`KA-43`：`stage='content'`＝拿在册目录做知识点——目录腿零发起、在册行重构成区间，
@@ -4924,6 +6191,7 @@ class TestContentOnlyStage:
         _, accepted = self._registered(session, tmp_path)
         engine = FakeKnowledgeEngine(
             points_by_section={"1.1 数列极限": [_point_draft("数列极限的定义", page=2)]},
+            chapters_by_title={"第 1 章 极限": ("极限是分析数列与函数逼近行为的工具。", "本章导读：从数列到极限。")},
         )
 
         outcome = run_knowledge_job(
@@ -4932,7 +6200,7 @@ class TestContentOnlyStage:
 
         steps = [step for step, _ in engine.calls]
         assert not [step for step in steps if step.startswith("toc_")], "目录三条腿零发起"
-        assert steps == ["points", "points", "chapter"], "先两节、后一章（`KA-45` 的两遍制）"
+        assert steps == ["points", "chapter"], "先一节合批、后一章（`KA-45` 的两遍制）"
         assert len(_rows(session, node_kind="outline")) == 3, "在册目录行不增不减"
         assert (outcome.outline_rows, outcome.point_rows) == (0, 0)
         assert kp_batch_row(accepted, outcome).stage == "content"
@@ -4944,11 +6212,14 @@ class TestContentOnlyStage:
 
         run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
 
-        assert [(s.title, s.page_start, s.page_end) for s in self._sections(engine)] == [
-            ("1.1 数列极限", 2, 3),
-            ("1.2 函数极限", 4, 6),
-        ]
-        assert [s.parent_id for s in self._sections(engine)] == [row.node_id for row in rows[1:]]
+        (call,) = self._sections(engine)
+        assert call.title == "1.1 数列极限 等 2 节", "两节都不足下限 ⇒ 合成一笔（`KA-64`）"
+        assert call.parent_id == rows[0].node_id, "合批以共同父行为组"
+        assert [member.node_id for member in call.members] == [row.node_id for row in rows[1:]]
+        assert [
+            (member.title, member.blocks[0].page, member.blocks[-1].page)
+            for member in call.members
+        ] == [("1.1 数列极限", 2, 3), ("1.2 函数极限", 4, 6)]
 
     def test_a_narrow_range_only_asks_about_the_sections_that_cross_it(self, session, tmp_path):
         """区间外的节整节不发起：一节一次百秒级调用，为零页的节付费等于把批次拖长一倍。"""
@@ -5009,7 +6280,9 @@ class TestContentOnlyStage:
             },
         )
         accepted = accept_kp_job(session, book_id="b05", stage="content")
-        engine = FakeKnowledgeEngine()
+        engine = FakeKnowledgeEngine(
+            chapters_by_title={"第 1 章 极限": ("极限是分析数列与函数逼近行为的工具。", "本章导读：极限。")}
+        )
 
         outcome = run_knowledge_job(
             session, data_root=tmp_path, engine=engine, acceptance=accepted
@@ -5194,6 +6467,395 @@ class TestContentOnlyStage:
         assert kp_batch_row(accepted, outcome).result["unlocated_outline_entries"] == ["1.1 数列极限"]
 
 
+
+
+class TestKindReviewPass:
+    """`KA-63`：`content` 点腿前的一趟种类审校——零模型调用；行名是标签的行点名，
+    段内标签块按（父, 归一名字, 锚页）拆成章下的并列习题行，重跑只作废旧拆分行。"""
+
+    @staticmethod
+    def _registered_scene(session: Session, tmp_path: Path) -> Path:
+        """一章两节，第一节的区间里挂一枚整块「习题 1.1」（p4·b1）。"""
+        pages_dir = _scene(session, tmp_path, page_count=8, layout={})
+        _write_page_blocks(pages_dir, 2, ["1.1 数列极限", "正文一"])
+        _write_page_blocks(pages_dir, 4, ["正文二", "习题 1.1"])
+        _write_page_blocks(pages_dir, 7, ["正文三"])
+        _register_tree(
+            session,
+            [
+                ("afkp-ch1", "第 1 章 极限", 1, 1, None),
+                ("afkp-s11", "1.1 数列极限", 2, 2, "afkp-ch1"),
+                ("afkp-s12", "1.2 函数极限", 5, 2, "afkp-ch1"),
+            ],
+        )
+        return pages_dir
+
+    @staticmethod
+    def _splits(session: Session) -> list[AfKp]:
+        return [
+            row
+            for row in _rows(session, node_kind="outline")
+            if row.model_ref == EXERCISE_SPLIT_MODEL_REF
+        ]
+
+    def test_a_label_block_inside_a_point_span_lands_under_its_chapter(self, session, tmp_path):
+        self._registered_scene(session, tmp_path)
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        engine = FakeKnowledgeEngine(
+            chapters_by_title={"第 1 章 极限": ("极限是分析数列与函数逼近行为的工具。", "本章导读：极限。")}
+        )
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        splits = self._splits(session)
+        assert len(splits) == 1
+        split = splits[0]
+        assert (split.parent_id, split.depth, split.name, split.summary) == (
+            "afkp-ch1",
+            2,
+            "习题 1.1",
+            "",
+        )
+        assert split.gen_status == "candidate"
+        assert split.meta == {"toc_kind": "exercise", "toc_role": "reference"}
+        assert [
+            (anchor["kind"], anchor["page"], anchor["block_indexes"])
+            for anchor in split.anchors or []
+        ] == [("page_block", 4, [1])]
+        assert [step for step, _ in engine.calls] == ["points", "chapter"], (
+            "拆分行零模型调用，点腿调用数不变（两节合批仍是一笔）"
+        )
+        assert (outcome.type_review_rows, outcome.split_exercise_rows) == (3, 1)
+        result = kp_batch_row(accepted, outcome).result
+        assert (result["type_review_rows"], result["type_review_flags"], result["split_exercise_rows"]) == (
+            3,
+            [],
+            1,
+        )
+
+    def test_the_registered_rows_keep_every_structural_column(self, session, tmp_path):
+        self._registered_scene(session, tmp_path)
+        before = {
+            row.node_id: _columns(row)[3:9] for row in _rows(session, node_kind="outline")
+        }
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+
+        run_knowledge_job(
+            session,
+            data_root=tmp_path,
+            engine=FakeKnowledgeEngine(
+                chapters_by_title={"第 1 章 极限": ("极限是分析数列与函数逼近行为的工具。", "本章导读：极限。")}
+            ),
+            acceptance=accepted,
+        )
+        session.expire_all()
+
+        after = {row.node_id: row for row in _rows(session, node_kind="outline")}
+        assert {
+            node_id: _columns(row)[3:9] for node_id, row in after.items() if node_id in before
+        } == before, "结构列（名、去重键、挂父、次序、边、锚点）零被触碰"
+
+    def test_a_row_named_like_a_label_is_named_and_gets_no_point_leg(self, session, tmp_path):
+        pages_dir = _scene(session, tmp_path, page_count=8, layout={})
+        _write_page_blocks(pages_dir, 4, ["正文二", "习题 1.1"])
+        _register_tree(
+            session,
+            [
+                ("afkp-ch1", "第 1 章 极限", 1, 1, None),
+                ("afkp-ex", "习题 1.1", 4, 2, "afkp-ch1"),
+            ],
+        )
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        engine = FakeKnowledgeEngine()
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        assert outcome.type_review_flags == ("习题 1.1",)
+        assert (outcome.type_review_rows, outcome.split_exercise_rows) == (2, 0)
+        assert [step for step, _ in engine.calls if step == "points"] == []
+        assert self._splits(session) == [], "已在册的那一行不被拆出第二枚"
+
+    def test_a_rerun_supersedes_the_previous_split_rows(self, session, tmp_path):
+        self._registered_scene(session, tmp_path)
+        first = accept_kp_job(session, book_id="b05", stage="content")
+        run_knowledge_job(
+            session, data_root=tmp_path, engine=FakeKnowledgeEngine(), acceptance=first
+        )
+        session.expire_all()
+        stale = self._splits(session)[0]
+
+        second = accept_kp_job(session, book_id="b05", stage="content")
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=FakeKnowledgeEngine(), acceptance=second
+        )
+        session.expire_all()
+
+        assert session.get(AfKp, stale.node_id).gen_status == "rejected"
+        fresh = [row for row in self._splits(session) if row.gen_status == "candidate"]
+        assert len(fresh) == 1
+        assert fresh[0].node_id != stale.node_id
+        assert (outcome.split_exercise_rows, outcome.superseded_rows) == (1, 1)
+
+    def test_the_point_material_stops_before_the_exercise_segment(self, session, tmp_path):
+        """`KA-68`（用户裁决 2026-11-09）：点腿材料不需要习题段——取材止于习题标签块之前。
+
+        切点取本批拆出的习题行（与屏上切尾同一条边界）：第一节的取块表里没有「习题 1.1」，
+        标签块之前的正文照收。
+        """
+        self._registered_scene(session, tmp_path)
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        engine = FakeKnowledgeEngine(summaries_by_section={"1.1 数列极限": "第一节总结"})
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        assert len(self._splits(session)) == 1, "切分照旧发生：切点不是「认不出」的副产物"
+        texts = [
+            text
+            for step, section in engine.calls
+            if step == "points"
+            for text in (block.text for block in section.blocks)
+        ]
+        assert "习题 1.1" not in texts
+        assert "正文二" in texts, "标签块之前的正文仍归本节"
+        row = session.get(AfKp, "afkp-s11")
+        ranges = (row.meta or {}).get("material_ranges") or []
+        assert {"page": 4, "block_indexes": [1]} not in ranges
+        assert {"page": 4, "block_indexes": [0]} in ranges
+
+
+class _BudgetEngine(FakeKnowledgeEngine):
+    """内容批次的点腿桩（`KA-64`）：合批按成员逐点作答，单节按窗口给出带序号的总结。"""
+
+    def __init__(self, *, fail_window: tuple[str, int] | None = None) -> None:
+        super().__init__(
+            chapters_by_title={"第 1 章 极限": ("极限是分析数列与函数逼近行为的工具。", "本章导读：极限。")}
+        )
+        self.fail_window = fail_window
+        self.windows_seen: dict[str, int] = {}
+
+    def points(self, section) -> SectionPoints:
+        self.calls.append(("points", section))
+        if section.members:
+            return SectionPoints(
+                [],
+                "",
+                tuple(
+                    MemberPoints(
+                        node_id=member.node_id,
+                        drafts=[],
+                        summary=f"总结：{member.title}",
+                    )
+                    for member in section.members
+                ),
+            )
+        ordinal = self.windows_seen.get(section.title, 0) + 1
+        self.windows_seen[section.title] = ordinal
+        if self.fail_window == (section.title, ordinal):
+            raise EngineError("模型服务中断")
+        return SectionPoints([], f"总结：{section.title}#{ordinal}")
+
+
+class TestPointBudget:
+    """`KA-64`：内容批次的点腿按块取材、10,000 字符预算切窗、相邻小节点合批。
+
+    一章三节：前两节各不足下限（合成一笔），第三节一枚块自身超预算（按句界切成两窗）。
+    """
+
+    _LONG = "长" * (CONTENT_INPUT_BUDGET_CHARS + 2000)
+
+    @staticmethod
+    def _registered_scene(session: Session, tmp_path: Path) -> Path:
+        pages_dir = _scene(session, tmp_path, page_count=8, layout={})
+        _write_page_blocks(
+            pages_dir, 2, ["页眉噪音", "正文一甲。"], types=["header", "paragraph"]
+        )
+        _write_page_blocks(pages_dir, 3, ["正文一乙。"])
+        _write_page_blocks(pages_dir, 4, ["正文二甲。"])
+        _write_page_blocks(pages_dir, 5, ["正文二乙。"])
+        _write_page_blocks(pages_dir, 6, [TestPointBudget._LONG])
+        _write_page_blocks(pages_dir, 7, ["正文三乙。"])
+        _write_page_blocks(pages_dir, 8, ["页脚噪音"], types=["footer"])
+        _register_tree(
+            session,
+            [
+                ("afkp-ch1", "第 1 章 极限", 1, 1, None),
+                ("afkp-s11", "1.1 数列极限", 2, 2, "afkp-ch1"),
+                ("afkp-s12", "1.2 函数极限", 4, 2, "afkp-ch1"),
+                ("afkp-s13", "1.3 极限的运算", 6, 2, "afkp-ch1"),
+            ],
+        )
+        return pages_dir
+
+    def test_blocks_feed_the_point_leg_and_small_sections_share_one_call(self, session, tmp_path):
+        self._registered_scene(session, tmp_path)
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        engine = _BudgetEngine()
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        calls = [payload for step, payload in engine.calls if step == "points"]
+        merged = [call for call in calls if call.members]
+        assert len(merged) == 1, "两枚小节点合成一笔调用"
+        assert [member.node_id for member in merged[0].members] == ["afkp-s11", "afkp-s12"]
+        assert [[block.text for block in member.blocks] for member in merged[0].members] == [
+            ["正文一甲。", "正文一乙。"],
+            ["正文二甲。", "正文二乙。"],
+        ], "块取材：页眉页脚零入，按页序与块序"
+        singles = [call for call in calls if not call.members]
+        assert [(call.page_start, call.page_end) for call in singles] == [(6, 6), (6, 7)], (
+            "超长块按句界切成两窗，第二窗接住余量与下一页"
+        )
+        assert all(
+            sum(len(block.text) for block in call.blocks) + 2 * (len(call.blocks) - 1)
+            <= CONTENT_INPUT_BUDGET_CHARS
+            for call in calls
+        ), "每笔材料正文都不超预算"
+        assert (outcome.point_windows, outcome.point_merges) == (1, 1)
+
+        rows = {row.node_id: row for row in _rows(session, node_kind="outline")}
+        assert rows["afkp-s11"].summary == "总结：1.1 数列极限"
+        assert rows["afkp-s12"].summary == "总结：1.2 函数极限"
+        assert rows["afkp-s13"].summary == "总结：1.3 极限的运算#1\n\n总结：1.3 极限的运算#2", (
+            "多窗口的节总结按窗口序拼合"
+        )
+        result = kp_batch_row(accepted, outcome).result
+        assert (result["point_windows"], result["point_merges"]) == (1, 1)
+        assert result["outline_summary_rows"] == 3
+
+    def test_a_failed_window_voids_the_whole_section_and_only_failed_retries_it(self, session, tmp_path):
+        self._registered_scene(session, tmp_path)
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        outcome = run_knowledge_job(
+            session,
+            data_root=tmp_path,
+            engine=_BudgetEngine(fail_window=("1.3 极限的运算", 2)),
+            acceptance=accepted,
+        )
+        OperationRepository(session).create_kp_batch(kp_batch_row(accepted, outcome))
+        session.commit()
+        session.expire_all()
+
+        assert outcome.failed_sections == 1
+        detail = outcome.failed_section_details[0]
+        assert (detail["node_id"], detail["page_start"], detail["page_end"]) == (
+            "afkp-s13",
+            6,
+            8,
+        )
+        rows = {row.node_id: row for row in _rows(session, node_kind="outline")}
+        assert rows["afkp-s11"].summary == "总结：1.1 数列极限"
+        assert rows["afkp-s12"].summary == "总结：1.2 函数极限"
+        assert rows["afkp-s13"].summary == "", "任一窗口失败＝整节零行，已收回的半份总结也丢掉"
+
+        retry = accept_kp_job(session, book_id="b05", stage="content", only_failed=True)
+        retry_engine = _BudgetEngine()
+        run_knowledge_job(
+            session, data_root=tmp_path, engine=retry_engine, acceptance=retry
+        )
+        retry_calls = [payload for step, payload in retry_engine.calls if step == "points"]
+        assert [(call.title, call.members) for call in retry_calls] == [
+            ("1.3 极限的运算", ()),
+            ("1.3 极限的运算", ()),
+        ], "重跑只问名单内的节点，不重跑合批组"
+
+
+class TestMaterialRanges:
+    """`KA-66`：内容批次把本次实际送入的块区间写进在册点行的 `meta.material_ranges`。
+
+    区间是复核增强位：与调用块集合逐块相等、失败节零枚、章行与 `full`／`exercise` 通路不写。
+    """
+
+    def test_ranges_are_the_blocks_sent_and_counted(self, session, tmp_path):
+        """合批按成员各算各的区间，超预算节把两窗的块并成一张表；章行不写。"""
+        TestPointBudget._registered_scene(session, tmp_path)
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=_BudgetEngine(), acceptance=accepted
+        )
+        session.expire_all()
+
+        rows = {row.node_id: row for row in _rows(session, node_kind="outline")}
+        assert rows["afkp-s11"].meta["material_ranges"] == [
+            {"page": 2, "block_indexes": [1]},
+            {"page": 3, "block_indexes": [0]},
+        ], "页眉零入；合批组的区间不串到邻点"
+        assert rows["afkp-s12"].meta["material_ranges"] == [
+            {"page": 4, "block_indexes": [0]},
+            {"page": 5, "block_indexes": [0]},
+        ]
+        assert rows["afkp-s13"].meta["material_ranges"] == [
+            {"page": 6, "block_indexes": [0]},
+            {"page": 7, "block_indexes": [0]},
+        ], "两窗送的是同一块的两段：并表后同页同块只记一次"
+        assert rows["afkp-ch1"].meta == {"toc_role": "knowledge"}, "章腿不写取材区间"
+        assert rows["afkp-s11"].meta["toc_role"] == "knowledge", "既有 meta 键逐键保留"
+        assert outcome.material_ranges_rows == 3
+        assert kp_batch_row(accepted, outcome).result["material_ranges_rows"] == 3
+
+    def test_a_failed_section_writes_no_ranges(self, session, tmp_path):
+        """任一窗口失败＝整节零行：已送出的半份区间也一并丢掉。"""
+        TestPointBudget._registered_scene(session, tmp_path)
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+
+        outcome = run_knowledge_job(
+            session,
+            data_root=tmp_path,
+            engine=_BudgetEngine(fail_window=("1.3 极限的运算", 2)),
+            acceptance=accepted,
+        )
+        session.expire_all()
+
+        rows = {row.node_id: row for row in _rows(session, node_kind="outline")}
+        assert "material_ranges" not in rows["afkp-s13"].meta
+        assert outcome.material_ranges_rows == 2
+
+    def test_the_full_leg_writes_no_ranges(self, session, tmp_path):
+        _scene(session, tmp_path, page_count=6)
+
+        outcome = run_knowledge_job(
+            session,
+            data_root=tmp_path,
+            engine=FakeKnowledgeEngine(
+                points_by_section={"1.1 数列极限": [_point_draft("数列极限的定义", page=2)]}
+            ),
+            acceptance=_accepted(session),
+        )
+
+        assert outcome.material_ranges_rows == 0
+        assert all("material_ranges" not in (row.meta or {}) for row in _rows(session))
+
+    def test_the_exercise_leg_writes_no_ranges(self, session, tmp_path):
+        _scene(session, tmp_path, page_count=8)
+        _register_tree(
+            session,
+            [
+                ("afkp-ch1", "第 1 章 极限", 1, 1, None),
+                ("afkp-ex1", "习题 1.1", 5, 2, "afkp-ch1"),
+            ],
+            metas={
+                "afkp-ch1": {"toc_role": "knowledge"},
+                "afkp-ex1": {"toc_role": "reference", "toc_kind": "exercise"},
+            },
+        )
+        accepted = accept_kp_job(session, book_id="b05", stage="exercise")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=FakeKnowledgeEngine(), acceptance=accepted
+        )
+
+        assert outcome.material_ranges_rows == 0
+        assert all("material_ranges" not in (row.meta or {}) for row in _rows(session))
 
 
 def _register_tree(
@@ -5406,6 +7068,39 @@ class TestExerciseStage:
         assert outcome.superseded_rows == 1, "未背书的那一枚旧题行照旧作废"
 
 
+    def test_a_segment_anchored_on_a_toc_page_is_skipped_and_named(self, session, tmp_path):
+        """`KA-43` 的同一条判据用在分题腿：锚还在目录页的习题段整段跳过并点名。
+
+        这一批不跑目录腿，坏锚救不回正文页；照发会按「目录页起、到本章末」的派生区间，把前几章
+        的题行重复挂到本段父行下。目录页的认法与内容腿同源（`toc_entries`），零模型调用。
+        """
+        rows = [
+            ("afkp-ch1", "第 1 章 极限", 5, 1, None),
+            ("afkp-ex1", "习题", 2, 2, "afkp-ch1"),
+        ]
+        metas = {
+            "afkp-ch1": {"toc_role": "knowledge"},
+            "afkp-ex1": {"toc_role": "reference", "toc_kind": "exercise"},
+        }
+        accepted = self._accept(session, tmp_path, rows=rows, metas=metas)
+        pages = _pages_dir(tmp_path)
+        _write_page_artifacts(
+            pages, 2, [], body="第 1 章 极限 …… 5\n1.1 数列极限 …… 6\n1.2 函数极限 …… 7"
+        )
+        # 派生区间里确有可成行的题号：跳过是判据，不是「本来就没有题」。
+        _write_page_blocks(pages, 6, ["【1】题一。", "【2】题二。"])
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=FakeKnowledgeEngine(), acceptance=accepted
+        )
+        session.expire_all()
+
+        assert _rows(session, node_kind="point") == []
+        assert outcome.exercise_item_rows == 0
+        assert outcome.unlocated_outline_entries == ("习题",)
+        assert kp_batch_row(accepted, outcome).result["unlocated_outline_entries"] == ["习题"]
+
+
 class TestExerciseBookStage:
     """`KA-53` 习题集侧（独立模式）：规则定界、模型只读题面／解答、逐题一行一包。
 
@@ -5455,11 +7150,37 @@ class TestExerciseBookStage:
         accepted = self._accept(session, tmp_path)
         pages = self._pages(tmp_path)
         _write_page_blocks(pages, 5, ["1. 求极限。", "2. 证明伯努利不等式。"])
+        # 页 5 追加一枚 image 块（REQ-179 R1：题包里真实出现的图片引用形态）：
+        # blocks.json 带 `path`（image 块必需字段），页 md 由 blocks_to_markdown 同形生成。
+        blocks_payload = json.loads((pages / "p0005.blocks.json").read_text(encoding="utf-8"))
+        blocks_payload["blocks"].append(
+            {
+                "type": "image",
+                "bbox": [10, 90, 700, 200],
+                "index": 2,
+                "order": 2,
+                "path": "images/abc123.jpg",
+                "caption": "图1",
+            }
+        )
+        (pages / "p0005.blocks.json").write_text(
+            json.dumps(blocks_payload, ensure_ascii=False), encoding="utf-8"
+        )
+        (pages / "p0005.md").write_text(
+            "1. 求极限。\n\n![图1](pages/images/abc123.jpg)\n\n2. 证明伯努利不等式。",
+            encoding="utf-8",
+        )
         _write_page_blocks(pages, 6, ["3. 讨论连续性。"])
         engine = FakeKnowledgeEngine(
             exercise_by_title={
                 "习题 1.1": [
-                    ExerciseDraft("1", problem="求 $\\lim 1/n$。", solution="夹逼得 0。"),
+                    # 题面按真实引擎（kp_gateway）的程序切片形态回原文（含图片引用行）；
+                    # REQ-179 R1 断言的就是这份原文在题包写入时被改写成 8902 读腿 URL。
+                    ExerciseDraft(
+                        "1",
+                        problem="1. 求极限。\n\n![图1](pages/images/abc123.jpg)",
+                        solution="夹逼得 0。",
+                    ),
                     ExerciseDraft("2", problem="证明伯努利不等式。", solution=""),
                 ]
             }
@@ -5496,8 +7217,16 @@ class TestExerciseBookStage:
         assert first.startswith("# 1.\n\n## 题目\n\n")
         assert "\n\n## 解答\n\n夹逼得 0。\n" in first
         assert first.rstrip().endswith("## 来源\n\n《数学分析原理》p.5")
+        # REQ-179 R2：两种缺解答要可区分——题 2 有草稿但解答空＝真没配到（占位句保留）；
+        # 题 3 模型未回草稿＝判定失败（写「解答不可用」标记，不再把占位句固化成正文）。
         assert "## 解答\n\n未配到解答" in packs[1].read_text(encoding="utf-8")
-        assert "## 来源\n\n《数学分析原理》p.6–8" in packs[2].read_text(encoding="utf-8")
+        assert "## 解答\n\n解答不可用（模型判定失败）" in packs[2].read_text(encoding="utf-8")
+        assert "未配到解答" not in packs[2].read_text(encoding="utf-8")
+        # REQ-179 R1：题包里的图片引用在**写入面**改写成 8902 可代理取的 URL（8900 字节转发，
+        # 前端按 API_BASE 前缀取），不再是 8903 下取不到的产物相对路径。
+        rewritten = packs[0].read_text(encoding="utf-8")
+        assert "![图1](/api/v1/books/b07/images/abc123.jpg)" in rewritten
+        assert "pages/images/abc123.jpg" not in rewritten
         assert [row.narrative_ref for row in rows] == [path.name for path in packs]
 
         assert (outcome.exercise_item_rows, outcome.exercise_pack_rows) == (3, 3)
@@ -5506,6 +7235,256 @@ class TestExerciseBookStage:
         assert batch.result["merged_exercise_rows"] == 0
         assert batch.result["unmatched_solutions"] == 0
         assert set(batch.result) <= set(KP_RESULT_KEYS)
+
+    def test_answers_from_the_running_header_section_fill_blank_solutions(
+        self, session, tmp_path
+    ):
+        """答案段回配（PLAN-036 W11）：书尾「答案」连续页按题号补空白解答，只填不猜。"""
+        rows = [
+            *self._ROWS,
+            ("afkp-b7ans", "答案", 8, 1, None),
+        ]
+        metas = {
+            **self._METAS,
+            "afkp-b7ans": {"toc_role": "reference", "toc_kind": "back_matter"},
+        }
+        accepted = self._accept(session, tmp_path, rows=rows, metas=metas)
+        pages = self._pages(tmp_path)
+        _write_page_blocks(pages, 5, ["1. 题一。", "2. 题二。"])
+        _write_page_blocks(pages, 8, ["答案", "1. 解一。 2. 解二。"])
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [
+                    ExerciseDraft("1", problem="题一", solution=""),
+                    ExerciseDraft("2", problem="题二", solution=""),
+                ]
+            }
+        )
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        item_rows = _rows(session, node_kind="point", book_id="b07")
+        assert [row.name for row in item_rows] == ["1.", "2."]
+        packs = [
+            (_kp_dir(tmp_path, "b07") / f"{row.node_id}.md").read_text(encoding="utf-8")
+            for row in item_rows
+        ]
+        assert "## 解答\n\n解一。" in packs[0]
+        assert "## 解答\n\n解二。" in packs[1]
+        assert outcome.exercise_pack_rows == 2
+        reading = exercise_workspace(
+            session, data_root=tmp_path, book=BookRepository(session).get("b07")
+        )
+        assert reading is not None
+        assert [item["status"] for item in reading.items] == ["complete", "complete"]
+
+    def test_independent_mode_verifies_after_answer_backfill(self, session, tmp_path):
+        """`KA-70` 独立模式：答案回填之后按顶层章成一问，回填出的解答进校验材料。
+
+        三态随题行落 `meta`：`reject` 照写不钳、note 原样、无 note 的行不造空键。
+        """
+        rows = [
+            *self._ROWS,
+            ("afkp-b7ans", "答案", 8, 1, None),
+        ]
+        metas = {
+            **self._METAS,
+            "afkp-b7ans": {"toc_role": "reference", "toc_kind": "back_matter"},
+        }
+        accepted = self._accept(session, tmp_path, rows=rows, metas=metas)
+        pages = self._pages(tmp_path)
+        _write_page_blocks(pages, 5, ["1. 题一。", "2. 题二。"])
+        _write_page_blocks(pages, 8, ["答案", "1. 解一。 2. 解二。"])
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [
+                    ExerciseDraft("1", problem="题一", solution=""),
+                    ExerciseDraft("2", problem="题二", solution=""),
+                ]
+            },
+            exercise_verify_reply=ExerciseVerifyReply(
+                items=(
+                    ExerciseVerifyReading(item_no="1", verdict="reject", note="解答从第 2 题起"),
+                    ExerciseVerifyReading(item_no="2", verdict="ok"),
+                )
+            ),
+        )
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        verify_calls = [
+            request for step, request in engine.calls if step == "exercise_verify"
+        ]
+        assert [request.title for request in verify_calls] == ["第 1 章 函数"], "按顶层章交问"
+        material = {item.item_no: (item.problem, item.solution) for item in verify_calls[0].items}
+        assert material == {"1": ("题一", "解一。"), "2": ("题二", "解二。")}, "回填后的解答进校验"
+
+        item_rows = _rows(session, node_kind="point", book_id="b07")
+        assert [row.meta.get("verify_state") for row in item_rows] == ["done", "done"]
+        assert item_rows[0].meta["verify_verdict"] == "reject"
+        assert item_rows[0].meta["verify_note"] == "解答从第 2 题起"
+        assert item_rows[1].meta["verify_verdict"] == "ok"
+        assert "verify_note" not in item_rows[1].meta
+
+    def test_a_verification_failure_only_marks_the_row_failed(self, session, tmp_path):
+        """校验失败是披露（`KA-70`）：行照出、配对不动，只记 `verify_state='failed'`。"""
+        accepted = self._accept(session, tmp_path)
+        _write_page_blocks(self._pages(tmp_path), 5, ["1. 求极限。"])
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [ExerciseDraft("1", problem="求 $\\lim 1/n$。", solution="夹逼得 0。")]
+            },
+            failing_exercise_verify=True,
+        )
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        (row,) = _rows(session, node_kind="point", book_id="b07")
+        assert row.gen_status == "candidate"
+        assert row.meta["verify_state"] == "failed"
+        assert "verify_verdict" not in row.meta and "verify_note" not in row.meta
+        assert outcome.exercise_item_rows == 1, "校验失败不计进失败节"
+        verify_calls = [
+            request for step, request in engine.calls if step == "exercise_verify"
+        ]
+        assert len(verify_calls) == 2, "坏轮只在同轮重试一次，不无限重试"
+
+    def test_duplicate_item_numbers_within_a_chapter_are_judged_once(
+        self, session, tmp_path
+    ):
+        """本书各节各自起号：同章撞号只把首个交问，后一枚不猜、不给读数。"""
+        rows = [
+            ("afkp-b7ch1", "第 1 章 函数", 1, 1, None),
+            ("afkp-b7ex1", "习题 1.1", 4, 2, "afkp-b7ch1"),
+            ("afkp-b7ex2", "习题 1.2", 6, 2, "afkp-b7ch1"),
+        ]
+        metas = {
+            "afkp-b7ch1": {"toc_role": "knowledge"},
+            "afkp-b7ex1": {"toc_role": "reference", "toc_kind": "exercise"},
+            "afkp-b7ex2": {"toc_role": "reference", "toc_kind": "exercise"},
+        }
+        accepted = self._accept(session, tmp_path, rows=rows, metas=metas)
+        pages = self._pages(tmp_path)
+        _write_page_blocks(pages, 4, ["1. 题一。"])
+        _write_page_blocks(pages, 6, ["1. 题二甲。"])
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [ExerciseDraft("1", problem="题一", solution="解一。")],
+                "习题 1.2": [ExerciseDraft("1", problem="题二甲", solution="解二甲。")],
+            },
+            exercise_verify_reply=ExerciseVerifyReply(
+                items=(ExerciseVerifyReading(item_no="1", verdict="suspect", note="两处撞号"),)
+            ),
+        )
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        verify_calls = [
+            request for step, request in engine.calls if step == "exercise_verify"
+        ]
+        assert [item.item_no for item in verify_calls[0].items] == ["1"], "撞号只交问首个"
+        item_rows = _rows(session, node_kind="point", book_id="b07")
+        states = {row.meta["source_pages"][0]: row.meta.get("verify_state") for row in item_rows}
+        assert states == {4: "done", 6: None}, "后一枚撞号不给读数"
+        judged = next(row for row in item_rows if row.meta.get("verify_state") == "done")
+        assert judged.meta["verify_verdict"] == "suspect"
+
+    def test_bracketed_reply_item_numbers_are_folded_before_matching(self, session, tmp_path):
+        """配对机械失败（REQ-178）：模型把 `[N]`／`（N）` 照回时先折键再匹配，读数照常落行。
+
+        b07 的 662 笔审核失败里 472 笔是 `[N]`、98 笔是 `（N）`——书名一侧的键是裸的，
+        两侧不归一就全部对不上。
+        """
+        accepted = self._accept(session, tmp_path)
+        _write_page_blocks(self._pages(tmp_path), 5, ["1. 题一。", "2. 题二。"])
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [
+                    ExerciseDraft("1", problem="题一", solution="解一。"),
+                    ExerciseDraft("2", problem="题二", solution="解二。"),
+                ]
+            },
+            exercise_verify_reply=ExerciseVerifyReply(
+                items=(
+                    ExerciseVerifyReading(item_no="[1]", verdict="ok"),
+                    ExerciseVerifyReading(item_no="（2）", verdict="suspect", note="解答半截"),
+                )
+            ),
+        )
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        item_rows = _rows(session, node_kind="point", book_id="b07")
+        assert [row.meta.get("verify_state") for row in item_rows] == ["done", "done"]
+        assert [row.meta.get("verify_verdict") for row in item_rows] == ["ok", "suspect"]
+        assert item_rows[1].meta["verify_note"] == "解答半截"
+
+    def test_a_broken_verify_round_is_retried_once(self, session, tmp_path):
+        """坏轮同轮重试一次（REQ-178）：92 笔坏 JSON／空回复不再整块记 failed。"""
+        accepted = self._accept(session, tmp_path)
+        _write_page_blocks(self._pages(tmp_path), 5, ["1. 题一。"])
+        attempts: list[str] = []
+
+        def flaky(request):
+            attempts.append(request.title)
+            if len(attempts) == 1:
+                raise EngineError("模型回了坏 JSON")
+            return ExerciseVerifyReply(
+                items=(ExerciseVerifyReading(item_no="1", verdict="ok"),)
+            )
+
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [ExerciseDraft("1", problem="题一", solution="解一。")]
+            },
+            on_exercise_verify=flaky,
+        )
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        assert len(attempts) == 2, "坏轮只重试一次"
+        (row,) = _rows(session, node_kind="point", book_id="b07")
+        assert row.meta["verify_state"] == "done"
+        assert row.meta["verify_verdict"] == "ok"
+
+    def test_a_zero_reading_round_is_retried_once(self, session, tmp_path):
+        """回了但一枚域内读数都没有＝坏轮（REQ-178）：同轮重试，第二次正常即算 done。"""
+        accepted = self._accept(session, tmp_path)
+        _write_page_blocks(self._pages(tmp_path), 5, ["1. 题一。"])
+        attempts: list[int] = []
+
+        def blank_first(request):
+            attempts.append(1)
+            if len(attempts) == 1:
+                return ExerciseVerifyReply(items=())
+            return ExerciseVerifyReply(
+                items=(ExerciseVerifyReading(item_no="1", verdict="ok"),)
+            )
+
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [ExerciseDraft("1", problem="题一", solution="解一。")]
+            },
+            on_exercise_verify=blank_first,
+        )
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        assert len(attempts) == 2
+        (row,) = _rows(session, node_kind="point", book_id="b07")
+        assert row.meta["verify_state"] == "done"
+        assert row.meta["verify_verdict"] == "ok"
 
     def test_a_model_draft_outside_the_split_is_disclosed_not_stored(self, session, tmp_path):
         """未匹配只披露（`KA-53`）：模型多回的题号不落行、不写题包，缺答的题照切分补行。"""
@@ -5718,6 +7697,45 @@ class TestExerciseBookStage:
         assert outcome.superseded_rows == 2
         assert outcome.exercise_item_rows == 2
 
+    def test_an_outline_rerun_only_replaces_the_chapter_skeleton(self, session, tmp_path):
+        """`KA-36` 收窄（W6）：目录重跑只作废目录行——题行是另一条腿的旧读数，不因目录重跑被判死。"""
+        _scene(session, tmp_path, book_id="b07", job_id="job-b1", page_count=8, roles=["exercises"])
+        # 独立型要有解答证据（`KA-71` B 门）：没有证据的习题集在预处理就红灯、零目录行。
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 8, ["证 由定义直接可得。"]
+        )
+        _register_tree(session, self._ROWS, metas=self._METAS, book_id="b07", job_id="job-b1")
+        stale_item = _draft(
+            session,
+            "afkp-b7oldq1",
+            book_id="b07",
+            job_id="job-b1",
+            gen_status="candidate",
+            gen_batch="afkp-olditems0",
+            node_kind="point",
+            parent_id="afkp-b7ex1",
+            depth=2,
+            name="1.",
+            norm_key="1",
+            model_ref="llm:exercise",
+            anchors=[
+                {"kind": "page_block", "ref_id": "p0005", "page": 5, "block_indexes": [0], "snippet": "1. 题一。"}
+            ],
+        )
+        session.commit()
+        stale_item_rev = stale_item.rev
+
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+        run_knowledge_job(
+            session, data_root=tmp_path, engine=FakeKnowledgeEngine(), acceptance=accepted
+        )
+        session.expire_all()
+
+        assert session.get(AfKp, "afkp-b7ch1").gen_status == "rejected", "上一轮目录行是过期读数"
+        item = session.get(AfKp, "afkp-b7oldq1")
+        assert item.gen_status == "candidate", "题行与目录无关，不因目录重跑被判死"
+        assert item.rev == stale_item_rev
+
 
 class TestBookStageReading:
     """PLAN-029 W1 的判据纯函数：统计域、三条件与未定位只在这一处判，读时派生、零写库。"""
@@ -5760,49 +7778,91 @@ class TestBookStageReading:
     def test_zero_counted_rows_is_never_green(self):
         assert book_stage_reading([], toc_pages=(1, 2)).done is False
 
+    def test_light_green_ready_without_endorsement(self):
+        """浅绿放行（REQ-170 追加请求 A）：机器完成即 `ready`，人工背书进度不挡配套链路。"""
+        rows = [self._row("a1", confirmed=0), self._row("a2", depth=2, parent="a1", confirmed=0)]
+        reading = book_stage_reading(rows, toc_pages=(1, 2, 3))
+
+        assert (reading.endorsed_rows, reading.ready, reading.done) == (0, True, False)
+
+    def test_ready_keeps_the_remaining_three_conditions(self):
+        """浅绿只放宽「人工背书」一项：零行、目录页取不到、空总结、未定位照样不成浅绿。"""
+        blank = [self._row("a1", summary="", confirmed=0)]
+        unlocated = [self._row("a1", anchors=[{"page": 2}], confirmed=0)]
+
+        assert book_stage_reading([], toc_pages=(1, 2)).ready is False
+        assert book_stage_reading(blank, toc_pages=(1, 2, 3)).ready is False
+        assert book_stage_reading(unlocated, toc_pages=(1, 2, 3)).ready is False
+        assert (
+            book_stage_reading([self._row("a1", confirmed=0)], toc_pages=None).ready is False
+        )
+
     def test_an_unavailable_toc_page_set_is_never_green(self):
         """目录页集合取不到时宁可黄、不假绿：计数照出，合取判据恒假。"""
-        reading = book_stage_reading([self._row("a1")], toc_pages=None)
+        rows = [self._row("a1"), self._row("a1-1", depth=2, parent="a1")]
+        reading = book_stage_reading(rows, toc_pages=None)
 
-        assert (reading.rows, reading.unlocated_rows, reading.done) == (1, 0, False)
+        assert (reading.rows, reading.unlocated_rows, reading.done) == (2, 0, False)
+
+    def test_a_first_level_row_without_point_children_stays_out_of_the_count(self):
+        """`KA-68`：预备知识／附录这类行不再是章，也不进统计域——它们本来就不产总结。"""
+        rows = [self._row("pre", summary="", confirmed=0)]
+
+        assert book_stage_reading(rows, toc_pages=(1, 2, 3)).rows == 0
 
     def test_rejected_and_in_flight_rows_stay_out_of_the_count(self):
         rows = [
             self._row("a1"),
+            self._row("a1-1", depth=2, parent="a1"),
             self._row("a2", status="draft"),
             self._row("a3", status="rejected"),
         ]
 
-        assert book_stage_reading(rows, toc_pages=(1, 2, 3)).rows == 1
+        assert book_stage_reading(rows, toc_pages=(1, 2, 3)).rows == 2
 
     def test_exercise_and_reference_rows_stay_out_of_the_count(self):
         """`KA-39`／`KA-43`：不产出总结的两类附件行进统计域会让带章末习题的书永不可能完成。"""
         rows = [
             self._row("a1"),
+            self._row("a1-1", depth=2, parent="a1"),
             self._row("ex", meta={"toc_role": "reference", "toc_kind": "exercise"}),
             self._row("ref", meta={"toc_role": "reference"}),
         ]
 
-        assert book_stage_reading(rows, toc_pages=(1, 2, 3)).rows == 1
+        assert book_stage_reading(rows, toc_pages=(1, 2, 3)).rows == 2
 
     def test_an_anchor_inside_the_toc_page_set_is_unlocated(self):
         """「未定位」＝锚落在目录页集合内（条目从没落到正文页），与 `KA-33` 同义。"""
         reading = book_stage_reading(
-            [self._row("a1", anchors=[{"page": 2}])], toc_pages=(1, 2, 3)
+            [
+                self._row("a1", anchors=[{"page": 2}]),
+                self._row("a1-1", depth=2, parent="a1", anchors=[{"page": 9}]),
+            ],
+            toc_pages=(1, 2, 3),
         )
 
         assert (reading.unlocated_rows, reading.done) == (1, False)
 
     def test_an_anchor_outside_the_toc_page_set_is_located(self):
         reading = book_stage_reading(
-            [self._row("a1", anchors=[{"page": 9}])], toc_pages=(1, 2, 3)
+            [
+                self._row("a1", anchors=[{"page": 9}]),
+                self._row("a1-1", depth=2, parent="a1", anchors=[{"page": 9}]),
+            ],
+            toc_pages=(1, 2, 3),
         )
 
         assert (reading.unlocated_rows, reading.done) == (0, True)
 
     def test_rows_without_anchors_are_not_unlocated(self):
         """锚为空的**人工直填行**是「没有条目光凭」，不是「条目没找到页」。"""
-        reading = book_stage_reading([self._row("a1", anchors=[])], toc_pages=(1, 2, 3))
+        reading = book_stage_reading(
+            [
+                self._row("a1", anchors=[]),
+                self._row("a1-1", depth=2, parent="a1", anchors=[]),
+            ],
+            toc_pages=(1, 2, 3),
+        )
 
         assert (reading.unlocated_rows, reading.done) == (0, True)
 
@@ -5855,17 +7915,25 @@ class TestExerciseBookAcceptance:
     def _rows_before(self, session):
         return len(_rows(session, book_id="b07"))
 
-    def _green_target(self, session, tmp_path, *, chapter="第 1 章 函数", summary="本章总结"):
-        """整本绿的教材 b05：章行已确认且有总结、锚点落在目录页集合之外；目录页集合取自同版本流水。"""
+    def _green_target(
+        self, session, tmp_path, *, chapter="第 1 章 函数", summary="本章总结", endorse=True
+    ):
+        """整本绿的教材 b05：章行已确认且有总结、锚点落在目录页集合之外；目录页集合取自同版本流水。
+
+        章行下挂一枚知识点子行：`KA-68` 起没有可装东西的一级知识行记「其他」，章身份要由子行撑起来。
+        `endorse=False` 给的是浅绿读数：行与总结齐、只差人工背书。
+        """
         _scene(session, tmp_path, book_id="b05", job_id="job-a1", page_count=8)
         _register_tree(
             session,
             [
                 ("afkp-b05-ch1", chapter, 4, 1, None),
+                ("afkp-b05-s11", "1.1 函数与映射", 4, 2, "afkp-b05-ch1"),
                 ("afkp-b05-ex1", "习题 1.1", 5, 2, "afkp-b05-ch1"),
             ],
             metas={
                 "afkp-b05-ch1": {"toc_role": "knowledge"},
+                "afkp-b05-s11": {"toc_role": "knowledge"},
                 "afkp-b05-ex1": {"toc_role": "reference", "toc_kind": "exercise"},
             },
             book_id="b05",
@@ -5876,7 +7944,13 @@ class TestExerciseBookAcceptance:
             assert repo.set_outline_summary(
                 book_id="b05", node_id="afkp-b05-ch1", summary=summary
             )
-        repo.set_confirmed("afkp-b05-ch1", confirmed=True)
+        if endorse:
+            repo.set_confirmed("afkp-b05-ch1", confirmed=True)
+        assert repo.set_outline_summary(
+            book_id="b05", node_id="afkp-b05-s11", summary="定义域与值域。"
+        )
+        if endorse:
+            repo.set_confirmed("afkp-b05-s11", confirmed=True)
         OperationRepository(session).create_kp_batch(
             KpBatchRow(
                 gen_batch="afkp-green000001",
@@ -5889,30 +7963,6 @@ class TestExerciseBookAcceptance:
         )
         session.commit()
 
-    def _target_item(
-        self, session, *, node_id="afkp-b05-q1", name="1. 题一", page=5, confirmed=False
-    ):
-        """目标教材的一枚题行（`KA-53` 的匹配域）：父＝习题段行、`meta.toc_kind='exercise'`。"""
-        row = _draft(
-            session,
-            node_id,
-            book_id="b05",
-            job_id="job-a1",
-            node_kind="point",
-            parent_id="afkp-b05-ex1",
-            name=name,
-            norm_key=norm_key_for(name),
-            anchors=[
-                {"kind": "page_block", "page": page, "block_indexes": [0], "snippet": "题一正文"}
-            ],
-            meta={"toc_kind": "exercise"},
-            gen_status="candidate",
-        )
-        if confirmed:
-            assert KpRepository(session).set_confirmed(node_id, confirmed=True).ok
-        session.commit()
-        return row
-
     def test_the_gate_stays_closed_while_the_target_is_not_green(self, session, tmp_path):
         """整本绿门（`KA-53`）：目标零行即不绿，422 点名四项读数，且零写入。"""
         self._scene(session, tmp_path)
@@ -5923,7 +7973,7 @@ class TestExerciseBookAcceptance:
             accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
 
         assert caught.value.status_code == 422
-        assert "尚未整本绿" in caught.value.detail
+        assert "尚未达到浅绿" in caught.value.detail
         assert "在册 0 行" in caught.value.detail
         assert self._rows_before(session) == before
 
@@ -5950,105 +8000,198 @@ class TestExerciseBookAcceptance:
         assert accepted.target_book_id == "b05"
         assert accepted.exercise_retry_node_ids == ()
 
-    def test_a_hit_fills_the_target_pack_and_records_the_source(self, session, tmp_path):
-        """`KA-53` 命中：题面取目标教材同一版页产物、解答取本批读数；来源两键写进目标行。"""
+    def test_a_light_green_target_opens_the_gate(self, session, tmp_path):
+        """浅绿放行（REQ-170 追加请求 A）：机器完成、人工未背书的目标同样进得了配套模式。"""
         self._scene(session, tmp_path)
-        self._green_target(session, tmp_path)
-        self._target_item(session)
+        self._green_target(session, tmp_path, endorse=False)
+
+        accepted = accept_kp_job(
+            session, book_id="b07", stage="exercise", target_book_id="b05"
+        )
+
+        assert accepted.target_book_id == "b05"
+
+    def test_the_gate_is_named_light_green_after_relaxation(self, session, tmp_path):
+        """门名与口径同改：拒单措辞点名浅绿，四项读数照旧一并给出。"""
+        self._scene(session, tmp_path)
+        self._textbook(session)
+
+        with pytest.raises(KpGateError) as caught:
+            accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        assert "尚未达到浅绿" in caught.value.detail
+        assert "在册 0 行" in caught.value.detail
+
+    def _companion_scene(
+        self, session, tmp_path, *, target_chapter="第 1 章 函数", own_problem="1. 题一。"
+    ):
+        """配套提取的公共场景：本书一页一题、教材同一章一页一题（两侧页产物都要在位）。"""
+        self._scene(session, tmp_path)
+        self._green_target(session, tmp_path, chapter=target_chapter)
         _write_page_blocks(
             _pages_dir(tmp_path, book_id="b05", job_id="job-a1"), 5, ["1. 教材题一。"]
         )
         _write_page_blocks(
-            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 5, ["1. 题一。"]
+            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 5, [own_problem]
         )
-        engine = FakeKnowledgeEngine(
-            exercise_by_title={
-                "习题 1.1": [ExerciseDraft("1", problem="习题集题面", solution="解一")]
-            }
-        )
-        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
 
-        outcome = run_knowledge_job(
-            session, data_root=tmp_path, engine=engine, acceptance=accepted
-        )
-        session.expire_all()
-
-        row = session.get(AfKp, "afkp-b05-q1")
-        assert outcome.merged_exercise_rows == 1
-        assert (outcome.exercise_item_rows, outcome.exercise_pack_rows) == (0, 1)
-        assert row is not None and row.narrative_ref == "afkp-b05-q1.md"
-        pack = _kp_dir(tmp_path, "b05").joinpath(row.narrative_ref).read_text(encoding="utf-8")
-        assert "1. 教材题一。" in pack, "题面取教材自身版本的正文，不拿习题集的切片冒充"
-        assert "解一" in pack
-        assert (row.meta or {})["source_book_id"] == "b07"
-        assert (row.meta or {})["source_pages"] == [5, 8], "题正文延续到本节末页"
-
-    def test_a_confirmed_target_row_is_never_overwritten(self, session, tmp_path):
-        """`KA-13`：人已背书的题行不碰题包，命中只计数；来源两键也不写。"""
-        self._scene(session, tmp_path)
-        self._green_target(session, tmp_path)
-        self._target_item(session, confirmed=True)
-        _write_page_blocks(
-            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 5, ["1. 题一。"]
-        )
-        engine = FakeKnowledgeEngine(
-            exercise_by_title={
-                "习题 1.1": [ExerciseDraft("1", problem="题面", solution="解一")]
-            }
-        )
-        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
-
-        outcome = run_knowledge_job(
-            session, data_root=tmp_path, engine=engine, acceptance=accepted
-        )
-        session.expire_all()
-
-        row = session.get(AfKp, "afkp-b05-q1")
-        assert outcome.merged_exercise_rows == 1
-        assert outcome.exercise_pack_rows == 0
-        assert (row.narrative_ref, row.meta or {}) == ("", {"toc_kind": "exercise"})
-
-    def test_a_miss_creates_a_row_under_the_matched_chapter(self, session, tmp_path):
-        """未命中在对应章下新增：父＝目标章、锚点为空（跨书页号不能当本书锚点）、收尾后不在飞。"""
-        self._scene(session, tmp_path)
-        self._green_target(session, tmp_path)
-        _write_page_blocks(
-            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 5, ["1. 题一。"]
-        )
-        engine = FakeKnowledgeEngine(
-            exercise_by_title={
-                "习题 1.1": [ExerciseDraft("1", problem="习题集题面", solution="解一")]
-            }
-        )
-        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
-
-        outcome = run_knowledge_job(
-            session, data_root=tmp_path, engine=engine, acceptance=accepted
-        )
-        session.expire_all()
-
-        added = [
+    def _added_rows(self, session, accepted):
+        return [
             row
-            for row in _rows(session, book_id="b05")
-            if row.gen_batch == accepted.gen_batch
+            for row in _rows(session, book_id="b07")
+            if row.gen_batch == accepted.gen_batch and row.node_kind == "point"
         ]
-        assert outcome.merged_exercise_rows == 0
-        assert (outcome.exercise_item_rows, outcome.exercise_pack_rows) == (1, 1)
+
+    def _pack_of(self, tmp_path, row, book_id="b07"):
+        return (
+            _kp_dir(tmp_path, book_id)
+            .joinpath(row.narrative_ref or "")
+            .read_text(encoding="utf-8")
+        )
+
+    def _two_pair_scene(self, session, tmp_path, *, solution="解"):
+        """两题两对：教材同页两题、本书同页两题，两侧页产物都在位。"""
+        self._scene(session, tmp_path)
+        self._green_target(session, tmp_path)
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b05", job_id="job-a1"),
+            5,
+            ["1. 教材题一。", "2. 教材题二。"],
+        )
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"),
+            5,
+            ["1. 题一。", "2. 题二。"],
+        )
+        return FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [
+                    ExerciseDraft("1", problem="题面一", solution=f"{solution}一"),
+                    ExerciseDraft("2", problem="题面二", solution=f"{solution}二"),
+                ]
+            }
+        )
+
+    def test_companion_extraction_writes_paired_rows_into_the_exercise_book(
+        self, session, tmp_path
+    ):
+        """REQ-170：题面取教材、解答取本书，配对行落在**本书**自己的章下，教材一行也不得。"""
+        self._companion_scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [ExerciseDraft("1", problem="习题集题面", solution="解一")]
+            }
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        added = self._added_rows(session, accepted)
         assert len(added) == 1
         row = added[0]
-        assert (row.parent_id, row.depth, row.anchors) == ("afkp-b05-ch1", None, [])
-        assert row.gen_status == "candidate"
-        assert (row.meta or {})["source_book_id"] == "b07"
-        assert row.narrative_ref == f"{row.node_id}.md"
-        assert KpRepository(session).find_draft_batch("b05") is None, "目标书不得因本批长期在飞"
-
-    def test_an_unmatched_chapter_is_disclosed_without_rows(self, session, tmp_path):
-        """目标教材里认不出本章：只披露、不落行不写包，披露计入未匹配清单。"""
-        self._scene(session, tmp_path)
-        self._green_target(session, tmp_path, chapter="第 2 章 别的")
-        _write_page_blocks(
-            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 5, ["1. 题一。"]
+        assert (row.book_id, row.parent_id, row.gen_status) == ("b07", "afkp-b7ch1", "candidate")
+        meta = row.meta or {}
+        assert (meta["pair_state"], meta["target_item"], meta["target_book_id"]) == (
+            "matched",
+            "1",
+            "b05",
         )
+        assert meta["source_book_id"] == "b07"
+        assert meta["source_pages"] == [5, 8], "解答页区间跟着本书切分走"
+        assert row.anchors and row.anchors[0]["page"] == 5, "锚点只指本书本版"
+        assert row.anchors[0]["block_indexes"] == [0]
+        pack = self._pack_of(tmp_path, row)
+        assert "1. 教材题一。" in pack, "题面取教材自身版本的正文"
+        assert "习题集题面" not in pack, "模型读出的题面不冒充教材题面"
+        assert "解一" in pack
+        assert "（题面）" in pack and "（解答）" in pack, "来源两行分别点名题面与解答"
+        assert [
+            other for other in _rows(session, book_id="b05") if other.gen_batch == accepted.gen_batch
+        ] == [], "教材不因配套提取新增任何行"
+        assert (outcome.exercise_item_rows, outcome.exercise_pack_rows) == (1, 1)
+        assert outcome.merged_exercise_rows == 0
+        assert [step for step, _ in engine.calls if step == "exercise_classify"] == [], (
+            "配套提取不再发分类读数腿"
+        )
+
+    def test_a_textbook_problem_without_a_book_solution_gets_an_unpaired_row(
+        self, session, tmp_path
+    ):
+        """教材有题、本书没解答：行照样成（题面完整、解答留占位），状态点名「未收录」。"""
+        self._companion_scene(session, tmp_path, own_problem="这页正文里没有题号。")
+        engine = FakeKnowledgeEngine()
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        added = self._added_rows(session, accepted)
+        assert len(added) == 1
+        row = added[0]
+        meta = row.meta or {}
+        assert (meta["pair_state"], meta["pair_reason"]) == ("unpaired", "习题集未收录本题")
+        assert row.anchors == [], "本书没有这一题的页，不编锚点"
+        pack = self._pack_of(tmp_path, row)
+        assert "1. 教材题一。" in pack and "未配到解答" in pack
+
+    def test_an_extra_book_solution_becomes_an_unpaired_tail_row(self, session, tmp_path):
+        """本书多出来的解答另占一行、按题序排在配对行之后：那是「下列可选解答」的一类。"""
+        self._scene(session, tmp_path)
+        self._green_target(session, tmp_path)
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b05", job_id="job-a1"), 5, ["1. 教材题一。"]
+        )
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 5, ["1. 题一。", "2. 题二。"]
+        )
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [
+                    ExerciseDraft("1", problem="题面一", solution="解一"),
+                    ExerciseDraft("2", problem="题面二", solution="解二"),
+                ]
+            }
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        added = sorted(self._added_rows(session, accepted), key=lambda row: row.order_hint or 0)
+        assert [row.name for row in added] == ["1.", "2."]
+        first, second = (row.meta or {} for row in added)
+        assert (first["pair_state"], second["pair_state"]) == ("matched", "unpaired")
+        assert second["pair_reason"] == "教材本章未收录本题"
+        assert added[1].anchors[0]["block_indexes"] == [1], "第二题锚在它自己的题号块上"
+
+    def test_a_failed_read_leaves_textbook_rows_with_a_named_reason(self, session, tmp_path):
+        """解答腿失败不挡题行：教材题面照样成行，原因点名失败，结局如实 partial。"""
+        self._companion_scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(failing_exercise=("习题 1.1",))
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        added = self._added_rows(session, accepted)
+        assert len(added) == 1
+        meta = added[0].meta or {}
+        assert (meta["pair_state"], meta["pair_reason"]) == ("unpaired", "本章解答读取失败")
+        assert outcome.failed_sections == 1
+        assert _curation_result(session, "b07") == "partial"
+        # REQ-179 R2：解答腿失败＝判定不可用 → 题包写显式标记，不再把占位句固化成正文
+        pack = self._pack_of(tmp_path, added[0])
+        assert "解答不可用（模型判定失败）" in pack
+        assert "未配到解答" not in pack
+
+    def test_a_target_chapter_missing_from_the_book_is_disclosed(self, session, tmp_path):
+        """教材章在本书目录里没有位置：只披露，本书自己的题按未配对行留下。"""
+        self._companion_scene(session, tmp_path, target_chapter="第 2 章 别的")
         engine = FakeKnowledgeEngine(
             exercise_by_title={
                 "习题 1.1": [ExerciseDraft("1", problem="题面", solution="解一")]
@@ -6061,10 +8204,129 @@ class TestExerciseBookAcceptance:
         )
         session.expire_all()
 
-        assert outcome.merged_exercise_rows == 0
-        assert (outcome.exercise_item_rows, outcome.exercise_pack_rows) == (0, 0)
-        assert outcome.unmatched_solution_details[0]["reason"] == "目标教材里认不出本章"
-        assert [row for row in _rows(session, book_id="b05") if row.gen_batch == accepted.gen_batch] == []
+        reasons = [str(detail.get("reason")) for detail in outcome.unmatched_solution_details]
+        assert any("第 2 章" in reason for reason in reasons)
+        added = self._added_rows(session, accepted)
+        assert len(added) == 1
+        meta = added[0].meta or {}
+        assert (meta["pair_state"], meta["pair_reason"]) == ("unpaired", "教材本章习题段取不到")
+
+    def test_the_verifier_judges_each_packed_pair_and_records_the_reading(
+        self, session, tmp_path
+    ):
+        """REQ-170 第三步：LLM 逐对判「切分是否正确、题面与解答是否对应」，读数进题行 meta。
+
+        判的是**落行的那两段**：题面取教材原文、解答取本书切分，读数不改变配对与成行。
+        """
+        engine = self._two_pair_scene(session, tmp_path)
+        engine.exercise_verify_reply = ExerciseVerifyReply(
+            items=(
+                ExerciseVerifyReading(item_no="1", verdict="ok"),
+                ExerciseVerifyReading(
+                    item_no="2", verdict="suspect", note="解答像是下一题的开头"
+                ),
+            )
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        requests = [payload for step, payload in engine.calls if step == "exercise_verify"]
+        assert len(requests) == 1, "同一章的对一次判完"
+        request = requests[0]
+        assert request.title == "第 1 章 函数"
+        assert [item.item_no for item in request.items] == ["1", "2"]
+        assert request.items[0].problem.startswith("1. 教材题一。"), "判的是教材题面"
+        assert request.items[0].solution.startswith("解一")
+        rows = sorted(self._added_rows(session, accepted), key=lambda row: row.order_hint or 0)
+        first, second = (row.meta or {} for row in rows)
+        assert (first["verify_state"], first.get("verify_verdict")) == ("done", "ok")
+        assert (second["verify_state"], second.get("verify_verdict")) == ("done", "suspect")
+        assert second["verify_note"] == "解答像是下一题的开头"
+        assert (first["pair_state"], second["pair_state"]) == ("matched", "matched"), (
+            "读数只披露，不否决成行"
+        )
+
+    def test_a_failed_verification_leaves_the_rows_and_names_the_failure(
+        self, session, tmp_path
+    ):
+        """校验腿失败不否决成行：配对行照出，行上点名失败，结局不被它拉成 partial。"""
+        engine = self._two_pair_scene(session, tmp_path)
+        engine.failing_exercise_verify = True
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        rows = self._added_rows(session, accepted)
+        assert len(rows) == 2
+        assert all((row.meta or {})["verify_state"] == "failed" for row in rows)
+        assert all((row.meta or {})["pair_state"] == "matched" for row in rows)
+        assert outcome.failed_sections == 0
+
+    def test_an_engine_without_the_verifier_writes_no_verify_keys(self, session, tmp_path):
+        """引擎没有校验腿：题行不长出 `verify_*` 空键——旧引擎的行形状不因新腿出现而变。"""
+        engine = self._two_pair_scene(session, tmp_path)
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        rows = self._added_rows(session, accepted)
+        assert len(rows) == 2
+        assert all(
+            not any(key.startswith("verify_") for key in (row.meta or {})) for row in rows
+        )
+
+    def test_a_long_chapter_is_verified_in_rounds(self, session, tmp_path):
+        """一章几十题：按正文预算分轮交模型，每轮只带本轮的对（不压进一次生成）。"""
+        engine = self._two_pair_scene(session, tmp_path, solution="解" * 7000)
+        engine.on_exercise_verify = lambda request: ExerciseVerifyReply(
+            items=tuple(
+                ExerciseVerifyReading(item_no=item.item_no, verdict="ok")
+                for item in request.items
+            )
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        requests = [payload for step, payload in engine.calls if step == "exercise_verify"]
+        assert [len(request.items) for request in requests] == [1, 1]
+        assert [request.items[0].item_no for request in requests] == ["1", "2"]
+
+    def test_the_outline_batch_remembers_the_target_for_the_exercise_batch(
+        self, session, tmp_path
+    ):
+        """目录腿命中的教材目标落进来源书清单，随后的习题腿不再要求人重带目标。"""
+        self._scene(session, tmp_path)
+        self._green_target(session, tmp_path)
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b05", job_id="job-a1"), 5, ["1. 教材题一。"]
+        )
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 5, ["1. 题一。", "解 答案一。"]
+        )
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "第 1 章 函数": [ExerciseDraft("1", problem="题面", solution="解一")]
+            }
+        )
+        outline = accept_kp_job(session, book_id="b07", stage="outline")
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=outline)
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        added = self._added_rows(session, accepted)
+        assert len(added) == 1, "目录批记得目标，习题批按配套提取落行"
+        assert (added[0].meta or {})["target_book_id"] == "b05"
+        assert (added[0].meta or {})["pair_state"] == "matched"
 
     def test_the_companion_target_must_exist_and_be_a_textbook(self, session, tmp_path):
         self._scene(session, tmp_path)
@@ -6165,7 +8427,7 @@ class TestExerciseBookAcceptance:
                 session, book_id="b07", stage="exercise", exercise_retry_node_ids=("afkp-nope",)
             )
         assert missing.value.status_code == 422
-        assert "不在目标书" in missing.value.detail
+        assert "不在归属书" in missing.value.detail
 
         with pytest.raises(KpGateError) as foreign:
             accept_kp_job(
@@ -6346,6 +8608,528 @@ class TestExerciseBookAcceptance:
         assert "200" in caught.value.detail
 
 
+class TestExerciseOutlineMatch:
+    """REQ-161 W4：习题集目录腿＝先读自身目录，再与同课程整本绿的教材匹配。
+
+    命中即定目标（来源书清单写 `kind=companion`／`target_book_id`，读面直接读到）；未命中、
+    调用失败或没有可匹配的教材都退回独立目录（本书自己的章行），不挡本批收尾。匹配时给出的
+    章对应关系落进来源书清单，配套合并按它把习题集的章名认到教材章上。
+    """
+
+    def _exercise_scene(self, session, tmp_path, *, title="数学分析原理", layout=None):
+        _scene(
+            session,
+            tmp_path,
+            book_id="b07",
+            job_id="job-b1",
+            page_count=8,
+            roles=["exercises"],
+            title=title,
+            layout=layout,
+        )
+
+    def _green_textbook(
+        self,
+        session,
+        tmp_path,
+        *,
+        chapter="第 1 章 极限",
+        book_id="b05",
+        job_id="job-a1",
+        chapters: list[str] | None = None,
+        title="数学分析原理",
+    ):
+        """同课程整本绿的教材：章与子点都已背书、总结非空，目录页集合取自同版流水。"""
+        chapter_names = list(chapters) if chapters else [chapter]
+        chapter_ids = [f"afkp-{book_id}-ch{index}" for index in range(1, len(chapter_names) + 1)]
+        section_id = f"afkp-{book_id}-s11"
+        _scene(session, tmp_path, book_id=book_id, job_id=job_id, page_count=8, title=title)
+        tree: list[tuple[str, str, int, int, str | None]] = [
+            (chapter_id, name, 4, 1, None)
+            for chapter_id, name in zip(chapter_ids, chapter_names, strict=True)
+        ]
+        tree.append((section_id, "1.1 函数与映射", 4, 2, chapter_ids[0]))
+        # `KA-68`：没有知识点子行的一级行记「其他」，进不了教材候选面——每章各挂一枚子行。
+        extra_sections = [
+            (f"{chapter_id}-s1", f"{index}.1 示例", chapter_id)
+            for index, chapter_id in enumerate(chapter_ids[1:], start=2)
+        ]
+        tree.extend((node_id, name, 4, 2, parent) for node_id, name, parent in extra_sections)
+        _register_tree(session, tree, book_id=book_id, job_id=job_id)
+        repo = KpRepository(session)
+        for chapter_id in chapter_ids:
+            assert repo.set_outline_summary(book_id=book_id, node_id=chapter_id, summary="本章总结")
+            repo.set_confirmed(chapter_id, confirmed=True)
+        assert repo.set_outline_summary(
+            book_id=book_id, node_id=section_id, summary="定义域与值域。"
+        )
+        repo.set_confirmed(section_id, confirmed=True)
+        for node_id, _name, _parent in extra_sections:
+            assert repo.set_outline_summary(book_id=book_id, node_id=node_id, summary="示例。")
+            repo.set_confirmed(node_id, confirmed=True)
+        OperationRepository(session).create_kp_batch(
+            KpBatchRow(
+                gen_batch=f"afkp-green{book_id[-3:]}0001",
+                book_id=book_id,
+                job_id=job_id,
+                status="ok",
+                stage="content",
+                result={"outline_toc_pages": [1, 2, 3]},
+            )
+        )
+        session.commit()
+
+    def _meta(self, tmp_path, book_id="b07"):
+        path = _kp_dir(tmp_path, book_id) / "exercises" / "meta.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _match_calls(self, engine: FakeKnowledgeEngine):
+        return [request for step, request in engine.calls if step == "exercise_match"]
+
+    def _write_solution_evidence(self, tmp_path, *, page=8):
+        """在本书末页写一行中文详解：B 门证据（`KA-71`）成立，独立型不判红。"""
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"),
+            page,
+            ["8. 证明该等式。", "证 两边按定义展开即得。"],
+        )
+
+    def _two_chapter_layout(self):
+        return {
+            1: [(1, "第一章 实数")],
+            4: [(1, "第二章 数列")],
+        }
+
+    def _five_chapter_layout(self):
+        return {
+            1: [(1, "第 1 章 极限")],
+            2: [(1, "第 2 章 连续")],
+            3: [(1, "第 3 章 导数")],
+            4: [(1, "第 4 章 积分")],
+            5: [(1, "第 5 章 级数")],
+        }
+
+    def test_a_single_candidate_is_hit_without_a_model_call(self, session, tmp_path):
+        """S1：同套只剩一本教材时确定性命中——目录章名直接复用教材章名，零模型调用。
+
+        全局证据门（2026-11-22 用户裁决）生效后，配套命中同样要过「习题＋解答」证据门，
+        所以本用例须先落一行解答证据再跑。
+        """
+        self._exercise_scene(session, tmp_path)
+        self._green_textbook(session, tmp_path, chapter="第 1 章 函数与极限")
+        self._write_solution_evidence(tmp_path)
+        engine = FakeKnowledgeEngine()
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        assert outcome.outline_rows > 0, "先读自身目录再匹配，目录行照常落"
+        assert self._match_calls(engine) == [], "单候选不发匹配调用"
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("companion", "b05")
+        assert meta["match"]["state"] == "hit"
+        assert meta["match"]["candidates"] == ["b05"]
+        assert meta["match"]["chapters"] == [
+            {"source": "第 1 章 极限", "target": "第 1 章 函数与极限"}
+        ]
+        assert [row.name for row in _rows(session, book_id="b07") if row.depth == 1] == [
+            "第 1 章 函数与极限"
+        ], "习题集章行复用教材章名"
+        reading = exercise_workspace(
+            session, data_root=tmp_path, book=BookRepository(session).get("b07")
+        )
+        assert reading is not None
+        assert (reading.kind, reading.target_book_id) == ("companion", "b05")
+
+    def test_a_multi_candidate_set_asks_the_model_and_a_miss_stays_standalone(
+        self, session, tmp_path
+    ):
+        """S1／S2：章覆盖低于 80% 才发一次模型匹配；模型说没有对得上的，本书章行照常可用。"""
+        self._exercise_scene(
+            session, tmp_path, title="数学分析习题集", layout=self._five_chapter_layout()
+        )
+        self._write_solution_evidence(tmp_path)
+        self._green_textbook(session, tmp_path, chapters=["第 1 章 极限", "第 2 章 连续"])
+        self._green_textbook(
+            session,
+            tmp_path,
+            chapter="第 1 章 另一本",
+            book_id="b06",
+            job_id="job-c1",
+            title="另一本教材",
+        )
+        engine = FakeKnowledgeEngine(exercise_match_choice=ExerciseMatchChoice(book_id=None))
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        requests = self._match_calls(engine)
+        assert len(requests) == 1
+        assert [candidate.book_id for candidate in requests[0].candidates] == ["b05", "b06"]
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("standalone", None)
+        assert meta["match"]["state"] == "miss"
+        reading = exercise_workspace(
+            session, data_root=tmp_path, book=BookRepository(session).get("b07")
+        )
+        assert reading is not None and reading.kind == "standalone"
+        assert [row.name for row in _rows(session, book_id="b07") if row.depth == 1] == [
+            "第 1 章 极限",
+            "第 2 章 连续",
+            "第 3 章 导数",
+            "第 4 章 积分",
+            "第 5 章 级数",
+        ], "未命中即留在本书自己的章名上"
+
+    def test_a_failed_match_call_does_not_fail_the_batch(self, session, tmp_path):
+        """匹配腿是一枚可失败的旁路：调用失败退回独立模式，目录行与收尾读数不受牵连。"""
+        self._exercise_scene(
+            session, tmp_path, title="数学分析习题集", layout=self._five_chapter_layout()
+        )
+        self._write_solution_evidence(tmp_path)
+        self._green_textbook(session, tmp_path, chapters=["第 1 章 极限", "第 2 章 连续"])
+        self._green_textbook(
+            session,
+            tmp_path,
+            chapter="第 1 章 另一本",
+            book_id="b06",
+            job_id="job-c1",
+            title="另一本教材",
+        )
+        engine = FakeKnowledgeEngine(failing_exercise_match=True)
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        assert outcome.outline_rows > 0
+        assert _curation_result(session, "b07") == "completed", "旁路失败不进缺口"
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("standalone", None)
+        assert meta["match"]["state"] == "failed"
+
+    def test_a_non_green_textbook_is_not_a_candidate_and_costs_no_call(self, session, tmp_path):
+        """候选面＝同课程浅绿及以上的教材：连机器读数都不齐的教材不进材料，也就不发匹配调用。"""
+        self._exercise_scene(session, tmp_path, title="数学分析习题集")
+        self._write_solution_evidence(tmp_path)
+        _scene(session, tmp_path, book_id="b05", job_id="job-a1", page_count=8)
+        _register_tree(session, [("afkp-b05-ch1", "第 1 章 极限", 4, 1, None)])
+        engine = FakeKnowledgeEngine(
+            exercise_match_choice=ExerciseMatchChoice(book_id="b05")
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        assert self._match_calls(engine) == []
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("standalone", None)
+        assert meta["match"]["state"] == "skipped"
+
+    def test_a_light_green_textbook_is_a_candidate(self, session, tmp_path):
+        """浅绿放行（REQ-170 追加请求 A）：总结齐、锚点不在目录页，只差人工背书也进候选面。"""
+        self._exercise_scene(session, tmp_path)
+        _scene(session, tmp_path, book_id="b05", job_id="job-a1", page_count=8)
+        _register_tree(
+            session,
+            [
+                ("afkp-b05-ch1", "第 1 章 极限", 4, 1, None),
+                ("afkp-b05-s11", "1.1 极限的定义", 4, 2, "afkp-b05-ch1"),
+            ],
+        )
+        repo = KpRepository(session)
+        assert repo.set_outline_summary(
+            book_id="b05", node_id="afkp-b05-ch1", summary="本章总结"
+        )
+        assert repo.set_outline_summary(
+            book_id="b05", node_id="afkp-b05-s11", summary="定义与例子。"
+        )
+        OperationRepository(session).create_kp_batch(
+            KpBatchRow(
+                gen_batch="afkp-lightgreen01",
+                book_id="b05",
+                job_id="job-a1",
+                status="ok",
+                stage="content",
+                result={"outline_toc_pages": [1, 2, 3]},
+            )
+        )
+        session.commit()
+        self._write_solution_evidence(tmp_path)
+        engine = FakeKnowledgeEngine(
+            exercise_match_choice=ExerciseMatchChoice(book_id="b05")
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("companion", "b05"), (
+            "浅绿教材是候选且单候选确定性命中"
+        )
+        assert self._match_calls(engine) == []
+
+    def test_title_family_makes_a_single_candidate_companion(self, session, tmp_path):
+        """R1：书名同族（习题书名含教材书名）即配——章名对不上也不挡，零模型调用。"""
+        self._exercise_scene(
+            session, tmp_path, title="数学分析原理习题集", layout=self._two_chapter_layout()
+        )
+        self._green_textbook(session, tmp_path, chapter="第 1 章 函数与极限")
+        self._write_solution_evidence(tmp_path)
+        engine = FakeKnowledgeEngine()
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        assert self._match_calls(engine) == [], "同族判定是确定性的"
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("companion", "b05")
+        assert meta["match"]["state"] == "hit"
+        assert meta["match"]["chapters"] == [
+            {"source": "第一章 实数", "target": "第 1 章 函数与极限"}
+        ], "同号章按章号对应，未对上的章不猜"
+
+    def test_eighty_percent_chapter_coverage_is_companion(self, session, tmp_path):
+        """R1：章覆盖恰 80% 即判配套（解析噪声允许两成缺失），零模型调用。"""
+        self._exercise_scene(
+            session, tmp_path, title="数学分析习题集", layout=self._five_chapter_layout()
+        )
+        self._green_textbook(
+            session,
+            tmp_path,
+            chapters=["第 1 章 极限", "第 2 章 连续", "第 3 章 导数", "第 4 章 积分"],
+        )
+        self._write_solution_evidence(tmp_path)
+        engine = FakeKnowledgeEngine()
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        assert self._match_calls(engine) == [], "80% 覆盖是确定性放行"
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("companion", "b05")
+        assert meta["match"]["state"] == "hit"
+        assert len(meta["match"]["chapters"]) == 4
+
+    def test_a_thin_chapter_coverage_asks_the_model(self, session, tmp_path):
+        """R1：覆盖低于 80% 才交模型按范围语义判；模型选中的书与章对应照常落清单。"""
+        self._exercise_scene(
+            session, tmp_path, title="数学分析习题集", layout=self._five_chapter_layout()
+        )
+        self._green_textbook(
+            session,
+            tmp_path,
+            chapters=["第 1 章 极限", "第 2 章 连续", "第 3 章 导数"],
+            title="数学分析原理",
+        )
+        self._write_solution_evidence(tmp_path)
+        engine = FakeKnowledgeEngine(
+            exercise_match_choice=ExerciseMatchChoice(
+                book_id="b05",
+                chapters=(("第 4 章 积分", "第 1 章 极限"), ("第 5 章 级数", "第 3 章 导数")),
+            )
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        assert len(self._match_calls(engine)) == 1
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("companion", "b05")
+        assert meta["match"]["state"] == "hit"
+        assert meta["match"]["chapters"] == [
+            {"source": "第 4 章 积分", "target": "第 1 章 极限"},
+            {"source": "第 5 章 级数", "target": "第 3 章 导数"},
+        ], "模型给的对应须两边都认得出才采信"
+
+    def test_a_single_candidate_without_title_family_or_coverage_stays_standalone(
+        self, session, tmp_path
+    ):
+        """R1：0% 覆盖＋明确章名＋无书名同族＝确定性命定独立，单候选不得自动命中。"""
+        self._exercise_scene(
+            session, tmp_path, title="数学分析习题集", layout=self._two_chapter_layout()
+        )
+        self._write_solution_evidence(tmp_path)
+        self._green_textbook(session, tmp_path, chapter="第 1 章 函数与极限")
+        engine = FakeKnowledgeEngine(
+            exercise_match_choice=ExerciseMatchChoice(book_id="b05")
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+        session.expire_all()
+
+        assert self._match_calls(engine) == [], "零覆盖不交模型（防止把独立习题集改写成教材章名）"
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("standalone", None)
+        assert meta["match"]["state"] == "miss"
+        assert [row.name for row in _rows(session, book_id="b07") if row.depth == 1] == [
+            "第一章 实数",
+            "第二章 数列",
+        ], "目录留在本书自己的章名上"
+
+    def test_a_book_without_solution_evidence_is_red_with_zero_rows(self, session, tmp_path):
+        """R2：既非配套型、又拿不出题目＋解答证据＝红灯，零目录行，不回退教材目录腿。"""
+        self._exercise_scene(
+            session, tmp_path, title="数学分析习题集", layout=self._two_chapter_layout()
+        )
+        self._green_textbook(session, tmp_path, chapter="第 1 章 函数与极限")
+        engine = FakeKnowledgeEngine()
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        assert outcome.outline_rows == 0, "红灯零目录行"
+        assert _rows(session, book_id="b07") == [], "本书不留任何目录行"
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("red", None)
+        assert meta["match"]["state"] == "red"
+        assert not any(step == "toc_pages" for step, _ in engine.calls), (
+            "红灯不得回退教材目录腿"
+        )
+
+    def test_a_companion_hit_without_solution_evidence_is_also_red(self, session, tmp_path):
+        """全局证据门（2026-11-22 用户裁决）：配套命中同样过「习题＋解答」证据门。
+
+        匹配到教材只解决「章从哪来」；配不出题+解的书不配长出一套练不了的目录。
+        章覆盖 ≥80% 命中配套，但本书零解答证据 ⇒ `red`、零目录行、且不得回退教材腿。
+        """
+        self._exercise_scene(
+            session, tmp_path, title="数学分析习题集", layout=self._five_chapter_layout()
+        )
+        self._green_textbook(
+            session,
+            tmp_path,
+            chapters=["第 1 章 极限", "第 2 章 连续", "第 3 章 导数", "第 4 章 积分"],
+        )
+        engine = FakeKnowledgeEngine()
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        assert self._match_calls(engine) == [], "证据门在配套命中处、不影响零调用判定"
+        assert outcome.outline_rows == 0, "配套命中缺证据＝红灯零目录行"
+        assert _rows(session, book_id="b07") == [], "本书不留任何目录行"
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("red", None)
+        assert meta["match"]["state"] == "red"
+        assert not any(step == "toc_pages" for step, _ in engine.calls), (
+            "红灯不得回退教材目录腿"
+        )
+
+    def test_a_solution_book_in_the_same_set_counts_as_evidence(self, session, tmp_path):
+        """R2：同套存在题解本即算解答证据——独立型照常落目录，不判红。"""
+        self._exercise_scene(
+            session, tmp_path, title="数学分析习题集", layout=self._two_chapter_layout()
+        )
+        _scene(
+            session,
+            tmp_path,
+            book_id="b11",
+            job_id="job-d1",
+            page_count=8,
+            roles=["solutions"],
+            title="数学分析习题集题解",
+        )
+        self._green_textbook(session, tmp_path, chapter="第 1 章 函数与极限")
+        engine = FakeKnowledgeEngine()
+        accepted = accept_kp_job(session, book_id="b07", stage="outline")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        assert outcome.outline_rows > 0
+        meta = self._meta(tmp_path)
+        assert (meta["kind"], meta["target_book_id"]) == ("standalone", None)
+        assert meta["match"]["state"] == "miss"
+
+    def test_the_recorded_mapping_places_items_under_the_books_own_chapter(self, session, tmp_path):
+        """章对应关系的消费者：教材章名与本书不同，按章号配对后题仍落在本书自己的章下。"""
+        _scene(session, tmp_path, book_id="b07", job_id="job-b1", page_count=8, roles=["exercises"])
+        _register_tree(
+            session,
+            [
+                ("afkp-b7ch1", "第 1 章 函数", 1, 1, None),
+                ("afkp-b7ex1", "习题 1.1", 5, 2, "afkp-b7ch1"),
+            ],
+            metas={
+                "afkp-b7ch1": {"toc_role": "knowledge"},
+                "afkp-b7ex1": {"toc_role": "reference", "toc_kind": "exercise"},
+            },
+            book_id="b07",
+            job_id="job-b1",
+        )
+        self._green_textbook(session, tmp_path, chapter="第 1 章 函数与极限")
+        _register_tree(
+            session,
+            [("afkp-b05-ex1", "习题 1.1", 5, 2, "afkp-b05-ch1")],
+            metas={"afkp-b05-ex1": {"toc_role": "reference", "toc_kind": "exercise"}},
+        )
+        assert write_exercise_meta(
+            session,
+            data_root=tmp_path,
+            book_id="b07",
+            kind="companion",
+            target_book_id="b05",
+            gen_batch="afkp-outline0001",
+            unmatched=[],
+            match={
+                "state": "hit",
+                "chapters": [{"source": "第 1 章 函数", "target": "第 1 章 函数与极限"}],
+            },
+        )
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b05", job_id="job-a1"), 5, ["1. 教材题一。"]
+        )
+        _write_page_blocks(
+            _pages_dir(tmp_path, book_id="b07", job_id="job-b1"), 5, ["1. 题一。"]
+        )
+        engine = FakeKnowledgeEngine(
+            exercise_by_title={
+                "习题 1.1": [ExerciseDraft("1", problem="题面", solution="解一")]
+            }
+        )
+        accepted = accept_kp_job(session, book_id="b07", stage="exercise", target_book_id="b05")
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        assert outcome.unmatched_solutions == 0, "章名不同不再判「认不出本章」"
+        assert (outcome.exercise_item_rows, outcome.exercise_pack_rows) == (1, 1)
+        added = [
+            row for row in _rows(session, book_id="b07") if row.gen_batch == accepted.gen_batch
+        ]
+        assert [row.parent_id for row in added] == ["afkp-b7ch1"], "行落本书自己的章，不搬家到教材"
+        pack = (
+            _kp_dir(tmp_path, "b07")
+            .joinpath(added[0].narrative_ref or "")
+            .read_text(encoding="utf-8")
+        )
+        assert "1. 教材题一。" in pack, "题面仍取教材同一题的正文"
+        assert self._meta(tmp_path)["match"]["state"] == "hit", "习题批不抹掉匹配读数"
+
+
 class TestExerciseIndexAndReadFace:
     """`KA-53`／W16：题包索引与习题读面——状态从题包正文反推、索引整份重写、完成只认三条件。"""
 
@@ -6388,6 +9172,7 @@ class TestExerciseIndexAndReadFace:
         page=2,
         status="candidate",
         with_pack=True,
+        extra_meta=None,
     ):
         row = _draft(
             session,
@@ -6405,6 +9190,7 @@ class TestExerciseIndexAndReadFace:
                 "toc_kind": "exercise",
                 "source_book_id": source_book_id,
                 "source_pages": [page],
+                **(extra_meta or {}),
             },
             gen_status=status,
         )
@@ -6433,6 +9219,26 @@ class TestExerciseIndexAndReadFace:
                 exercise_pack_text(label="1", problem="题面", solution="", source_lines=[])
             ),
         ) == ("complete", "source_missing", "problem_only")
+
+    def test_the_unavailable_marker_is_not_mistaken_for_a_body(self):
+        """REQ-179 R2：显式不可用标记不冒充解答正文，也不冒充「有解答」状态。
+
+        判定失败路径写标记（不可用）而非占位句（未配到解答）；标记本身可从解答段反查，
+        读面与屏侧据此把该题按「解答不可用」呈现，而不是把提示语当正文。
+        """
+        assert knowledge_module.EXERCISE_UNAVAILABLE_TEXT == "解答不可用（模型判定失败）"
+        pack = exercise_pack_text(
+            label="1", problem="题面", solution=knowledge_module.EXERCISE_UNAVAILABLE_TEXT,
+            source_lines=[],
+        )
+        # 标记不算解答：状态仍是 problem_only（不是 complete）
+        assert exercise_pack_status(pack) == "problem_only"
+        # 占位句仍按旧行为识别为 problem_only（存量 12 份在重跑前的读法不变）
+        legacy = exercise_pack_text(
+            label="1", problem="题面", solution=knowledge_module.EXERCISE_NO_SOLUTION_TEXT,
+            source_lines=[],
+        )
+        assert exercise_pack_status(legacy) == "problem_only"
 
     def test_the_index_is_one_file_per_chapter_and_a_rewrite_drops_stale_chapters(
         self, session, tmp_path
@@ -6513,6 +9319,45 @@ class TestExerciseIndexAndReadFace:
         assert [item["pack"] for item in reading.items] == [True, True]
         assert (reading.packs, reading.pending_reparse, reading.done) == (2, 0, True)
 
+    def test_the_read_face_carries_the_pairing_and_verification_readings(self, session, tmp_path):
+        """`pair_state`／`pair_reason` 与 `verify_*` 逐键透传：旧批次缺键读空串，屏侧只读不重算。"""
+        self._scene(session, tmp_path)
+        self._item(
+            session,
+            tmp_path,
+            "afkp-b7q1",
+            name="1. 题一",
+            extra_meta={
+                "pair_state": "unpaired",
+                "pair_reason": "习题集未收录本题",
+                "verify_state": "done",
+                "verify_verdict": "suspect",
+                "verify_note": "解答像下一题的开头",
+            },
+        )
+        self._item(session, tmp_path, "afkp-b7q2", name="2. 题二", page=3)
+        book = BookRepository(session).get("b07")
+        assert book is not None
+
+        reading = exercise_workspace(session, data_root=tmp_path, book=book)
+
+        assert reading is not None
+        first, second = reading.items
+        assert (
+            first["pair_state"],
+            first["pair_reason"],
+            first["verify_state"],
+            first["verify_verdict"],
+            first["verify_note"],
+        ) == ("unpaired", "习题集未收录本题", "done", "suspect", "解答像下一题的开头")
+        assert (
+            second["pair_state"],
+            second["pair_reason"],
+            second["verify_state"],
+            second["verify_verdict"],
+            second["verify_note"],
+        ) == ("", "", "", "", "")
+
     def test_missing_problem_blocks_done_and_counts_pending(self, session, tmp_path):
         """题面没取到才是缺项：题包缺席、状态 `source_missing`、待重解析一枚、完成恒假。"""
         self._scene(session, tmp_path)
@@ -6552,19 +9397,11 @@ class TestExerciseIndexAndReadFace:
 
         assert exercise_workspace(session, data_root=tmp_path, book=book) is None
 
-    def test_a_companion_book_reads_only_its_contributed_target_rows(self, session, tmp_path):
-        """配套模式读目标教材里 `meta.source_book_id` 指向本书的行：教材自己的题不算进来。"""
+    def test_a_companion_book_reads_its_own_rows(self, session, tmp_path):
+        """配套模式的题行落在本书自己名下（REQ-170）：读面读本书行，教材自己的题不算进来。"""
         self._scene(session, tmp_path)
         self._scene(session, tmp_path, book_id="b05")
-        self._item(
-            session,
-            tmp_path,
-            "afkp-b05-q1",
-            book_id="b05",
-            parent="afkp-b05-ch1",
-            name="1. 题一",
-            source_book_id="b07",
-        )
+        self._item(session, tmp_path, "afkp-b7q1", name="1. 题一")
         self._item(
             session,
             tmp_path,
@@ -6591,8 +9428,53 @@ class TestExerciseIndexAndReadFace:
 
         assert reading is not None
         assert (reading.kind, reading.target_book_id) == ("companion", "b05")
-        assert [item["node_id"] for item in reading.items] == ["afkp-b05-q1"]
+        assert [item["node_id"] for item in reading.items] == ["afkp-b7q1"]
         assert reading.items[0]["source_book_id"] == "b07"
+
+    def test_a_companion_read_face_reparents_items_to_the_target_chapter(
+        self, session, tmp_path
+    ):
+        """读面的题行挂目标教材同号章：屏上列的是目标书那套章，行仍留在本书自己的章下。
+
+        目标书缺同号章时退回本书章号；两本书的库行都零改动（映射只在读时派生）。
+        """
+        self._scene(session, tmp_path)
+        self._scene(session, tmp_path, book_id="b05")
+        _draft(
+            session,
+            "afkp-b05-k1",
+            job_id="job-b1",
+            node_kind="point",
+            parent_id="afkp-b05-ch1",
+            depth=2,
+            name="函数的概念",
+            norm_key=norm_key_for("函数的概念"),
+            gen_status="candidate",
+        )
+        self._item(session, tmp_path, "afkp-b7q1", name="1. 题一")
+        self._item(session, tmp_path, "afkp-b7q2", parent="afkp-b7ch2", name="2. 题二", page=7)
+        assert write_exercise_meta(
+            session,
+            data_root=tmp_path,
+            book_id="b07",
+            kind="companion",
+            target_book_id="b05",
+            gen_batch="afkp-batch001",
+            unmatched=[],
+        )
+        book = BookRepository(session).get("b07")
+        assert book is not None
+
+        reading = exercise_workspace(session, data_root=tmp_path, book=book)
+
+        assert reading is not None
+        assert [item["parent_id"] for item in reading.items] == [
+            "afkp-b05-ch1",
+            "afkp-b7ch2",
+        ]
+        session.expire_all()
+        assert session.get(AfKp, "afkp-b7q1").parent_id == "afkp-b7ch1", "库行不动"
+        assert len(KpRepository(session).list_for_book("b05")) == 2, "目标书零写入"
 
 
 class TestFailedNodeRetry:
@@ -6725,7 +9607,7 @@ class TestChapterLeg:
     def _chapter_calls(self, engine):
         return [material for step, material in engine.calls if step == "chapter"]
 
-    def test_the_chapter_material_is_the_intro_pages_and_the_child_summaries(self, session, tmp_path):
+    def test_the_chapter_material_is_the_folder_head_and_the_child_summaries(self, session, tmp_path):
         accepted = self._scene(session, tmp_path)
         engine = FakeKnowledgeEngine(
             summaries_by_section={"1.1 数列极限": "节一总结", "1.2 函数极限": "节二总结"},
@@ -6737,8 +9619,8 @@ class TestChapterLeg:
 
         (material,) = self._chapter_calls(engine)
         assert (material.title, material.page_start, material.page_end) == ("第 1 章 极限", 1, 8)
-        assert [page.page_no for page in material.intro_pages] == [1], "章首正文＝首个子行起点页之前那一段"
-        assert material.title_pages == (), "有章首正文就不再重复送章标题页"
+        assert {block.page for block in material.blocks} == {1}, "章前材料止于首点子行锚页之前"
+        assert [step for step, _ in engine.calls] == ["points", "chapter"], "章腿在点腿之后（`KA-65`）"
         assert material.point_summaries == (
             ("1.1 数列极限", "节一总结"),
             ("1.2 函数极限", "节二总结"),
@@ -6752,7 +9634,9 @@ class TestChapterLeg:
         result = kp_batch_row(accepted, outcome).result
         assert (result["chapter_rows"], result["chapter_summary_rows"], result["chapter_narrative_rows"]) == (1, 1, 1)
 
-    def test_a_chapter_that_starts_on_its_first_section_page_gets_the_title_page(self, session, tmp_path):
+    def test_a_chapter_that_starts_on_its_first_section_page_keeps_only_the_title_block(
+        self, session, tmp_path
+    ):
         layout = {2: [(1, "第 1 章 极限"), (2, "1.1 数列极限")], 5: [(2, "1.2 函数极限")]}
         accepted = self._scene(
             session,
@@ -6764,22 +9648,79 @@ class TestChapterLeg:
                 ("afkp-s12", "1.2 函数极限", 5, 2, "afkp-ch1"),
             ],
         )
-        engine = FakeKnowledgeEngine()
+        child = KpRepository(session).get("afkp-s11")
+        child.anchors = [
+            {"kind": "page_block", "ref_id": "p0002", "page": 2, "block_indexes": [1], "snippet": "1.1 数列极限"}
+        ]
+        session.commit()
+        engine = FakeKnowledgeEngine(
+            chapters_by_title={"第 1 章 极限": ("极限是分析数列与函数逼近行为的工具。", "本章导读：极限。")}
+        )
 
         run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
 
         (material,) = self._chapter_calls(engine)
-        assert material.intro_pages == (), "章与其首节同页 ⇒ 没有单独的章首正文"
-        assert [page.page_no for page in material.title_pages] == [2]
+        assert [(block.page, block.block_index) for block in material.blocks] == [
+            (2, 0)
+        ], "章与其首节同页 ⇒ 只取首点标题块之前的块"
 
     def test_a_chapter_whose_children_have_no_summary_gets_an_empty_list(self, session, tmp_path):
         accepted = self._scene(session, tmp_path)
-        engine = FakeKnowledgeEngine()
+        engine = FakeKnowledgeEngine(
+            chapters_by_title={"第 1 章 极限": ("极限是分析数列与函数逼近行为的工具。", "本章导读：极限。")}
+        )
 
         run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
 
         (material,) = self._chapter_calls(engine)
         assert material.point_summaries == ()
+
+    def test_the_chapter_leg_carries_the_reference_notes_from_the_fetcher(self, session, tmp_path):
+        """`KA-67` 章级检索：查询词＝章名＋其下点标题，命中资料随章材料进提示词；点腿不受牵连。"""
+        accepted = self._scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(
+            chapters_by_title={"第 1 章 极限": ("极限是分析数列与函数逼近行为的工具。", "本章导读：极限。")}
+        )
+        seen: list[tuple[str, tuple[str, ...]]] = []
+        note = ReferenceNote(source="维基百科", title="极限（数学）", text="极限是数学分析的基础概念。")
+
+        def fetcher(title, titles):
+            seen.append((title, tuple(titles)))
+            return (note,)
+
+        run_knowledge_job(
+            session,
+            data_root=tmp_path,
+            engine=engine,
+            acceptance=accepted,
+            reference_fetcher=fetcher,
+        )
+
+        (material,) = self._chapter_calls(engine)
+        assert material.reference_notes == (note,)
+        assert seen == [("第 1 章 极限", ("1.1 数列极限", "1.2 函数极限"))]
+
+    def test_a_failing_reference_fetcher_still_produces_the_chapter(self, session, tmp_path):
+        """外部源故障 fail-open：按无检索资料继续，章腿照发不误。"""
+        accepted = self._scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(chapters_by_title={"第 1 章 极限": ("章总结", "章导读")})
+
+        def fetcher(_title, _titles):
+            raise RuntimeError("网络不通")
+
+        outcome = run_knowledge_job(
+            session,
+            data_root=tmp_path,
+            engine=engine,
+            acceptance=accepted,
+            reference_fetcher=fetcher,
+        )
+        session.expire_all()
+
+        (material,) = self._chapter_calls(engine)
+        assert material.reference_notes == ()
+        assert outcome.chapter_rows == 1
+        assert outcome.failed_chapters == 0
 
     def test_a_failed_chapter_is_counted_and_named_and_the_others_proceed(self, session, tmp_path):
         layout = {
@@ -6847,6 +9788,313 @@ class TestChapterLeg:
         assert "chapter" not in [step for step, _ in engine.calls]
 
 
+class TestChapterValidation:
+    """PLAN-033 C-6：章级正文的确定性校验——禁页数、禁全书结构、禁后续章节、带名著述须有出处。"""
+
+    _CLEAN = "极限刻画数列与函数的逼近行为：先给极限的定义，再谈它的性质。"
+    _CLEAN_NARRATIVE = "本章从极限的定义出发，说明逼近行为怎样用距离与不等式度量。"
+
+    def _material(self, *, summary_text: str = "数列极限的定义与性质。"):
+        return ChapterInput(
+            parent_id="afkp-ch1",
+            title="第 1 章 极限",
+            page_start=1,
+            page_end=8,
+            blocks=(SectionBlock(page=1, block_index=0, text="正文讨论数列极限与函数极限。"),),
+            point_summaries=(("1.1 数列极限", summary_text),),
+        )
+
+    def _issues(self, text: str, **kwargs) -> tuple[str, ...]:
+        return chapter_issues(
+            self._material(),
+            ChapterReply(summary=text, narrative=self._CLEAN_NARRATIVE),
+            **kwargs,
+        )
+
+    def test_a_clean_summary_and_narrative_pass(self):
+        assert self._issues(self._CLEAN) == ()
+
+    @pytest.mark.parametrize("text", ["本章讨论极限。", "这一章先给极限的定义。", "整章围绕极限展开。"])
+    def test_the_summary_does_not_talk_about_itself_as_a_chapter(self, text):
+        """总结是纯知识概述：不以「本章／这一章」自称（用户口径 2026-11-09）。"""
+        assert any("章节自称" in issue for issue in self._issues(text))
+
+    def test_the_narrative_may_still_say_this_chapter(self):
+        """导读是章级走读，「本章开头」这类引导语不算自称。"""
+        replied = ChapterReply(summary=self._CLEAN, narrative=self._CLEAN_NARRATIVE)
+        assert chapter_issues(self._material(), replied) == ()
+
+    def test_a_positioning_use_statement_is_caught(self):
+        issues = self._issues("极限刻画逼近行为，为处理复变函数等复杂对象提供理论支撑。")
+        assert any("用途陈述" in issue for issue in issues)
+
+    def test_a_knowledge_grounding_sentence_is_not_a_use_statement(self):
+        assert self._issues("极限的唯一性由距离不等式推出。") == ()
+
+    def test_the_narrative_must_not_end_with_a_study_completion_cliche(self):
+        replied = ChapterReply(
+            summary=self._CLEAN,
+            narrative="我们从极限的定义出发，把逼近行为写成距离不等式。学完这一章，你们就掌握了逼近的工具。",
+        )
+        issues = chapter_issues(self._material(), replied)
+        assert any("总结陈词" in issue for issue in issues)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "本章共 32 页，讲极限。",
+            "本章覆盖 p49–80 的内容。",
+            "第 49–80 页讨论极限。",
+            "本章含 14 个知识点。",
+        ],
+    )
+    def test_page_counts_and_ranges_are_caught(self, text):
+        issues = self._issues(text)
+        assert issues and "页数或页区间" in issues[0]
+
+    def test_whole_book_words_are_caught(self):
+        issues = self._issues("本章位于全书前段，承接基础准备。")
+        assert any("全书结构表述" in issue for issue in issues)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "本章为第 4 章的连续性研究提供分析支撑。",
+            "这些结论在后续章节会继续使用。",
+            "学完本章可以进入下一章。",
+        ],
+    )
+    def test_later_chapter_sentences_are_caught(self, text):
+        assert any("后续章节承接句" in issue for issue in self._issues(text))
+
+    def test_an_ungrounded_named_result_is_caught(self):
+        issues = self._issues("由柯西准则可以判断收敛。")
+        assert any("柯西准则" in issue and "没有出处" in issue for issue in issues)
+
+    def test_a_named_result_with_a_source_in_the_material_passes(self):
+        assert self._issues("数列极限的定义给出收敛的判据。") == ()
+
+    def test_a_named_result_grounded_only_in_the_reference_notes_passes(self):
+        material = replace(
+            self._material(),
+            reference_notes=(ReferenceNote(source="维基百科", title="柯西列", text="柯西准则刻画完备性。"),),
+        )
+        assert chapter_issues(material, ChapterReply(summary="由柯西准则可以判断收敛。", narrative=self._CLEAN)) == ()
+
+    def test_empty_segments_are_issues_but_only_for_the_checked_side(self):
+        replied = ChapterReply(summary="", narrative=self._CLEAN)
+        assert chapter_issues(self._material(), replied) == ("章总结为空",)
+        assert chapter_issues(self._material(), replied, check_narrative=False) == ("章总结为空",)
+        assert chapter_issues(self._material(), replied, check_summary=False) == ()
+
+    def test_coverage_is_not_a_failure_condition(self):
+        """少讲一个子点不判失败：覆盖是尽力目标，不逼模型为凑全改句义。"""
+        material = replace(
+            self._material(),
+            point_summaries=(
+                ("1.1 数列极限", "数列极限的定义。"),
+                ("1.2 函数极限", "函数极限的定义。"),
+            ),
+        )
+        assert chapter_issues(material, ChapterReply(summary=self._CLEAN, narrative=self._CLEAN)) == ()
+
+
+class TestChapterCheckRetry:
+    """PLAN-033 C-5／C-7：同模型一次重试；重试后仍不过则照写，并在章行 `meta.chapter_check` 落注记。"""
+
+    _LAYOUT = TestChapterLeg._LAYOUT
+    _ROWS = TestChapterLeg._ROWS
+    _BAD_SUMMARY = "本章共 32 页，讲数列极限。"
+
+    def _scene(self, session, tmp_path):
+        _scene(session, tmp_path, page_count=8, layout=self._LAYOUT)
+        _register_tree(session, self._ROWS)
+
+    def _run(self, session, tmp_path, engine):
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+        chapter = next(row for row in _rows(session, node_kind="outline") if row.node_id == "afkp-ch1")
+        return outcome, chapter
+
+    def test_a_clean_reply_is_asked_once_and_gets_no_note(self, session, tmp_path):
+        self._scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(
+            chapters_by_title={"第 1 章 极限": ("极限是数列逼近行为的刻画。", "本章导读：从数列到极限。")},
+            model_name="qwen3.5-9b",
+        )
+
+        outcome, chapter = self._run(session, tmp_path, engine)
+
+        assert len([step for step, _ in engine.calls if step == "chapter"]) == 1
+        assert "chapter_check" not in chapter.meta
+        assert outcome.chapter_summary_rows == 1
+
+    def test_a_bad_reply_is_retried_with_the_issues_in_the_prompt_then_passes(self, session, tmp_path):
+        self._scene(session, tmp_path)
+        replies = iter(
+            [
+                ChapterReply(summary=self._BAD_SUMMARY, narrative="本章导读：极限。"),
+                ChapterReply(summary="极限是数列逼近行为的刻画。", narrative="本章导读：极限。"),
+            ]
+        )
+        engine = FakeKnowledgeEngine(on_chapter=lambda _material: next(replies))
+
+        outcome, chapter = self._run(session, tmp_path, engine)
+
+        chapter_materials = [payload for step, payload in engine.calls if step == "chapter"]
+        assert len(chapter_materials) == 2
+        assert chapter_materials[1].retry_issues and "页数或页区间" in chapter_materials[1].retry_issues[0]
+        assert chapter.summary == "极限是数列逼近行为的刻画。"
+        assert "chapter_check" not in chapter.meta
+        assert outcome.chapter_summary_rows == 1
+
+    def test_a_reply_that_still_fails_is_written_and_noted(self, session, tmp_path):
+        self._scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(
+            on_chapter=lambda _material: ChapterReply(
+                summary=self._BAD_SUMMARY, narrative="本章导读：极限。"
+            ),
+            model_name="qwen3.5-9b",
+        )
+
+        outcome, chapter = self._run(session, tmp_path, engine)
+
+        assert len([step for step, _ in engine.calls if step == "chapter"]) == 2
+        assert chapter.summary == self._BAD_SUMMARY, "两次不过也照写：注明不等于作废"
+        check = chapter.meta["chapter_check"]
+        assert check["passed"] is False
+        assert check["model"] == "qwen3.5-9b"
+        assert any("页数或页区间" in issue for issue in check["issues"])
+        assert outcome.chapter_summary_rows == 1, "照写的那一份照常计数"
+
+    def test_a_failed_retry_keeps_the_first_reply_and_notes(self, session, tmp_path):
+        self._scene(session, tmp_path)
+        calls = {"n": 0}
+
+        def chapter(_material):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise EngineError("模型服务中断")
+            return ChapterReply(summary=self._BAD_SUMMARY, narrative="本章导读：极限。")
+
+        engine = FakeKnowledgeEngine(on_chapter=chapter)
+
+        outcome, chapter_row = self._run(session, tmp_path, engine)
+
+        assert chapter_row.summary == self._BAD_SUMMARY, "重试失败不丢首版"
+        assert chapter_row.meta["chapter_check"]["passed"] is False
+        assert outcome.failed_chapters == 0, "首版已拿到，不算整章失败"
+
+    def test_the_summary_leg_only_checks_the_summary(self, session, tmp_path):
+        """单点总结腿不看导读：导读为空不触发重试，也不落注记。"""
+        self._scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(
+            on_chapter=lambda _material: ChapterReply(
+                summary="极限是数列逼近行为的刻画。",
+                narrative="",
+            )
+        )
+
+        regenerate_section_summary(session, data_root=tmp_path, engine=engine, node_id="afkp-ch1")
+
+        assert len([step for step, _ in engine.calls if step == "chapter"]) == 1
+        session.expire_all()
+        assert "chapter_check" not in KpRepository(session).get("afkp-ch1").meta
+
+    def test_the_narrative_leg_only_checks_the_narrative(self, session, tmp_path):
+        """单点导读腿不看总结：总结为空不触发重试。"""
+        self._scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(
+            on_chapter=lambda _material: ChapterReply(
+                summary="",
+                narrative="本章导读：从数列极限到函数极限。",
+            )
+        )
+
+        _node, content = regenerate_chapter_narrative(
+            session, data_root=tmp_path, engine=engine, node_id="afkp-ch1"
+        )
+
+        assert content == "本章导读：从数列极限到函数极限。"
+        assert len([step for step, _ in engine.calls if step == "chapter"]) == 1
+        session.expire_all()
+        assert "chapter_check" not in KpRepository(session).get("afkp-ch1").meta
+
+
+class TestChapterFolder:
+    """`KA-65` 的四条边界：无子点零调用、区间外子点不带章、子点失败照发、已确认行不被覆盖。"""
+
+    def test_a_chapter_without_children_is_never_asked(self, session, tmp_path):
+        _scene(session, tmp_path, page_count=6)
+        _register_tree(session, [("afkp-ch1", "第 1 章 极限", 1, 1, None)])
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        engine = FakeKnowledgeEngine()
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+
+        assert [step for step, _ in engine.calls] == [], "无子点章零调用"
+        assert outcome.chapter_rows == 0
+
+    def test_a_chapter_whose_children_are_outside_the_range_is_not_asked(self, session, tmp_path):
+        layout = {1: [(1, "第 1 章 极限")], 6: [(2, "1.2 函数极限")]}
+        _scene(session, tmp_path, page_count=8, layout=layout)
+        _register_tree(
+            session,
+            [
+                ("afkp-ch1", "第 1 章 极限", 1, 1, None),
+                ("afkp-s12", "1.2 函数极限", 6, 2, "afkp-ch1"),
+            ],
+        )
+        accepted = accept_kp_job(session, book_id="b05", stage="content", page_start=1, page_end=3)
+        engine = FakeKnowledgeEngine()
+
+        run_knowledge_job(session, data_root=tmp_path, engine=engine, acceptance=accepted)
+
+        assert [step for step, _ in engine.calls] == [], "区间内零子点 ⇒ 章零调用（`KA-65`）"
+
+    def test_a_chapter_is_still_asked_when_a_point_leg_failed(self, session, tmp_path):
+        _scene(session, tmp_path, page_count=8, layout=TestChapterLeg._LAYOUT)
+        _register_tree(session, TestChapterLeg._ROWS)
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        engine = FakeKnowledgeEngine(
+            failing_sections=("1.1 数列极限",),
+            chapters_by_title={"第 1 章 极限": ("章总结", "章导读")},
+        )
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        (material,) = [payload for step, payload in engine.calls if step == "chapter"]
+        assert material.point_summaries == (), "失败节的空总结不入清单"
+        chapter = next(row for row in _rows(session, node_kind="outline") if row.node_id == "afkp-ch1")
+        assert chapter.summary == "章总结", "子点失败不等于章不可写"
+        assert outcome.chapter_rows == 1
+
+    def test_a_confirmed_chapter_keeps_its_empty_summary(self, session, tmp_path):
+        _scene(session, tmp_path, page_count=8, layout=TestChapterLeg._LAYOUT)
+        _register_tree(session, TestChapterLeg._ROWS)
+        KpRepository(session).set_confirmed("afkp-ch1", confirmed=True)
+        session.commit()
+        accepted = accept_kp_job(session, book_id="b05", stage="content")
+        engine = FakeKnowledgeEngine(chapters_by_title={"第 1 章 极限": ("机器想覆盖", "")})
+
+        outcome = run_knowledge_job(
+            session, data_root=tmp_path, engine=engine, acceptance=accepted
+        )
+        session.expire_all()
+
+        chapter = next(row for row in _rows(session, node_kind="outline") if row.node_id == "afkp-ch1")
+        assert chapter.summary == "", "人已背书的行机器零触碰"
+        assert outcome.chapter_summary_rows == 0
+
+
 class TestRegeneratePointSummary:
     """`KA-45` 单点重生成：覆盖知识点行自己的 `summary`、`rev` 递增，取材走该节自己的树序区间。"""
 
@@ -6876,7 +10124,7 @@ class TestRegeneratePointSummary:
         assert [page.page_no for page in section.pages] == [2, 3, 4]
 
     def test_a_chapter_regenerates_only_its_summary_from_the_chapter_material(self, session, tmp_path):
-        """2026-11-05 扩章：章走 `_chapter_material` 三块，回复里的导读丢弃、不写 `narrative_ref`。"""
+        """2026-11-05 扩章：章走 `_chapter_material` 的章前块与子点总结，回复里的导读丢弃、不写 `narrative_ref`。"""
         self._scene(session, tmp_path)
         before = KpRepository(session).get("afkp-ch1")
         assert before is not None
@@ -6897,8 +10145,31 @@ class TestRegeneratePointSummary:
         assert (material.title, material.page_start, material.page_end) == ("第 1 章 极限", 1, 8), (
             "章材料的区间是整章（到本节树序的终点页），不是锚点那一页"
         )
-        assert [page.page_no for page in material.intro_pages] == [1]
+        assert {block.page for block in material.blocks} == {1}, "章前材料只取首点之前的块"
         assert not _kp_dir(tmp_path).joinpath("afkp-ch1.md").exists(), "回复里的导读丢弃，不落盘"
+
+    def test_the_regenerated_chapter_gets_the_reference_notes(self, session, tmp_path):
+        """`KA-67` 单点腿同一条检索：取词用章名＋全部子点标题（总结为空的点也在取词里）。"""
+        self._scene(session, tmp_path)
+        engine = FakeKnowledgeEngine(chapters_by_title={"第 1 章 极限": ("章级重写总结", "")})
+        seen: list[tuple[str, tuple[str, ...]]] = []
+        note = ReferenceNote(source="维基百科", title="函数极限", text="函数极限的定义。")
+
+        def fetcher(title, titles):
+            seen.append((title, tuple(titles)))
+            return (note,)
+
+        regenerate_section_summary(
+            session,
+            data_root=tmp_path,
+            engine=engine,
+            node_id="afkp-ch1",
+            reference_fetcher=fetcher,
+        )
+
+        (material,) = [payload for step, payload in engine.calls if step == "chapter"]
+        assert material.reference_notes == (note,)
+        assert seen == [("第 1 章 极限", ("1.1 数列极限", "1.2 函数极限"))]
 
     def test_exercise_and_other_nodes_cannot_regenerate(self, session, tmp_path):
         metas = {"afkp-ex": {"toc_role": "reference", "toc_kind": "exercise"}}
@@ -7079,6 +10350,56 @@ class TestExerciseRows:
         ]
         assert len([row for row in outline if row.name.startswith("习题")]) == 1
 
+    def test_per_section_exercise_labels_produce_no_chapter_tail_row(self, session, tmp_path):
+        """b18 形（`KA-46` 章尾判据）：每节后面都挂习题 ⇒ 本腿零行。
+
+        真机 b18 的目录里没有习题行，旧规则取章区间第一枚标签，于是 1.1 的习题被挂到第 1 章末尾、
+        锚却停在章中——屏上多出一枚目录里没有的行，位置还错。多枚标签即判「按节布置」。
+        """
+        pages_dir = self._scene(
+            session,
+            tmp_path,
+            layout={
+                1: [(1, "第 1 章 极限")],
+                2: [(2, "1.1 数列极限")],
+                4: [(2, "1.2 函数极限")],
+                6: [(1, "第 2 章 导数")],
+            },
+        )
+        _write_page_artifacts(pages_dir, 3, [], body="习题 1.1")
+        _write_page_artifacts(pages_dir, 5, [], body="习题 1.2")
+
+        run_knowledge_job(
+            session, data_root=tmp_path, engine=FakeKnowledgeEngine(), acceptance=_accepted(session)
+        )
+
+        outline = _rows(session, node_kind="outline")
+        assert [row.name for row in outline] == ["第 1 章 极限", "1.1 数列极限", "1.2 函数极限", "第 2 章 导数"]
+        assert all((row.meta or {}).get("toc_kind") != "exercise" for row in outline), (
+            "目录里没有的习题行不许从章中冒出来"
+        )
+
+    def test_a_label_before_the_last_section_is_not_a_chapter_tail_row(self, session, tmp_path):
+        """唯一一枚标签落在最后一节的锚页之前 ⇒ 它属于那一节而不是章尾：不成行（`KA-46` 章尾判据）。"""
+        pages_dir = self._scene(
+            session,
+            tmp_path,
+            layout={
+                1: [(1, "第 1 章 极限")],
+                2: [(2, "1.1 数列极限")],
+                4: [(2, "1.2 函数极限")],
+                6: [(1, "第 2 章 导数")],
+            },
+        )
+        _write_page_artifacts(pages_dir, 3, [], body="习题 1.1")
+
+        run_knowledge_job(
+            session, data_root=tmp_path, engine=FakeKnowledgeEngine(), acceptance=_accepted(session)
+        )
+
+        outline = _rows(session, node_kind="outline")
+        assert [row.name for row in outline] == ["第 1 章 极限", "1.1 数列极限", "1.2 函数极限", "第 2 章 导数"]
+
     def test_the_exercise_leg_adds_no_model_call_and_no_point(self, session, tmp_path):
         """零模型调用、不进点腿：习题行是附件身份位，内容阶段不为它发问（`KA-46` 的硬边界）。"""
         pages_dir = self._scene(session, tmp_path)
@@ -7097,3 +10418,69 @@ class TestExerciseRows:
             for call in engine.calls
             if call[0] == "points" and getattr(call[1], "title", "") == "习题"
         ]
+
+
+class TestSectionBlockBodies:
+    """习题腿的取材副本按块界切（b17 真机）：章界页属于两节，页级取法会把邻章首页整页读两遍。
+
+    真机形状＝`section_spans_of` 给上一节 `end_block=k-1`、下一节 `start_block=k`（同一页），
+    Homework 1 的区间止于 p7 块 1、Homework 2 从 p7 块 2 起；整页喂给两节时 `Problem 2.2` …
+    被 Homework 1 再切一遍、`Problem 5.1` 落进 Homework 4——同题两行、章归属错。
+    """
+
+    @staticmethod
+    def _blocks_page(page_no: int, texts: list[str]) -> BlocksPage:
+        return BlocksPage(
+            page=page_no,
+            image_size=(1240, 1754),
+            source="mineru",
+            blocks=[
+                Block(
+                    type=BlockType.PARAGRAPH,
+                    bbox=[72, 60 + index * 40, 1168, 100 + index * 40],
+                    index=index,
+                    order=index,
+                    text=text,
+                )
+                for index, text in enumerate(texts)
+            ],
+        )
+
+    def _evidence(self) -> EvidenceSet:
+        pages = (
+            EvidencePage(1, "", (), "Problem 1.1: a\nProblem 1.2: b"),
+            EvidencePage(2, "", (), "Problem 1.3: c\nProblem 2.1: d"),
+        )
+        blocks = (
+            self._blocks_page(1, ["Problem 1.1: a", "Problem 1.2: b"]),
+            self._blocks_page(2, ["Problem 1.3: c", "Problem 2.1: d"]),
+        )
+        return EvidenceSet("b", "j", 1, 2, pages, (), (), blocks)
+
+    def test_the_end_page_stops_before_the_next_chapter_block(self) -> None:
+        evidence = self._evidence()
+        span = SectionSpan("ch1", "Homework 1", 1, 2, start_block=0, end_block=0)
+
+        bodies = _section_block_bodies(evidence, span)
+
+        assert [body.page_no for body in bodies] == [1, 2]
+        assert "Problem 1.3" in bodies[1].markdown
+        assert "Problem 2.1" not in bodies[1].markdown
+
+    def test_the_start_page_drops_the_previous_chapters_tail(self) -> None:
+        evidence = self._evidence()
+        span = SectionSpan("ch2", "Homework 2", 2, 2, start_block=1)
+
+        bodies = _section_block_bodies(evidence, span)
+
+        assert "Problem 1.3" not in bodies[0].markdown
+        assert "Problem 2.1" in bodies[0].markdown
+
+    def test_a_page_without_blocks_falls_back_to_the_markdown(self) -> None:
+        """块产物缺页时退回原文整页：取材不因缺一块产物就整节消失。"""
+        pages = (EvidencePage(3, "", (), "Problem 9.1: e"),)
+        evidence = EvidenceSet("b", "j", 3, 3, pages, (), ())
+
+        bodies = _section_block_bodies(evidence, SectionSpan("ch", "Homework 9", 3, 3))
+
+        assert bodies[0].markdown.strip() == "Problem 9.1: e"

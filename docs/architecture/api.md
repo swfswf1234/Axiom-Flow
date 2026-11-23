@@ -23,15 +23,17 @@ token、双确认），单独成节。本仓库只保证 API 契约与产物格�
 模型生命周期（`/models`）与探针。
 
 **生效解析版本**：一本书的解析产物按版本落在
-`parsed/<domain>/<course>/<book_id>/versions/<job_id>/`，「哪一版生效」的唯一事实源是
-`af_books.active_job_id`（NULL = 根视图 legacy，见
+`parsed/<domain>/<course>/<book_id>/versions/<job_id>/`，「哪一版生成」的唯一事实源是
+`af_books.active_job_id`（NULL = 尚无激活版本，见
 [database-design.md](database-design.md)）。**所有读取端点（manifest / pages / image / chunks /
-edits）经该指针解析产物目录**，因此：
+edits）经 `_read_scope` 解析产物目录**，规则＝[PP-22](../design/parsing-pipeline.md)：取已解析页最多
+的可见版本（含未激活的 `partial`／`failed`），`active_job_id` 只在并列时优先，因此：
 
 - URL、响应结构与 `image_url` 字面量**零变化**，根仓库前端不需要适配；
 - 切版 = 单列 UPDATE，不改文件；
-- 生效指针指向的版本目录缺失时**显式 404**，不静默回落根视图（ADR 0004 无自动兜底）；
-- 历史版本仅经 `GET /api/v1/books/{book_id}/versions` 可见（只读列举）。
+- `active_job_id` 指向的版本目录缺失时**显式 404**，不静默回落根视图（ADR 0004 无自动兜底）；
+- 历史版本仅经 `GET /api/v1/books/{book_id}/versions` 可见（只读列举），盘上非生效版本在下次激活时
+  连同基线版本一并清理。
 
 **唯一例外**是管理面 `POST /api/v1/admin/purge`：它的目的就是把**所有**版本连库行一起清除，故不走
 生效指针作用域（见「非公开管理面」节）。
@@ -104,8 +106,10 @@ sequenceDiagram
 | `POST` | `/api/v1/books/{book_id}/ingest` | ② | 渲染页图（根视图唯一产物 `pages/`，不调模型；元数据回写 `af_books`） |
 | `GET` | `/api/v1/books/{book_id}/manifest` | ③ | 生效版本产物清单（路径 + 大小 + SHA-256） |
 | `GET` | `/api/v1/books/{book_id}/pages` | ③ | 生效版本逐页状态清单（一页一行） |
+| `GET` | `/api/v1/books/{book_id}/reparse-plan` | ③ | 只读重跑建议（DB 状态 + 文件核验 + 理由，不替人决定） |
 | `GET` | `/api/v1/books/{book_id}/pages/{page_no}` | ③ | 单页完整数据（对照主数据源） |
 | `GET` | `/api/v1/books/{book_id}/pages/{page_no}/image` | ③ | 原页高清图（`image/png`） |
+| `GET` | `/api/v1/books/{book_id}/images/{filename}` | ③ | 生效版本内嵌图片（题包图片读腿，按单段文件名取 `pages/images/`） |
 | `PUT` | `/api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit` | ③ | 块编辑 upsert（绑定生效版本） |
 | `PUT` | `/api/v1/books/{book_id}/pages/{page_no}/structure` | ③ | 页结构意图全量声明（人工框 / 删块 / 并块，跨版本存活） |
 | `GET` | `/api/v1/books/{book_id}/pages/{page_no}/edits` | ③ | 页内编辑列表（生效版本作用域） |
@@ -186,8 +190,9 @@ Alembic 独立建表），表结构见 [database-design.md](database-design.md)�
 
 书目列表。返回 `BookOut` 列表（扩展字段 `domain_id`/`course_id`/`course_name`/`knowledge_id`/`part`/
 `display_title`/`file_path`/`ingest_status`/`parse_status`/`pages_done`/`active_job_id`/
-`last_parse_result`/`doc_kind`/`last_curation_result`/`curation_in_flight` 向前兼容）。`pages_done` 与
-`active_job_id` 一致地描述**生效版本**（PM-4）；`active_job_id=null` 表示读根视图。**进度与结局分列
+`last_parse_result`/`doc_kind`/`last_curation_result`/`curation_in_flight` 向前兼容）。`pages_done` 是
+`af_books` 记的页数（最近任务版本，含继承页）；`active_job_id` 只表示**激活指针**，为空不等于读不到解析
+结果——读面按[PP-22](../design/parsing-pipeline.md)取「已解析页最多的可见版本」。**进度与结局分列
 （ADR 0007）**：`parse_status` 只回答「做到哪」（`pending`/`parsing`），`last_parse_result` 只回答
 「上一次怎么结束」（`completed`/`partial`/`failed`/`interrupted`，`""` = 从未有任务）——前端列表不必
 再看 `progress` 猜结局。`doc_kind` 两值闭集 `{textbook, exercise}` 由同步行的 `roles` 派生，`""` = 未
@@ -243,22 +248,33 @@ Alembic 独立建表），表结构见 [database-design.md](database-design.md)�
 
 ### ③ 解析结果与 PDF 对照
 
-本节端点以**生效解析版本**为读取作用域（`af_books.active_job_id` → `versions/<job_id>/`；
-NULL → 书目录根 = 根视图 legacy）。唯一的例外是结构声明端点（`PUT .../structure`）：它写的是
+本节端点以**读面作用域**为读取作用域（解析版本读面口径见
+[PP-22](../design/parsing-pipeline.md)）：**已解析页最多的可见版本** → `versions/<job_id>/`；
+无带内容的可见版本 → 书目录根 = 根视图 legacy。可见版本不要求已激活：`partial`／`failed` 版本里
+已落盘的页同样可读。`af_books.active_job_id` 只在页数并列时优先，且它指向的目录缺失时仍显式 404。
+唯一的例外是结构声明端点（`PUT .../structure`）：它写的是
 **页级**人工意图，作用域不含版本（跨版本存活，[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)
-决定 1），只在把块下标换算成几何锚时读一次生效版本产物。块编辑端点（`PUT .../blocks/{index}/edit`）为
+决定 1），只在把块下标换算成几何锚时读一次当前读面版本产物。块编辑端点（`PUT .../blocks/{index}/edit`）为
 af_* 表族契约，**取代** 8900 现用的 `/review`（ok/bad）；8900 侧适配（`/review`→`/edit`、补
 ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的来源条）。
 
 #### GET /api/v1/books/{book_id}/manifest
 
-**生效版本**的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对该版本目录自身，响应为
-`ManifestEntry` 列表。legacy 作用域（`active_job_id=NULL`）**固定 404**「尚无生效版本：{book_id}」
+**读面版本**的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对该版本目录自身，响应为
+`ManifestEntry` 列表。legacy 作用域（无带内容的可见版本）**固定 404**「尚无生效版本：{book_id}」
 ——根视图已无清单正本，重算会把已退役文件写回磁盘。**错误：** 404。
+
+#### GET /api/v1/books/{book_id}/reparse-plan
+
+**只读重跑建议**：逐页给出 `{page_no, status, has_artifact, suggested, reason}`。
+`status` 来自 `af_pages`（DB 状态）、`has_artifact` 来自读面作用域目录（文件真实性核验），
+`reason ∈ {not_parsed, artifact_missing}`（`suggested=true`）或空串（已齐备）。
+**只给建议不替人决定**：本端点不触发重跑、不改任何状态，任何人可据此选定范围提交
+`POST /parse-jobs {scope, pages}`。作用域自证 `job_id`/`total` 与页清单同源。**错误：** 404。
 
 #### GET /api/v1/books/{book_id}/pages
 
-**生效版本**的逐页状态清单（只读）。存在理由：`GET /api/v1/books/{book_id}/pages/{page_no}` 是单页
+**读面版本**的逐页状态清单（只读）。存在理由：`GET /api/v1/books/{book_id}/pages/{page_no}` 是单页
 端点，前端要判断「哪些页还没有产物」只能 1..`page_count` 逐页请求试错（486 页 = 486 次往返）；
 本端点一次给全集，供「失败页重解析按钮」直接算出待重跑集合。
 
@@ -270,8 +286,8 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 | 字段 | 类型 | 语义 |
 | --- | --- | --- |
 | `book_id` | str | 路径参数回显 |
-| `job_id` | str | 本次读取的**版本作用域**（= `af_books.active_job_id`；无生效版本时为 `"legacy"`） |
-| `scope` | `"active"` \| `"legacy"` | 作用域自证：`active` = 读生效版本目录，`legacy` = 读根视图 |
+| `job_id` | str | 本次读取的**版本作用域**（`_read_scope` 解析出的版本；无带内容可见版本时 `"legacy"`） |
+| `scope` | `"active"` \| `"legacy"` | 作用域自证：`active` = 读某个解析版本目录（含未激活的 `partial`／`failed`），`legacy` = 读根视图 |
 | `total` | int | 清单长度 = 枚举域页数 |
 | `pages` | `PageStateOut[]` | 按 `page_no` 升序，**逐页连续覆盖 `1..total`**（没有页行的页也要出行，不缺项） |
 
@@ -299,7 +315,8 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 **作用域**：`job_id` / `scope` / `has_artifact` 三项全部取自 `_read_scope` 返回的 `(产物目录, job_id)`
 （见「兼容与不可变规则」的唯一入口条），不得自行拼 `book_dir`——否则会把 legacy 根视图与版本视图混读。
 
-**错误：** 404 书目不存在或产物缺失 / 404 生效版本产物缺失（**不回落根视图**）；`book_id` 非法路径段
+**错误：** 404 书目不存在或产物缺失 / 404 生效版本产物缺失（`active_job_id` 非空而目录不在，
+**不回落**其它版本或根视图）；`book_id` 非法路径段
 422（含 `%2F` 等编码分隔符的穿越会在路由层就不匹配而落 404，两者都是拒绝，不是放行）。
 
 #### GET /api/v1/books/{book_id}/pages/{page_no}
@@ -338,6 +355,15 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 
 原页高清图（`image/png`，对照左栏），取**生效版本**目录下的 `pages/p<NNNN>.png`（版本内页图为根视图
 页图的硬链接，见 [parsing-pipeline.md](../design/parsing-pipeline.md)）。**错误：** 404 页图缺失。
+
+#### GET /api/v1/books/{book_id}/images/{filename}
+
+生效版本目录的内嵌图片（题包图片读腿）：取**生效版本**目录下的 `pages/images/<filename>`，
+只收**单段文件名**（路径分隔符与 `.`/`..` 一律 404，不接受目录形状）。媒体类型按扩展名白名单
+（`jpg/jpeg/png/gif/webp/bmp`），未登记扩展名按 `application/octet-stream` 给。题包写入面把
+产物相对引用 `pages/images/<sha>.jpg` 改写成 `/api/v1/books/{book_id}/images/<sha>.jpg`（不带
+主机名，8900 字节转发、前端按 `API_BASE` 前缀取），本端点是那份 URL 的取图口。**错误：**
+404 书目或生效版本缺失 / 文件名非法 / 图片缺失。
 
 #### PUT /api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit
 
@@ -409,8 +435,13 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 
 #### POST /api/v1/parse-jobs
 
-提交解析任务。请求：`{book_id, pages?, engine?}`（`pages` 缺省 = 全部页，走**全本解析**；指定页 =
-逐页页图重解析；`engine` 为 `mineru`/`paddleocr-vl`/`qwen-vl` 之一，**缺省回落
+提交解析任务。请求：`{book_id, pages?, engine?, scope?}`（`pages` 显式即按该页列表执行，可重跑已完成页；
+`scope ∈ {all, unfinished, failed, selected}`，`selected` 须带 `pages`；**`pages` 与 `scope` 都缺省 = 全本**
+（向后兼容 8903）。`scope=unfinished` = `status != parsed` ∪ (`parsed` 且 `has_artifact=false`)，
+`scope=failed` = 当前版本失败页 ∪ 任务 `failed_pages`。重跑与否和范围由人决定，系统只通过
+`GET …/reparse-plan` 给建议、不设签名 409/force 门）。受理时若 `scope` 显式，先把当前可见版本目标页
+`af_pages.status` 写 `failed` 并记理由，再由新版本任务重跑（不继承这些页旧产物）；文件缺失但
+DB=parsed 的页走同一路径。`engine` 为 `mineru`/`paddleocr-vl`/`qwen-vl` 之一，**缺省回落
 `AXIOM_OCR_ENGINE`**，未实现的槽位返回 400、非法字面值返回 422，**绝不回落到其他引擎**）。
 202 返回 `ParseJob`（状态机见下表），任务落 `af_operations` 的 `op_kind='parse'` 事件行
 （`engine` 存**解析后的实际引擎名**）并由后台执行。
@@ -549,16 +580,24 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 模型只确认解答起始行（`KA-56`），配套模式带 `target_book_id` 并入目标教材的章下。它与书种类按闭集
 配对（习题集只开 `outline`／`exercise`，教材四值全开），未声明种类（`doc_kind` 为空串）的书一律拒；
 受理面另判 `only_failed` 只与 `content` 组合、目标教材只与「习题集＋`exercise`」同批且须整本绿、
-选中题重解析只与 `exercise` 组合——都判在写入之前，零调用。目录阶段以模型为正腿（`KA-35`／`KA-37`）：一次判页
-挑出目录页与正文前后的附件页，逐页整理成条目行，**单页失败只回落那一页**的确定性条目腿（`KA-33`）；印刷页码
-先走偏移标定直查定锚，只有窗口内查不中的坏行才攒成一批交一次核对（`KA-38`）。所以 `outline` 这一枚只指
-「点腿不发起」，目录步的调用上界＝1＋目录页数＋核对 1 次，不再是零调用批次。
+选中题重解析只与 `exercise` 组合——都判在写入之前，零调用。目录阶段以模型为正腿（`KA-35`／`KA-37`），
+判页按**逐页递推**走（`KA-59` 的 P-1~P-5）：候选页取自前 10 页里带目录标记的页（一页没有则全册扫一遍），
+整页原文不截断地交给判页腿，**判定与条目同一次读数回来**，从下往上一页页问，问到第一页非目录为止；
+**单页失败只回落那一页**的确定性条目腿（`KA-33`），连续两页失败即止。印刷页码先走偏移标定直查定锚，
+只有窗口内查不中的坏行才攒成一批交一次核对（`KA-38`，本页没有印刷页码的行也进这一批，候选页由上下
+已定锚行夹出）。所以 `outline` 这一枚只指「点腿不发起」，目录步的调用上界＝判过的页数＋核对 1 次，
+不再是零调用批次；判过哪几页在结果里以 `outline_judged_pages` 交代（`KA-27` 第三十四键）。
 
 `"content"` 时**目录腿整条不发起**（`KA-43`，需求方第九令「内容解析在有目录之后一定要能按」）：`build_outline` 跳过、
 目录步零调用，本批的节区间由库内**在册目录行**（`node_kind='outline'` 且 `candidate`）重构，点腿照常逐节跑，并**同批把
 该节的节级总结写进那枚目录行的 `summary`**——只在 `confirmed=0` 且原值为空串时落笔、不递增 `rev`（机器不与人工结论争
 同一身份）。它多一道库侧前置：在册目录行零枚 ⇒ 422 点名「先解析目录」，零写入、零流水行。附件行（`toc_role=reference`）
 的节段照旧不发起调用，页区间仍由它切，只是不问。`full` 与 `outline` 两值逐字不动。
+
+`content` 在同一条链上多四步（`KA-63`~`KA-66`，全在本阶段内，`stage` 闭集与端点形状不变）：**P0 种类审校**在点腿前
+按规则把知识点段内的大块习题拆成并列习题行（`model_ref='rule:exercise_split'`，判不出的行进点名面，既有目录行列值不动）
+→ **P1 点梳理**按块取材、单次材料正文 ≤ 10,000 字符，超预算切窗、小节合批 → **P2 章文件夹**在子点总结齐后才发章腿，
+章前材料止于首点子行锚页之前 → **P3 详情**点行 `meta.material_ranges` 记取材块区间，公式／表格／图片原文透传。
 
 门槛全判在写入之前，下面每一道都不产生 `af_kp` 行、也不写流水：
 
@@ -571,7 +610,7 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 | 受理门：`stage='content'`／`stage='exercise'` 而该书在册目录行零枚 | 422 | 点名「先解析目录」（`KA-43`／`KA-53`：没有在册目录，内容腿只能把点全丢进未归档池，题腿则落不出父行） |
 | 受理门：该书已有在飞批次（`af_kp` 里有 `draft` 行） | 409 | 点名在飞的 `gen_batch`（`KA-4`，同书至多一个） |
 | 受理门：书种类未声明（`doc_kind` 为空串） | 422 | 回显告警并点名「先同步书目」；不照抄根侧「空即教材」的容错（`KA-51`），零写入 |
-| 受理门：`stage` 与书种类组合非法 | 422 | 教材四值全开、习题集只开 `exercise`；合法值在 detail 里点名列（`KA-51`） |
+| 受理门：`stage` 与书种类组合非法 | 422 | 教材四值全开、习题集开 `outline` 与 `exercise`；合法值在 detail 里点名列（`KA-51`） |
 | 受理门：`only_failed=true` 而 `stage≠content`，或上一批没有失败节 | 422 | 跨阶段组合与空名单都零写入（`KA-52`）；名单在受理一刻从上一批流水读出并随批次带走 |
 | 受理门：`target_book_id` 与「习题集＋`exercise`」不同批、目标书不存在／不是教材身份／尚未整本绿 | 422 | 配套模式的目标由人指定、不自动配对；整本绿门判「章／点行齐、已确认齐、无空总结、无未定位」（`KA-53`），零写入 |
 | 受理门：目标教材已有在飞批次 | 409 | 与本书同一把在飞判据，点名目标书的 `gen_batch`（`KA-53`） |
@@ -611,7 +650,10 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
             "foreign_cycles": 0, "missing_page_nos": [], "unparsed_page_nos": [7],
             "unlocated_outline_entries": ["附录 习题解答"], "dropped_toc_pages": [5],
             "superseded_rows": 0, "outline_toc_pages": [7, 8], "outline_fallback_pages": [8],
-            "verified_outline_entries": ["函数的极限"], "reference_rows": 2}, "error": "",
+            "verified_outline_entries": ["函数的极限"], "reference_rows": 2,
+            "outline_judged_pages": [7, 8], "duplicate_outline_rows": 0, "folded_sub_items": 0,
+            "type_review_rows": 0, "type_review_flags": [], "split_exercise_rows": 0,
+            "point_windows": 0, "point_merges": 0, "material_ranges_rows": 0}, "error": "",
             "created_at": "…"}}
 ```
 
@@ -632,9 +674,11 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 - `ledger.stage` 同样**恒发**（`KA-34`）：`outline` 批次的 `counts.point` 为 0 有两种来路（这一批没跑点腿、
   跑了但全节失败），读侧要区分只能问这一枚——`counts` 是结果，`payload` 才是这一批的入参。
 - `result.unlocated_outline_entries` 是目录页条目腿的披露面（`KA-33`）：数组里是**回定位没落进正文页**
-  的条目名原文。这些条目照样成了目录行，只是锚指向书自身的那一页，人工照名字在屏上补页即可；
-  `stage="content"` 批次里**锚仍停在目录页、被整节跳过**的行也并入这一位（`KA-43`：不跑目录腿就没有
-  核对腿救锚，跳过并在账面点名）；零未定位出**空数组**而不是缺键，与 `failed_section_details` 同一条口径。
+  的条目名原文。偏移标定成功的书里这些条目**不成行**（把目录页当成正文页，等于把书自己的目录抄进目录），
+  人工照名字在屏上补页即可；偏移整本标定不出时条条都查不中，此时丢行就是整本零目录，仍按旧读数落回目录页
+  成行（`KA-33` 改判）。`stage="content"` 批次里**锚仍停在目录页、被整节跳过**的行也并入这一位
+  （`KA-43`：不跑目录腿就没有核对腿救锚，跳过并在账面点名）；零未定位出**空数组**而不是缺键，
+  与 `failed_section_details` 同一条口径。
 - `result.dropped_toc_pages` 是页级复核的披露面（`KA-33`）：偏移标定成功时，条目过半回定位不中的页
   整页不算目录页（符号表／索引页与目录页行形状相同），这里点名被剔的页码。空数组＝没有页被剔；
   偏移标定不出时不做这一步，因而也不会出现这一位的非空值。
@@ -649,9 +693,22 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 - `result.reference_rows` 是非知识点目录行的计数（`KA-39`）：正文前后的附件行（前言／符号表／附录／参考文献／
   索引／习题等）与回落腿里按名字判成附件的行都计入。行仍在 `af_kp` 里、照常成目录，只是 `meta.toc_role`
   标 `reference`——**零新列**，两枚身份键只进 `meta` JSON。
+- `result.outline_judged_pages` 是逐页判页腿的实判面（`KA-59`）：这一轮**逐页问过「是不是目录页」**的页号
+  （升序，含被判为非目录页而收住的那一页与失败回落页）。空数组＝这一轮没有逐页判定（全书无「目录／Contents」
+  标记，或引擎不持这条腿），目录由整本条目腿接手——这一位就是「兜底读数是哪来的」的指认面。
+- `result.duplicate_outline_rows` 是成行去重的披露面（`KA-61`）：成行处按「同父同名、六类书级附件全书唯一」
+  折掉的**重影行数**（`exercise` 除外）。读面按同一判据折叠存量重影、只出书序第一枚，所以这一位读的是
+  「库里有、屏上看不到」的行数；零折叠出 `0` 而不是缺键。`rule:exercise_split` 的拆分行按（父, 名, 锚页）
+  成键，同一章下的多段习题各占一行、不被本枚计数折掉（`KA-63`）。
+- `result.folded_sub_items` 是三级细目折入二级的披露面（`KA-62`）：`§` 节行之后、由确定性折法判成三级的
+  纯编号条目**不成行**，其位置由所属二级的显示段覆盖。这一位读的是「折进上一行的细目枚数」；零折入出 `0`
+  而不是缺键，与「层级越界丢弃」（`dropped_depth`）是两枚不同读数、不合并。
 - `result.outline_summary_rows` 是内容解析批次的节级总结写入计数（`KA-43`）：本次跑完有多少枚**在册目录行**
   的 `summary` 由空串变成非空。只计真正落笔的行——`confirmed=1` 的行与原值非空的行都不在面内，所以这一位读的是
   「这一批给目录补了几节导读」而不是「扫了几节」。零写入出 `0` 而不是缺键，非 `content` 批次恒 `0`。
+- `result.type_review_rows`／`result.split_exercise_rows`／`result.type_review_flags` 是 **P0 种类审校**的三枚读数（`KA-63`，仅 `content` 批次）：前者＝区间内审校过的在册目录行数，中者＝按规则拆出并新增的习题行数（`model_ref='rule:exercise_split'`、零模型调用），后者＝判不出类而未拆未改的行名数组。三键恒发（`0`／`0`／空数组）；非 `content` 批次恒 `0`／`0`／`[]`。
+- `result.point_windows`／`result.point_merges` 是点腿预算策略的两枚读数（`KA-64`，仅 `content`）：前者＝同一节点因超 10,000 字符材料预算而追加的窗口数合计（第二枚起计），后者＝合并调用组数。单窗单问的节点两键都是 `0`；非 `content` 批次恒 `0`。
+- `result.material_ranges_rows` 是点行取材区间的写入计数（`KA-66`）：本次有多少枚点行的 `meta.material_ranges` 落笔——只计真正写入的行；`full`／`exercise` 批次恒 `0`。
 - `result` 的键是闭集（`KP_RESULT_KEYS`，逐列语义见
   [database-design.md](database-design.md)「af_operations 列清单」的 `payload`/`result` 两行），失败批次没有 `result`——
   账面只在跑通的那条路上存在，失败原因在 `error`。
@@ -665,13 +722,15 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 
 ```json
 {"book_id": "mathanalysis-b05", "in_flight_batch": null, "exercise": null,
+ "stage": {"rows": 0, "endorsed_rows": 0, "blank_summaries": 0, "unlocated_rows": 0, "done": false},
  "nodes": [{"node_id": "afkp-2f1c9a7b3d10", "book_id": "mathanalysis-b05", "job_id": "a1b2c3d4e5f6",
             "node_kind": "point", "parent_id": "afkp-77aa00bb11cc", "depth": null, "order_hint": 3,
             "name": "一致收敛的判别法", "role": "core", "type": "procedure", "summary": "…",
             "must_master": ["能写出判别法的三个条件"], "key_definitions": [{"term": "一致收敛", "definition": "…"}],
+            "material_ranges": [{"page": 42, "block_indexes": [3, 4]}],
             "links": [{"kind": "prerequisite", "to": "afkp-1010…", "note": ""}],
             "anchors": [{"kind": "page_block", "page": 42, "block_indexes": [3], "snippet": "…"}],
-            "page_start": 42, "page_end": 42,
+            "page_start": 42, "page_end": 42, "start_block": 3, "end_block": null,
             "narrative_ref": "", "gen_status": "candidate", "gen_batch": "afkp-…", "model_ref": "…",
             "toc_role": "knowledge", "toc_kind": "",
             "source_book_id": "", "source_pages": [],
@@ -684,19 +743,45 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
   `blocks.json`、人工直填行无取证版本）与 `KA-3` 的锚点页未确认（页确认门启用时才产出）。
   **只标记、只点名，不改写、不删行、不拦截**。
 - 行投影不含 `norm_key` 与 `meta`：前者是去重用的派生值（冲突由 422 的点名承载），后者是扩展槽。
-- `page_start`／`page_end` 是**读时派生**的本节正文区间（`KA-42`，零 DDL、零新端点）：目录行＝起点页到
-  **下一枚在册目录行起点页 −1**（末行到 `af_books.page_count`），算式与知识点腿取材用的同一条纯函数，两处不会切出
-  两份区间；点行＝自身锚点的 min／max（把屏侧原来自算的那一步挪到服务端，读数不变）。两键可空——无锚行给 `null`，
-  `page_count` 缺时终点折回起点页。屏上「从 X 页到 Y 页」的文案与「重新解析」的起止都读这两枚，不再各自推一遍。
+- `page_start`／`page_end` 是**读时派生的显示段**（D-1~D-10，零 DDL、零新端点）：与点腿取材的取证区间
+  分家。参与行＝`gen_status='candidate'` 的目录行与点行，展示序按锚页升序、同页按 `order_hint`、父先于子；
+  一段的终点＝第一个子行的锚页 −1（无子行＝下一同级行的锚页 −1，末行到 `af_books.page_count`），
+  书前件单页、书尾附件与习题段到下一行／章末；同页由先到者占页，后到者顺延到下一页，顺延越过本章末
+  时该行两键为空。两键可空——无锚行与顺延越界的行给 `null`，`page_count` 缺时尾行终点为 `null`。
+  屏上「从 X 页到 Y 页」的文案与「重新解析」的起止都读这两枚，不再各自推一遍；取证区间（章含自己的
+  知识点页）不受影响，仍按 `KA-42` 的树序算式。存量重影目录行在切段前按与成行处同一把键折叠（`KA-61`
+  的 D-13：书序第一枚留下），所以屏上不会出现「一个前言两行」，被折的行也不占显示段。
+- `start_block`／`end_block` 是同一条派生腿上的**按块切点**（`KA-67`，零 DDL）：`start_block`＝起点页上属于本行
+  的第一块（取自该行锚的 `block_indexes`），`end_block`＝终点页上属于本行的最后一块。正文延续到下一行起始页
+  时那一页由两行按块分读——前一点止于后一点标题块之前、后一点从自己的标题块起读，同页两点因此不互相越界；
+  两端为 `null` 表示整页起／整页止。起点被游标抬到别的页时 `start_block` 也为 `null`（那一页不按块起读）。
+  屏侧只按这两枚切正文，不再自己从锚里推块号。
 - `must_master`／`key_definitions` 是点行的详情两枚读数（`KA-57`，取自 `meta` 同名两键）：后者为
   `{term, definition}` 表。章行恒为空表；坏条目在写库时已丢弃、坏值在读面归空表，点行本身不受影响。
   两枚键只供屏侧渲染，不参与去重与任何判据。
+- `material_ranges` 是点行的取材区间（`KA-66`，取自 `meta.material_ranges`）：逐项 `{page, block_indexes}`，
+  回答「这条详情读了哪几块」，供屏侧与人工复核回指源块。只为本批写成节级总结的行落笔：人已写总结或
+  `confirmed=1` 的行不挂机器读数；章行、习题行、本批未写成总结的行与 `full`／`exercise` 通路的行恒为空表；
+  坏项写库时已丢弃、坏值读面归空表；不参与去重、确认位与任何受理判据。正文内容的格式契约是「原文透传」：
+  公式保留 LaTeX 定界符、表块保留 HTML 原文、图块只给路径与题注，渲染尺寸由屏侧定（等比、不放大、`max-width: 100%`，
+  表格容器横向滚动）。
 - `source_book_id`／`source_pages` 是习题行的来源两枚读数（`KA-53`，取自 `meta` 同名两键）：习题集
   合并进教材的题行带「这题来自哪本书、哪几页」；非习题行恒空串／空表。解答页只进 `source_pages`、
   不作锚点（锚点必须与行自身取证版本同书同版，`KA-18`）。
 - `exercise` 只在习题书（独立模式）或有来源清单的书（配套模式）上有值（`KpExerciseOut`）：`kind`
   （`standalone`／`companion`）、`target_book_id`、`items`（逐题 `node_id`／题号／父行／页区间／三态
-  `status`／题包位 `pack`／确认位／来源两键）、`packs`、`pending_reparse`、`unmatched`、`done`。
+  `status`／题包位 `pack`／确认位／来源两键／配对与校验五键）、`packs`、`pending_reparse`、`unmatched`、`done`。
+- 配对与校验五键（`KA-70`，全可缺省）：`pair_state`（`matched`／`missing`／空串）、`pair_reason`
+  （中文）、`verify_state`（`done`／`failed`／空串）、`verify_verdict`（`ok`／`suspect`／`reject`／空串）、
+  `verify_note`（中文，截 300 字）。三态只披露，不改配对、不删行、不自动确认；屏侧只读不重算。
+  独立模式在答案回填后同样跑校验（`KA-70`）。
+- 配套模式的 `items[].parent_id` 是**目标教材**同号章的 `node_id`（按章号读时改挂，库行仍落本书自己的章下、教材零写入；目标书缺同号章时给本书章号）：根侧目录列的是目标书那套章，直接透传本书父行会让全册题行落成待梳理。
+- `stage` 是整本梳理完成读数（`KA-58`）：五键 `rows`／`endorsed_rows`／`blank_summaries`／
+  `unlocated_rows`／`done`，全部读时派生、零列。统计域只收 `gen_status='candidate'` 的活行里类型为
+  章或点的行（习题与「其他」两类附件不计——它们不产出总结，计入就使带章末习题的书永不完成）。
+  `done` 是三条件合取（有行 ∧ 每行有总结 ∧ 每行已确认 ∧ 未定位零枚），统计域零行或本版目录页集合
+  取不到时恒 `false`（宁可黄、不假绿）。未定位按行自身锚点与本版目录页集合读时复算（与 `KA-33`
+  的页级复核同义），**不**读批次流水的未定位清单（`KA-27`：流水只答发生过什么）。
   全部读时派生、零写库；`done` 是习题书唯一的完成读数（题行 > 0 ∧ 题包齐 ∧ 待重解析零枚），
   不复用 `stage.done`。教材行集里永不含习题行，故教材的这位恒 `null`。
 - 书目不存在 ⇒ **404**；书存在但一行梳理产物都没有 ⇒ **200 + 空 `nodes`**（「还没梳过」是合法现状）。
@@ -720,8 +805,8 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
   同一条读法承接，这里判 422 等于给「父读不到」造出第二处判据；把点挂进目录声明端点（`PUT …/kp/outline`）
   才是声明父的合法位置，那里整批查父。
 - 行不存在 ⇒ **404**；`if_rev` 不符 ⇒ **409**。写入成功回显整行，`rev` 已自增。
-- 单行回显**同样带** `page_start`／`page_end`（`KA-42`）：回显前按该书在册目录行重切一次，屏上已读到的
-  区间不会被一次人工写入抹成 `null`；改过 `anchors` 的行回显的就是改后的区间。
+- 单行回显**同样带** `page_start`／`page_end`／`start_block`／`end_block`（D-10）：回显前按该书在册目录行与点行重切一次，屏上已读到的
+  区间与按块切点不会被一次人工写入抹成 `null`；改过 `anchors` 的行回显的就是改后的区间。
 
 #### POST /api/v1/kp/nodes/{node_id}/confirm
 
@@ -743,6 +828,20 @@ ingest/chunks 透传）归根仓库的请求承载（见「验证与追溯」的
 
 人工直填行（`job_id=''`）没有取证版本，置位时只报「`job_id` 为空：该行没有取证版本，锚点页无法解释」
 这一条，不逐页刷屏。确认位只有 `confirmed` 一列，且只有这一条通路能写它（`KA-11`）。
+
+**确认即同步课后练习**：置位成功（200）后本仓向 8900 发一次
+`POST /api/v1/learn/courses/{course_id}/exercises/sync?book={book_id}`，把该书已确认的题投影进
+根侧 `qe_question`——**同步是梳理侧的终点，课后练习面只展示、不触发**。三条边界：
+
+- **只在置位时发**：撤回不搬运（取消背书不该把题送进练习，也不该回收已在册的行）；
+- **先提交再回调**：本仓的会话提交原本发生在端点返回之后，回调前显式提交，否则 8900 的供给门
+  （按 `confirmed≠0` 筛）读不到刚置位的那一行，同步白跑一趟；
+- **失败只记警告**：确认已落库不可回退，回调非 2xx／连不上／超时都不改变本次 200 与
+  `confirmed=1`（外抛 5xx 会让用户以为确认失败而反复重试）。真失败的后果只是「题还没进练习面」，
+  下一次确认或直接调同步端点即收敛。
+
+出站纪律与梳理网关（`MI-10`）一致：`trust_env=False`（8900 在回环上，交给系统代理会得到假失败），
+超时 30s。`course_id` 取 `af_books.course_id`，取不到就不同步（不猜一个空课程）。
 
 #### POST /api/v1/kp/nodes/{node_id}/summary
 
@@ -885,7 +984,8 @@ prompt，章导读另有单点生成腿 `POST …/narrative/generate`（`KA-47`�
 - 校验全部先于写入，违规 **422** 且逐条点名：`node_id` 不存在／不属于本书／不是 `depth` 合法的
   `outline` 行，`depth=1` 给了父，`depth=2` 的父不是本批的 `depth=1` 行，同一最终父下 `norm_key` 重名。
 - 重复提交同一份声明结果不变（幂等，无需 undo 端点）；响应 `outline` 按声明序回显，
-  `detached_points` 是本次退池的点行数。
+  `detached_points` 是本次退池的点行数。回显的 `page_start`／`page_end` 在**整册折叠后的在册行**上
+  切段再投影到声明子集（`KA-42`／D-10）——只拿回显的那几行切，章的终点会吞掉它点子行的页。
 
 #### GET /api/v1/books/{book_id}/kp/export
 
@@ -900,8 +1000,9 @@ prompt，章导读另有单点生成腿 `POST …/narrative/generate`（`KA-47`�
 
 - 逐行带 `rev` 与 `updated_at`：拉取方按它们做增量，服务端不记「谁拉过什么」。
 - 行投影与工作区**同一份**（`_kp_node_out`）：`must_master`／`key_definitions`（`KA-57`）与
-  `source_book_id`／`source_pages`（`KA-53`）同样透传；导出只加 `confirmed=1` 的过滤与「父先于子」
-  的排序，不另造投影，也不新增字段。
+  `source_book_id`／`source_pages`（`KA-53`）同样透传；导出不另造投影，也不新增字段。两枚显示段在
+  **整册在册行**上切：先折存量重影（`KA-61`）、再按显示段算式切、最后过滤 `confirmed=1` 并按「父先于子」
+  排序，只投影本次导出的行子集——同一行在工作区与导出面的两键逐字相同（`KA-42`／D-10）。
 - 空集是 **200 + `total: 0`**，不是 404——「这本书还没有已确认结论」是合法现状。书目不存在才 404。
 - `review_flags` 承载 `KA-3` 的外发提示：确认门是**外发**门槛，不是梳理门槛，因此只提示、不拦截。
 
@@ -1051,10 +1152,11 @@ pathlib 拼接会**折叠空段**，书目录可落在 `parsed/<course_id>/<book
 - **`af_kp` 的列域分列由请求模型承载**：人工端点的请求体里没有来源三列（`gen_batch`/`model_ref`/
   `gen_status`），批次提交端点也不带任何背书字段；确认位只有 `POST …/nodes/{node_id}/confirm` 一条
   通路能写（`KA-11`）——「谁写哪一列」在契约面上就是可写的列集合，不靠运行期判断。
-- **读取面的版本作用域只有一个入口**（`api/main.py:_read_scope`）：**读磁盘产物**的只读端点必须经它取
-  `(产物目录, job_id)`，不得自行拼 `book_dir`——否则会绕过生效指针、把 legacy 与版本视图混读。
-  纯数据库读的列表端点（`GET /api/v1/parse-jobs` 跨书枚举）不套此入口，但也**不得另造作用域判定**：
-  「哪一版生效」的事实源只有 `af_books.active_job_id` 一列，`active` 只能由它比出。
+- **读取面的版本作用域只有一个入口**（`api/main.py:_read_scope`，规则见 [PP-22](../design/parsing-pipeline.md)）：
+  **读磁盘产物**的只读端点必须经它取 `(产物目录, job_id)`，不得自行拼 `book_dir`——否则会绕过作用域解析、
+  把 legacy 与版本视图混读。纯数据库读的列表端点（`GET /api/v1/parse-jobs` 跨书枚举）不套此入口，但也
+  **不得另造作用域判定**：`pages_done` 与「生效」的事实源仍是 `af_books.active_job_id` 一列，`active`
+  自证只由它比出；读面选哪一版由 `resolve_visible_version()` 统一决定。
 - 错误响应不泄漏堆栈与凭据；模型服务不可达映射为可读中文错误信息。
 - **管理面不得透传**：`/api/v1/admin/*` 不是公共契约——8900 网关与 8903 前端不得注册、不得轮询、
   不得做成按钮；本仓库的运维通路经回环直连 8902。管理 token 绝不进任何响应、日志与异常文本（与

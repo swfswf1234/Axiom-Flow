@@ -101,9 +101,9 @@ class Settings:
     #: 梳理出站地址（R8 甲）：8900 的 `POST /api/v1/llm/text`，prompt 与调用由本仓发起、
     #: 调用账只由 8900 落一行。空值不提供——没有「不打网关」的默认形态。
     engine_gateway_url: str = "http://127.0.0.1:8900"
-    #: 一次梳理模型调用的等待预算：必须长于 8900 自己的调用预算（现网 300s），否则慢模型的
-    #: 合法回复被本侧先掐掉，读成「这一节没产物」。
-    kp_timeout: int = 360
+    #: 一次梳理模型调用的等待预算：与 8900 自己的调用预算同值（`QED_LLM_TIMEOUT`＝600s），
+    #: 不留余量差；两侧谁先改都要一起改，否则慢模型的合法回复会被一侧先掐掉，读成「这一节没产物」。
+    kp_timeout: int = 600
     db_host: str = "127.0.0.1"
     db_port: int = 3306
     db_name: str = "qed"
@@ -142,7 +142,7 @@ _ENV_MAP = {
     "AXIOM_MAX_REGIONS_PER_PAGE": ("max_regions_per_page", partial(_to_int, default=16)),
     "AXIOM_KP_ENGINE": ("kp_engine", str),
     "QED_ENGINE_GATEWAY_URL": ("engine_gateway_url", str),
-    "AXIOM_KP_TIMEOUT": ("kp_timeout", partial(_to_int, default=360)),
+    "AXIOM_KP_TIMEOUT": ("kp_timeout", partial(_to_int, default=600)),
     "QED_DB_HOST": ("db_host", str),
     "QED_DB_PORT": ("db_port", partial(_to_int, default=3306)),
     "QED_DB_NAME": ("db_name", str),

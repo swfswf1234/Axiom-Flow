@@ -1,9 +1,9 @@
 # 解析页区域驱动重解析与块结构编辑承接实施（parsing-region-edit）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-10-22
-关联 ADR：[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、解析管线归本仓库；R1/R5 改动均在管线与归一化面，不触碰引擎选型）、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)（**Accepted 2026-09-29**：页框图是页级解析输入、不是版本内覆盖层——决定 R2/R3 的落库作用域与 R1 的调用形态；同批裁决 legacy 拒绝结构操作、合并归 8902）、[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（**承载随步**：`af_page_regions`／`af_block_edits` 折叠为 `af_operations` 的 `structure`／`edit` 意图行，ADR 0010 的不变式原样保留）
+最后更新：2026-11-23
+关联 ADR：[ADR 0006](../../../adr/0006-ledger-plan-carrier-contract.md)（一任务一承载）、[ADR 0004](../../../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、解析管线归本仓库；R1/R5 改动均在管线与归一化面，不触碰引擎选型）、[ADR 0010](../../../adr/0010-page-regions-are-parse-inputs.md)（**Accepted 2026-09-29**：页框图是页级解析输入、不是版本内覆盖层——决定 R2/R3 的落库作用域与 R1 的调用形态；同批裁决 legacy 拒绝结构操作、合并归 8902）、[ADR 0016](../../../adr/0016-af-family-rebuild-into-four-tables.md)（**承载随步**：`af_page_regions`／`af_block_edits` 折叠为 `af_operations` 的 `structure`／`edit` 意图行，ADR 0010 的不变式原样保留）
 关联设计：`docs/design/parsing-pipeline.md`（页解析单元与 normalize 块类型）、`docs/design/parsing-management.md`（af_* 块编辑覆盖层，R1/R2/R3 落点）；根仓库权威上下文（只读）：`QED-Engine/docs/plans/2026-09-26-req098-parsing-region-edit-typography-axiom-flow-request.md`（请求原文）、`QED-Engine/docs/design/parsing-ui.md`（消费界面现状）
 关联 Tracker：docs/trackers/todo.md（PLAN-018 行；本任务唯一台账行，根侧请求号 REQ-099 只作来源标注，不单独立行）
 归档判定：Retain（含 R1~R6 逐条回执与实施锚点，作根仓库 REQ-099 回执关闭证据）
@@ -13,7 +13,7 @@
 > （本文件名保留请求期 slug 以维持根侧引用）。白名单/守护同步：本壳 + todo 单行（PLAN-018）即 PLAN-018
 > 承接第一步，`test_plan_governance.py` / `test_tracker_governance.py` 以本壳现状为基准。
 >
-> **承载随步（2026-10-22，[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)／PLAN-024 W7）**：
+> **承载随步（2026-10-22，[ADR 0016](../../../adr/0016-af-family-rebuild-into-four-tables.md)／PLAN-024 W7）**：
 > 本文的 `af_page_regions` 已由 `af_operations` 的 `op_kind='structure'`、`lifecycle='intent'`、
 > `job_id=''` 行逐列承接（`region_id` 原值落 `target_id`，派生式一字未改，根侧长期定位键不因换表失效）；
 > `af_block_edits` 由 `op_kind='edit'` 意图行承接，四个坐标列同名、定位与幂等改由 `intent_key` 唯一键
@@ -21,6 +21,25 @@
 > S1~S7 判据全部按原语义继续有效，只是承载表名换了，且 W2 的测试文件
 > `tests/unit/test_db_page_regions.py` 已随折叠并入 `tests/unit/test_db.py`。迁移链已随档 B 重置为
 > 唯一 base `20261022_0001`，本文的 `20260926_0002` 等 revision 号属当时的执行记录，不再可执行。
+>
+> **2026-11-02 任务清理轮（v1.0 节逐行核对后的本壳随步；零 `src/`/`tests/` 改动）**：三处随步——
+> ① **W8 确认门的现状与措辞改判**（用户裁决「先改判据措辞，不动码」）：`af_pages.confirm_state`
+> 与 `op_kind='confirm'` 均**在册无写者**，梳理侧的「门未启用」已是显式常量而非隐含假设，S7 判据
+> 本身不改（它是根侧 REQ-099 的验收面），改的是消费侧 `KA-3` 那条析取支的**措辞**；② **真机面
+> 移交**＝本壳 W1 的「画 3 框→恰 3 块」按框实测与 PLAN-019 W9 的签名/清单读数合并到
+> [PLAN-027](../2026-11/2026-11-01-kp-real-machine-window-closeout.md) 的同一枚 D 类窗口顺带取证（省一次
+> MinerU 起服）；③ 偏差表 D7 的「业务库迁移未执行」登记补现状（该对象已随档 B 整族重建消失）。
+> **本文各落地小节（W1 落地结论、W2 偏差登记、2026-10-03 业务库窗口）的落地叙述与 revision 号
+> 属当时的执行记录，不追改。**
+>
+> **2026-11-23 收尾结论（用户口述真机验收，按例外关闭）**：用户明确答复「真机验证通过，真实链路已经完成功能
+> （不是通过这个途径），开始收尾」，并在核验问答中选定该口径。此前逐项核验显示：W1/W2 有本地代码与守护证据；
+> W3/W5/W7/W8/W6 在本仓承载面无独立落码、无回执正文，且 S7 确认门在代码中显式
+> `PAGE_CONFIRM_GATE_ENABLED = False`。用户口述的真机验收**不走本仓台账取证途径**（其取证在真实链路侧完成，
+> 本仓无读数文件），据此按 [任务生命周期](../../../standards/task-lifecycle.md) 的「用户是唯一决策者」收口：本壳终态
+> `Completed`，关闭结果按用户口述判 `Achieved`；台账中的 W3/W5/W7/W8 以壳内 2026-11-02 现状与本次用户裁决为
+> 准，不伪造本仓实现读数。本地全量门禁 `pytest tests -q` **1729 passed / 18 skipped**、
+> `ruff check src tests` **All checks passed**（2026-11-23 复跑）。**未执行 git 提交/推送/打标签**。
 
 ## 目标与成功标准
 
@@ -57,7 +76,7 @@
    `parse_page(image_bytes, page_no)`，`engines/mineru.py` 的提交字段只含产物开关 `_OUTPUT_FLAGS`
    加窗口 `start_page_id`/`end_page_id`。因此「IoU 调和引擎检测块」满足不了 S1 的「文字=框内取字」
    （引擎漏检的框出不了字），区域驱动解析定为**管线侧框内裁剪、每框一次 `parse_page`**
-   （[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 4）。成本必须入契约：每次调用
+   （[ADR 0010](../../../adr/0010-page-regions-are-parse-inputs.md) 决定 4）。成本必须入契约：每次调用
    独立计 `AXIOM_OCR_TIMEOUT` 且过单一占用闸门 ⇒ 设**单页框数上限**并在受理前判 422，非法请求
    不打模型（与 PLAN-007 的窗口分块同一纪律）。
 2. **R2 落库作用域＝页级新表（ADR 0010 决定 1/2）**：`af_page_regions` 唯一键
@@ -65,11 +84,11 @@
    （页级=人的意图跨版本，版本级=人对结果的判定不跨版本）。Alembic 迁移须**接在 PLAN-017 的迁移
    合入之后**（判例：并行同链并写必撞版本号）。**2026-09-29 更新**：PLAN-017 迁移已合入，
    现 head 含 `20260926_0001`；按 Q5 裁决，W2 加表动作的前置＝
-   [PLAN-020](../history/plans/2026-09/2026-09-29-af-table-family-governance.md)（表族措辞收口）关闭；真实库 `qed` 上的
+   [PLAN-020](2026-09-29-af-table-family-governance.md)（表族措辞收口）关闭；真实库 `qed` 上的
    `upgrade` 属 D 类，另待窗口批准。
 3. **R3 是新的读契约**：现状 `GET /books/{id}/pages/{no}` 把 `blocks` 与 `edits` 并列返回、合并由
    读取方完成（`api/main.py:get_page`）。区域视图要求**服务端投影合并**（人工区域 + 生效版本块 +
-   pending/已删除标记），须先改 [api.md](../architecture/api.md) 条文再动实现，并与根侧 8903 的
+   pending/已删除标记），须先改 [api.md](../../../architecture/api.md) 条文再动实现，并与根侧 8903 的
    消费口径同步。
 4. **R4 不新增块类型（判据来自 PP-7/PP-9）**：`BlockType` 固定十种是契约（`schemas.py`），新增
    TOC 枚举要改 `normalize/blocks.py:_TYPE_MAP`，按 PP-9「映射表与产物成对」会使 `index` 语义漂移、
@@ -83,6 +102,7 @@
    需重解析才见效；原「与 ARCH-011 产物重建批量窗口同批出效」的约束随该行 2026-09-30 关闭而
    失效（改判正文＝[PLAN-009](2026-09-22-v1-parsing-knowledge-optimization.md) 承载 ARCH-011 节的「真机取证改挂」表），见效随用户按需解析逐本自然发生。根侧消费端
    （REQ-098 W4/W5）就绪与否不阻塞本壳；R1~R3 承接前根侧按降级口径执行。
+
 ## 勘察与裁决登记（2026-09-26）
 
 | # | 结论 | 直证 |
@@ -105,15 +125,16 @@
 | Q2 | `AXIOM_MAX_REGIONS_PER_PAGE`＝**16** 定判 | 进 `config.py`；W1 首次真机按原案计时复校 |
 | Q3 | legacy（无生效版本）下 add/delete/merge **一律拒绝**，不以根视图产物作锚定回落；旧版本目录只在激活确认后删除 | 比本壳原建议更严——草案 C 错误段与草案 F 状态码表按此改写；Q3 原「add 允许」的建议作废 |
 | Q4 | 下标↔`region_id` 翻译**归本仓**（受理时换算几何锚，响应回 `region_id`） | 草案 C/`BlockLocator` 形状保持，根侧前端后置改造 |
-| Q5 | 全仓「四表」措辞 64 处**不随 W2 改**：先另立 [PLAN-020](../history/plans/2026-09/2026-09-29-af-table-family-governance.md)（`af_*` 表族措辞收口 + 守护断言），单独 todo 行评审通过后才允许加表 | W2 与迁移 `20260926_0002` 新增前置＝PLAN-020 关闭 |
+| Q5 | 全仓「四表」措辞 64 处**不随 W2 改**：先另立 [PLAN-020](2026-09-29-af-table-family-governance.md)（`af_*` 表族措辞收口 + 守护断言），单独 todo 行评审通过后才允许加表 | W2 与迁移 `20260926_0002` 新增前置＝PLAN-020 关闭 |
 | 确认门 | 「每页人工确认门」自 PLAN-019 P3 **移入本壳 W8**（单侧登记，PLAN-019 壳不动，口径以本壳为准） | 判据表新增 S7；工作项新增 W8；ARCH-022 台账行同步注记 |
+
 ## 对接口径与契约草案（2026-09-26，Draft 未晋升）
 
 本节是 R1~R3 契约的**唯一承载处**。`architecture/api.md`、`architecture/database-design.md` 与
 `design/` 由三条形状守护钉住（见第 8 节）：未挂载的路由进端点总表＝文档虚报，未建的表进列清单＝
 对账失败。故全部条文以草稿形态在此评审，评审通过并确认
-[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 后按
-[ADR 0002](../adr/0002-pending-design-location.md) 随实施轮晋升。
+[ADR 0010](../../../adr/0010-page-regions-are-parse-inputs.md) 后按
+[ADR 0002](../../../adr/0002-pending-design-location.md) 随实施轮晋升。
 根侧上下文为只读直证：`QED-Engine/docs/plans/2026-09-26-req098-parsing-region-edit-typography.md`
 （下称**根壳**）与 `QED-Engine/docs/architecture/api-contracts.md`。
 
@@ -148,7 +169,7 @@
 索引 `ix_af_page_regions_page (book_id, page_no, op)`；唯一性由三列主键承载。
 
 **不变式（须与列清单同批进 database-design）**：本表**无 `job_id` 列**——区域是页级解析输入
-（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 1），与 `af_block_edits`（版本级
+（[ADR 0010](../../../adr/0010-page-regions-are-parse-inputs.md) 决定 1），与 `af_block_edits`（版本级
 人工判定，唯一键含 `job_id`、PP-9）正交：前者跨版本存活人的意图，后者不跨版本。
 
 迁移：`20260926_0002_page_regions`，`down_revision = '20260926_0001_ingest_metadata_columns'`
@@ -299,7 +320,7 @@ class RegionView(BaseModel):
 | Q2 | `AXIOM_MAX_REGIONS_PER_PAGE` 取值 | 草案 16。判据：框数 × 单框 `AXIOM_OCR_TIMEOUT` + 闸门等待（900s 上限）须落在一个真机窗口可接受时长内；取值随 W1 首次真机计时复校 |
 | Q3 | 无生效版本指针（`af_books.active_job_id` NULL = legacy 根视图）时的结构操作 | `add` 允许（不依赖产物）；`delete`/`merge` 需锚定生效块。legacy 作用域**有**根视图产物且 `GET pages/{no}` 可读 ⇒ 建议允许锚定（与读面同构，避免「能看不能改」），仅版本自证类端点（manifest）在 legacy 维持 404 |
 | Q4 | 下标 ↔ `region_id` 翻译归谁 | **归本仓**（草案 C）：接受根侧现有 `deleted:number[]`/`merged:number[][]` 下标形态作为定位入参，落库时换算为几何锚；响应回 `region_id`，根侧前端可后置改造 |
-| Q5 | `af_*` 表数 4→5 的措辞同步面（见第 11 节，非归档面 64 处）是否随 W2 同批 | 建议**先收口措辞再加表**：散文改称「`af_*` 表族」、张数只留在三处权威口径并加守护，否则每次加表都要改 60+ 处。同批做＝一个大 diff；分批做＝W2 前先立一行治理支线 |
+| Q5 | `af_*` 表数 4→5 的措辞同步面（见第 11 节，非归档面 64 处）是否随 W2 同批 | 建议**先收口措辞再加表**：散文改称「`af_*` 表族」、张数只留在三处权威口径并加守护，否则每次加表都要改 60+ 处。同批做＝W2 前先立一行治理支线 |
 
 ### 10. 根侧待办（随 S-7 回执一并交付）
 
@@ -333,19 +354,18 @@ class RegionView(BaseModel):
 
 ## 工作项
 
-
 | # | 工作项（=根侧请求 R1~R6 + 回执） | 状态 |
 | --- | --- | --- |
 | W0 | 承接登记：本壳正规化 + todo 单行（PLAN-018，证据列带 **请求接收（根仓库）** 标记并注根侧请求号 REQ-099），契约测试绿 | 完成 2026-09-26 |
-| W0.5 | 源码勘察（K1~K5 入壳）+ [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 立稿：区域=页级解析输入、每框一次单页提交、R4 不新增枚举 | 完成 2026-09-26（ADR 待用户确认） |
+| W0.5 | 源码勘察（K1~K5 入壳）+ [ADR 0010](../../../adr/0010-page-regions-are-parse-inputs.md) 立稿：区域=页级解析输入、每框一次单页提交、R4 不新增枚举 | 完成 2026-09-26（ADR 待用户确认） |
 | W0.6 | 对接面梳理与契约草案入壳（本节：两侧对账 + 草案 A~F + 晋升守护 + Q1~Q5 待定口径 + 表族同步面） | 完成 2026-09-26（草案待用户审；**未晋升** architecture/ 与 design/） |
-| W1（R1） | 区域驱动页解析：按前置 1 逐框裁剪提交 `parse_page`，一框一块；含单页框数上限与受理前 422、无框时的默认检测退化路径；调和策略（空隙归属、框内多检测块归一）写入 `parsing-pipeline.md` | 完成 2026-10-15（六条裁决见「W1 实施前梳理与裁决定判」节；受理门与执行面交付、偏差与守护面见「W1 落地结论」；真机 S1 实测留消费侧批次，W8 确认门不改） |
+| W1（R1） | 区域驱动页解析：按前置 1 逐框裁剪提交 `parse_page`，一框一块；含单页框数上限与受理前 422、无框时的默认检测退化路径；调和策略（空隙归属、框内多检测块归一）写入 `parsing-pipeline.md` | 完成 2026-10-15（六条裁决见「W1 实施前梳理与裁决定判」节；受理门与执行面交付、偏差与守护面见「W1 落地结论」；真机 S1 实测留消费侧批次，W8 确认门不改）。**2026-11-02 真机面移交**：本壳的「画 3 框→恰 3 块」按框实测并入 [PLAN-027](../2026-11/2026-11-01-kp-real-machine-window-closeout.md) 的同一枚 D 类真机窗口顺带取证（与 PLAN-019 W9 合轮，省一次 MinerU 起服）；原挂本壳的 PLAN-017 真机项②「激活即删被替换旧版本」实测随之同处取证。执行与排期属 D 类，由用户发令 |
 | W2（R2） | `af_page_regions`（页级、不绑 `job_id`）+ 删除/合并/新增区域 API；`af_block_edits` 语义不动；迁移 `20260926_0002` 接现 head 之后 | 完成 2026-10-01（前置：PLAN-020 于 2026-09-29 关闭放行建表，以其「新表结构与表族关联」节为准。交付面、守护、状态码定判与偏差登记见「W2 落地结论与偏差登记」节；业务库迁移待 D 类窗口） |
 | W3（R3） | 页数据返回服务端投影的区域集合（几何/来源/pending/已删除标记）；先改 `api.md` 条文再实施 | 待开始 |
 | W4（R4） | 目录以**可消费属性/分诊标记**承接（不新增 `BlockType`），归 ARCH-025 与 PLAN-009 P3 长线 | 长线（移出本壳实施） |
 | W5（R5） | 节题判定启发式修正（归一化侧，index 安全）＋双栏取字完整性：先取证定位根因再定层面 | 待取证 |
 | W7（R6） | 未完成页能力（根侧 2026-09-28 增补）：`skip_parsed` 参数或页状态清单视图二择一，形态本仓定；与 W1 任务面同批裁决（`ParseJobCreate` 现仅 book_id/pages/engine） | 待开始 |
-| W8（确认门） | 每页人工确认门（2026-09-29 裁决自 PLAN-019 P3 移入本壳，单侧登记）：确认态落 `af_pages`（DB 单源）、chunk 重建只聚合已确认页、三形态齐备（单页/页区间/按页重解析回未确认）、写入走管理面 token 口径（判例同 PLAN-010）、系统不得自动整本背书 | 待开始（契约草案随 W3 轮） |
+| W8（确认门） | 每页人工确认门（2026-09-29 裁决自 PLAN-019 P3 移入本壳，单侧登记）：确认态落 `af_pages`（DB 单源）、chunk 重建只聚合已确认页、三形态齐备（单页/页区间/按页重解析回未确认）、写入走管理面 token 口径（判例同 PLAN-010）、系统不得自动整本背书 | 待开始（契约草案随 W3 轮）。**2026-11-02 现状与措辞改判（用户裁决＝先改判据措辞，不动码）**：承载位已在册而**两端皆无写者**＝`af_pages.confirm_state`（`models.py:240`）＋ `op_kind='confirm'`（`repositories.py:6-9` 明列「五个值建值不建写者，与 `embedding_signature` 同处置」）⇒ 消费侧梳理通路**当前不过确认门**，且这不是隐含假设而是显式常量 `PAGE_CONFIRM_GATE_ENABLED = False`（`repositories.py:108-111`，消费点 `repositories.py:1546`、`orchestrator/knowledge.py:2552`，反向判据在 `tests/unit/test_db_knowledge.py:603,618`）。S7 判据**不改**（根侧 REQ-099 验收面），改判的是 `KA-3` 第二析取支的**措辞**：由「或每页已确认」式的读法改为明文「**本轮门未启用，只按生效版本判**」——该措辞的正本在 `docs/design/knowledge-analysis.md`，现被并发批次改动中，故本轮只在此登记裁决与去处，改判随该批提交后落地 |
 | W6 | 回执根仓库 REQ-099：逐条接受/改造/拒绝 + 排期成文；实施后同步锚点（commit sha）、门禁读数与 S 判据逐条判定 | 待开始 |
 
 ## W2 落地结论与偏差登记（2026-10-01）
@@ -378,7 +398,7 @@ class RegionView(BaseModel):
 - 定位违规（三选一给多或给少、`region_id` 不在本页、`bbox` 形状非法、块下标越界、合并成员少于 2）⇒ 400；
 - legacy 无生效版本 ⇒ 404 一律拒绝（ADR 0010 决定 7）。
 
-[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 4 的「受理前判 422」作用域是**提交面**
+[ADR 0010](../../../adr/0010-page-regions-are-parse-inputs.md) 决定 4 的「受理前判 422」作用域是**提交面**
 （`POST /api/v1/parse-jobs` 的框数上限，防请求打到模型），随 W1 落；本端点不调模型服务，不占该档。
 实施中一度把上述两项误判成 422（把决定 4 当成了全链路口径），已回退并同步 `api.md` 端点小节、
 状态码总表两行与两条契约用例。
@@ -393,7 +413,7 @@ class RegionView(BaseModel):
 | D4 | 状态码归属采草案 C/F（400 超上限 / 404 页不存在），非 422 | 见上一小节；`api.md` 端点小节与状态码总表、`TestStructureEndpoint` 两条用例同批 |
 | D5 | admin 删除面常量改名 `_AF_TABLE_MODELS`（原 `_FOUR_TABLES`） | PLAN-020 晋升守则「表张数不是散文事实」：名称随表族派生，并有禁逐字表名守护 |
 | D6 | 集成层把迁移 head 断言由写死 `20260926_0001` 改为 `_head_revision()` 派生 | 写死序号在加迁移时假红/假绿；派生后「夹具漏跑最新迁移」才是它抓的漂移 |
-| D7 | 业务库 `20260926_0002` 未执行，head 停在 `20260926_0001` | D 类窗口按用户排期执行；`database-design.md` 迁移现状段、`api.md`/ADR 0010 元数据、`overview.md` 能力矩阵四处一致标注「待真机窗口」 |
+| D7 | 业务库 `20260926_0002` 未执行，head 停在 `20260926_0001` | D 类窗口按用户排期执行；`database-design.md` 迁移现状段、`api.md`/ADR 0010 元数据、`overview.md` 能力矩阵四处一致标注「待真机窗口」。**2026-11-02 现状随步（本行只作当时登记，不再是被追办的待办项）**：该差异已于 2026-10-03 的 D 类窗口执行（见下节），随后又随 PLAN-024 档 B **整族重建**失效——两库 `af_*` 现由唯一 base `20261022_0001` 重建，`20260926_*`／`20260928_*` 三枚 revision 物理不存在，业务库 `qed` 按用户口径继续保持空。活文档的迁移现状以 `database-design.md` 与 `project-status.md` 为唯一登记处 |
 
 ### 遗留（不在 W2 面）
 
@@ -439,7 +459,7 @@ class RegionView(BaseModel):
 | --- | --- | --- |
 | W1-1 | bbox 映射链：裁剪与**平移回原页图坐标全部在 pipeline 侧**，`normalize_page` 不改（按裁剪图尺寸映射后加裁剪原点偏移） | 引擎回「相对所提交图」的 `normalized_1000`（`mineru.py:37-39`、PP-8）；PP-21 |
 | W1-2 | 区域驱动页块集：**只提交框内、不整页检测**，一框至多一块、框间空隙不成块；写面只消费 `op=add`，delete/merge 属读投影（W3） | ADR 0010 决定 4；S1「画 3 框→恰 3 块」；PP-21 |
-| W1-3 | 闸门粒度＝**逐框过闸门**（每框都是独立模型提交，占用可能在框间变化，与 PP-11 窗口间探活同纪律） | 前置 1「每框…各过一次闸门」原文；失败语义表新行 |
+| W1-3 | 闸门粒度＝**逐框过闸门**（每框都是独立的模型提交，占用可能在框间变化，与 PP-11 窗口间探活同纪律） | 前置 1「每框…各过一次闸门」原文；失败语义表新行 |
 | W1-4 | 全本（`pages` 缺省）命中带框页：**剔出解析窗口、按逐页区域驱动路由**，窗口切分只对无框页 | `pipeline.py:497-521` 两路径结构支持；`api.md` 区域驱动段 |
 | W1-5 | 与 PLAN-019 受理门接线：**W1 框数 422 门独立先挂**（插在页码越界后、引擎名解析前）；PLAN-019 W3 挂 `decide_rerun` 受理门时**必须把「目标页有人工区域意图」并入判定**——区域变化不在签名冻结输入集内，不处理则「改框后全本重解析」被 `up_to_date` 拒跑，S1 跨版本判据不可达。该相互作用登记于此，作为 PLAN-019 W3 的前置注记 | `api/main.py:639-664` 现门槛；`orchestrator/signature.py:31-37` 冻结输入集 |
 | W1-6 | 单框失败语义：重试 1 次仍 `EngineError` → **整页判 `failed`**（错误文本带框序与 `region_id`），不落缺框半页 | 与 `_mark_failed` 页级语义一致（`pipeline.py:453`）；PP-21 失败域段 |
@@ -464,11 +484,10 @@ class RegionView(BaseModel):
   折算成点，小框折算成零尺寸致写图失败，改为**像素→点比例折算 + 逆向缩放**裁剪，逐像素对齐。
 - 守护面：`tests/unit/test_orchestrator.py::TestRegionDrivenParse` 11 例；PP-21/ADR 0010 的「待实施」
   注记撤除，`code-map.md` orchestrator 两行挂 PP-21。
-- 未做（不属 W1 完成判据）：真机 S1 实测（「画 3 框→恰 3 块」经 MinerU）、`regions` 读投影（W3）、
-  W8 确认门。
+- 未做（不属 W1 完成判据）：真机 S1 实测（「画 3 框→恰 3 块」经 MinerU，2026-11-02 起取证位＝
+  PLAN-027 的 D 类真机窗口）、`regions` 读投影（W3）、W8 确认门（现状与措辞改判见 W8 行）。
 
 ## 验证与验收
-
 
 - TDD：每项先红后绿；区域驱动解析与结构编辑的契约测试进 `tests/contract/`；
   单测只用临时目录，禁读写真实数据根（ADR 0009）。
@@ -485,8 +504,8 @@ class RegionView(BaseModel):
 ## 关闭与归档
 
 - 关闭条件：R1~R6 逐条回执成文（W6）且 R1~R3 达成 S1~S3 联调通过、S7 确认门达成；
-  R4/R5 若判长线，
-  回执注明后转 ARCH-025 滚动壳跟踪，不阻塞本壳收口。
-- 按 ADR 0006 六步收口（结论入本壳→todo 单行关闭→completed.md→plans/index 无需登记
-  （索引导航制）→project-status 刷新→门禁全绿）。
-- 归档判定 Retain：本壳随回执归档（根侧 REQ-099 关闭证据引用其回执与锚点）。
+  R4/R5 若判长线，回执注明后转 ARCH-025 滚动壳跟踪，不阻塞本壳收口。
+- 按 ADR 0006 六步收口（结论入本壳→todo 单行关闭→completed.md→plans/index 登记 Retain→
+  project-status 刷新→门禁全绿）：**2026-11-23 已执行**，结论入本壳「收尾结论」段；
+  todo 单行迁出、completed.md 登记、plans/index 登记、project-status 刷新与门禁全绿均已落地。
+- 归档判定 Retain：本壳随回执归档至本文件（根侧 REQ-099 关闭证据引用其回执与锚点；本次按用户口述真机验收关闭，证据来源如实登记在收尾结论）。

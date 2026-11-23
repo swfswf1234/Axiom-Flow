@@ -33,9 +33,22 @@ LLM_CALL_ENDPOINT = "text"
 KP_LEDGER_TASK = "kp-curation"
 
 #: `step` 只允许梳理管线的真实调用腿名（`KA-22` 两阶段；目录阶段自 `KA-35` 起是三条腿：判页／逐页整理／
-#: 坏行核对，`KA-37`／`KA-38`），域外即拒。单一 `outline` 已随确定性目录一并退役——一条名字盖不住
-#: 三种调用形状，账面就答不出「这一轮目录是哪几页抄来的」。
-KP_LEDGER_STEPS: tuple[str, ...] = ("toc_pages", "toc_entries", "toc_verify", "points")
+#: 坏行核对，`KA-37`／`KA-38`；逐页判页腿 `toc_page` 自 PLAN-031 P-2 起把「判定＋同页条目」并成一笔），
+#: 域外即拒。单一 `outline` 已随确定性目录一并退役——一条名字盖不住三种调用形状，账面就答不出
+#: 「这一轮目录是哪几页抄来的」。点／章／题三条内容腿各自一笔（`KA-64`／`KA-65`／`KA-53`）；
+#: 习题集书目匹配腿（REQ-161 W4）与逐题读数腿（W5）也是模型调用，各自一笔，不并进别的腿。
+KP_LEDGER_STEPS: tuple[str, ...] = (
+    "toc_pages",
+    "toc_page",
+    "toc_entries",
+    "toc_outline",
+    "toc_verify",
+    "points",
+    "chapter",
+    "exercise",
+    "exercise_match",
+    "exercise_classify",
+)
 #: `status` 用根侧的两形：成功一行、失败一行，失败原因进 `error`。
 KP_LEDGER_STATUSES: tuple[str, ...] = ("success", "error")
 #: `mode` 的取值域来自根侧 DDL 注释（api＝经 8900 网关，local＝直连厂商）。

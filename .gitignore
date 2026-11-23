@@ -22,6 +22,11 @@ venv/
 !.qoder/skills/
 !.qoder/settings.json
 
+# DSH 工作区：技能正本（DSH 扫描 rank 100＝<项目根>/.dsh/skills）入库，其余本机面继续忽略。
+# 与 .qoder/ 同一形态：目录模式必须写成内容模式，否则被排除目录的子项无法重新纳入。
+.dsh/*
+!.dsh/skills/
+
 # Project data
 data/
 logs/

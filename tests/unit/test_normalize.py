@@ -18,21 +18,39 @@ from axiom_flow.normalize.furniture import (
     strip_furniture,
 )
 from axiom_flow.normalize.toc import (
+    CONTENT_INPUT_BUDGET_CHARS,
+    CONTENT_MERGE_FLOOR_CHARS,
     TOC_PAGE_SAMPLE_MAX_CHARS,
     TOC_PAGE_SCAN_LIMIT,
     BodyNameIndex,
+    KindFlag,
+    KindReviewRow,
+    KindSplit,
+    MaterialBlock,
+    PointSection,
     TocEntry,
     anchor_block_for_name,
+    chapter_material_blocks,
     clean_entry_rows,
+    entry_level,
     estimate_print_offset,
     exercise_entries,
     exercise_item_entries,
+    fold_numbered_sub_items,
     is_exercise_label,
+    is_toc_marker_line,
+    kind_review,
     locate_entries,
+    normalize_entry_levels,
+    page_full_text,
     page_sample_text,
     pick_in_window,
+    plan_point_calls,
     reference_role_for_name,
+    select_material_blocks,
     toc_entries,
+    toc_entries_across_pages,
+    toc_marker_pages,
 )
 from axiom_flow.schemas import Block, BlocksPage, BlockType
 
@@ -940,6 +958,31 @@ class TestTocEntries:
         """单枚句点不是引导符：`RIEMANN-STIEI.` 的名字末尾一概不碰（清洗只认引导点串）。"""
         assert clean_entry_rows(["第6章 RIEMANN-STIEI."]) == [("第6章 RIEMANN-STIEI.", None)]
 
+    def test_bare_page_numbers_and_running_headers_never_join_an_entry(self):
+        """碎行先于折行拼回被剔掉（W3）：光秃秃的页码与目录书眉留下就会粘进下一条名字。"""
+        assert clean_entry_rows(["12", "目录", "第1章 集合论 …… 1"]) == [("第1章 集合论", 1)]
+        assert clean_entry_rows(["目录（续）", "第2章 实数与极限 …… 49"]) == [("第2章 实数与极限", 49)]
+
+    def test_a_leader_run_inside_a_name_folds_to_one_space(self):
+        """名字内部的引导点串是排版而不是名字（`第1章……集合论`）：折成单个空格，两腿同一判据。"""
+        assert clean_entry_rows(
+            ["第1章……集合论 …… 1", "第2章····实数与极限 …… 49", "第3章....单调序与级数 …… 69"]
+        ) == [
+            ("第1章 集合论", 1),
+            ("第2章 实数与极限", 49),
+            ("第3章 单调序与级数", 69),
+        ]
+
+    def test_single_symbols_inside_a_name_are_left_alone(self):
+        """反向判据（W3）：`2.10` 的句点、`ε-δ` 的连字符、`a·b` 的点号都是名字本身，单枚一律不动。"""
+        assert clean_entry_rows(
+            ["2.10 一致连续 …… 3", "ε-δ 语言 …… 4", "a·b 的运算 …… 5"]
+        ) == [
+            ("2.10 一致连续", 3),
+            ("ε-δ 语言", 4),
+            ("a·b 的运算", 5),
+        ]
+
 
 class TestPrintOffsetAndLocating:
     """印刷页码永不进锚点：先用众数标定本书偏移，再逐条只认窗口内的命中。"""
@@ -1065,6 +1108,48 @@ class TestPrintOffsetAndLocating:
             ("3 完备性", True),
         ]
 
+    def test_an_inline_formula_in_the_body_heading_still_matches_the_entry(self):
+        """正文把目录里的 `n` 排成行内公式（`$n$`）：折过公式壳再比前缀（真机 b12 第 161 条）。
+
+        编号里的点不参与折叠——`2.10` 与 `210` 的边界由折後仍保留的句点守住。
+        """
+        entries = (
+            TocEntry(name="第1章 多元函数", printed_page=1, level=1, block_index=0),
+            TocEntry(name="第2章 极限", printed_page=2, level=1, block_index=0),
+            TocEntry(name="161. n 维算术空间", printed_page=293, level=2, block_index=0),
+        )
+        body_pages = (
+            _paragraph_page(45, "第1章 多元函数\n正文。"),
+            _paragraph_page(46, "第2章 极限\n正文。"),
+            _paragraph_page(337, "161. $n$ 维算术空间 转移到 $n$ 个自变量的函数。"),
+        )
+
+        located = locate_entries(entries, body_pages).entries
+
+        assert [(item.page_no, item.located) for item in located] == [(45, True), (46, True), (337, True)]
+
+    def test_a_number_the_toc_lost_inside_a_formula_still_lands(self):
+        """目录把编号排进公式、OCR 连编号一起吃掉时，正文标题仍带 `150.`：剥正文引导编号再比。
+
+        窗口外的回声照旧不算（第二条正文在偏移对不上的页），假锚比缺锚难发现。
+        """
+        entries = (
+            TocEntry(name="第1章 多元函数", printed_page=1, level=1, block_index=0),
+            TocEntry(name="第2章 极限", printed_page=2, level=1, block_index=0),
+            TocEntry(name="$\\frac{0}{0}$ 型不定式", printed_page=266, level=2, block_index=0),
+        )
+        body_pages = (
+            _paragraph_page(45, "第1章 多元函数\n正文。"),
+            _paragraph_page(46, "第2章 极限\n正文。"),
+            _paragraph_page(20, "150. $\\frac{0}{0}$ 型不定式在别处的回声。"),
+            _paragraph_page(310, "150. $\\frac{0}{0}$ 型不定式 我们现在应用导数概念来定不定式的值。"),
+        )
+
+        located = locate_entries(entries, body_pages).entries
+
+        assert located[2].located
+        assert located[2].page_no == 310
+
 
 class TestTolerantBodyMatch:
     """`KA-49`／`KA-50`：第一遍前缀查不中的条目再过一趟容错比对，名字取正文那一行。
@@ -1144,6 +1229,13 @@ class TestTolerantBodyMatch:
         index = BodyNameIndex([_paragraph_page(79, "函数的极限与连续")])
 
         assert index.find("函数的极限") == ()
+
+    def test_an_index_line_is_never_a_title_candidate(self):
+        """索引行 `阿基米德公理, 5` 是「名字＋页码」而不是正文标题（真机 b12）：容错腿认了它，
+        `KA-50` 就把目录行 `5. 阿基米德公理` 换成索引行原文，行名成了「名字, 页码」。"""
+        index = BodyNameIndex([_paragraph_page(531, "阿基米德公理, 5")])
+
+        assert index.find("5. 阿基米德公理") == ()
 
     def test_a_furniture_block_never_enters_the_candidates(self):
         """判成页眉／页脚／页码的块不是标题行：家具块里撞见的同名行是书眉回声，救回来就是假锚。"""
@@ -1257,6 +1349,39 @@ class TestPageSampleAndIdentityBits:
         """封顶值本身就是判据（`KA-37`）：改这两枚数就是改「目录是局部事实」这条前提，得动文档才动码。"""
         assert (TOC_PAGE_SCAN_LIMIT, TOC_PAGE_SAMPLE_MAX_CHARS) == (10, 400)
 
+    def test_the_toc_marker_is_a_standalone_line_not_a_sentence(self):
+        """P-1：只认独立成行的「目录／Contents」（含续页后缀），正文句子里提到的不算。"""
+        assert is_toc_marker_line("目录")
+        assert is_toc_marker_line("  目 录  ")
+        assert is_toc_marker_line("目录（续）")
+        assert is_toc_marker_line("Contents")
+        assert is_toc_marker_line("TABLE OF CONTENTS")
+        assert not is_toc_marker_line("本书目录如下")
+        assert not is_toc_marker_line("1. 目录")
+        assert not is_toc_marker_line("")
+
+    def test_marker_candidates_prefer_the_first_ten_pages_and_scan_the_book_otherwise(self):
+        """P-1：前 10 页有标记就只认这几页；前 10 页没有才按页序扫全书。"""
+        pages = [
+            _page_of(
+                page_no,
+                _typed_block(0, "目录" if page_no in {2, 12} else "正文", 100, BlockType.PARAGRAPH),
+            )
+            for page_no in range(1, 14)
+        ]
+
+        assert toc_marker_pages(pages) == (2,)
+        pages[1] = _page_of(2, _typed_block(0, "正文", 100, BlockType.PARAGRAPH))
+        assert toc_marker_pages(pages) == (12,)
+
+    def test_the_full_page_text_is_not_truncated(self):
+        """P-2：判页看整页，不与 `page_sample_text` 的 400 字封顶共用。"""
+        long = "第1章 实数与完备性 …… " + "·" * 900
+        page = _page_of(5, _typed_block(0, long, 100, BlockType.PARAGRAPH))
+
+        assert page_full_text(page) == f"[paragraph] {long}"
+        assert len(page_full_text(page)) > TOC_PAGE_SAMPLE_MAX_CHARS
+
     def test_a_reference_name_maps_to_its_kind_and_the_order_decides_ties(self):
         """七类各认一枚，并列时按判序取更具体的一类（`附录 习题解答` 归附录）；认不出＝知识点行。"""
         assert reference_role_for_name("前言") == ("reference", "front_matter")
@@ -1268,6 +1393,9 @@ class TestPageSampleAndIdentityBits:
         assert reference_role_for_name("习题") == ("reference", "exercise")
         assert reference_role_for_name("第3章 单调序与级数") == ("knowledge", "")
         assert reference_role_for_name("   ") == ("knowledge", "")
+        # 编号起头的行是正文节而不是书前件（b12 `1. 前言`／b13 `§1. 引言` 真机各一枚）。
+        assert reference_role_for_name("1. 前言") == ("knowledge", "")
+        assert reference_role_for_name("§1. 引言") == ("knowledge", "")
 
     def test_the_anchor_block_is_the_one_containing_the_name(self):
         """目录页里条目名在段落块内部，用包含而不是前缀：这里要的是「锚指到哪一块读得出来」。"""
@@ -1378,3 +1506,661 @@ class TestExerciseItemEntries:
         for line in ("1 分析引论", "2017年，公司与上海华谊公司签署协议。", "3.14 是圆周率", "第 1 章 极限", "", "   "):
             assert exercise_item_entries([line]) == (), line
 
+
+
+class TestTocStream:
+    """`KA-57` 整段目录抄录：目录页原文按「行内页码标记」切成一条流，页码只由原文给。
+
+    与 `toc_entries` 的分工：那一把按**行末**解析一页、用来兜底认页；这一把吃判页腿已经认下的
+    整段目录页，允许一页多块、一行多条目、跨页续行——`微积分学教程` 的目录正是这种「(页码) 连排」形状。
+    """
+
+    def test_paren_form_entries_run_together_on_one_line_are_split_at_each_page(self):
+        """一串条目挤在一行（`1. 前言 (1) 2. 有理数域的序 (2)`）以每枚 `(页码)` 为界拆开。"""
+        page = _paragraph_page(9, "1. 前言 (1) 2. 有理数域的序 (2) 3. 有理数的加法及减法 (2)")
+
+        rows = toc_entries_across_pages([page])
+
+        assert [(page_no, entry.name, entry.printed_page) for page_no, entry in rows] == [
+            (9, "1. 前言", 1),
+            (9, "2. 有理数域的序", 2),
+            (9, "3. 有理数的加法及减法", 2),
+        ]
+
+    def test_a_leader_form_and_the_paren_form_interleave_on_the_same_line(self):
+        """同一行里两种页码写法并存：引导点连排之后紧跟括号页码，两种都当边界。"""
+        page = _paragraph_page(
+            10,
+            r"§4. 不定式的定值法....266 $\frac{0}{0}$ 型不定式 (266) $\frac{\infty}{\infty}$ 型不定式 (271)",
+        )
+
+        rows = toc_entries_across_pages([page])
+
+        assert [(entry.name, entry.printed_page) for _, entry in rows] == [
+            ("§4. 不定式的定值法", 266),
+            (r"$\frac{0}{0}$ 型不定式", 266),
+            (r"$\frac{\infty}{\infty}$ 型不定式", 271),
+        ]
+
+    def test_a_cross_page_continuation_joins_the_fragment_from_the_previous_page(self):
+        """一条条目被页边界切开（`33. … 定理` ／ `及其应用 (50)`）：前半截与带页码的后半截拼回一条。"""
+        page8 = _paragraph_page(8, "33. 斯托尔茨 (O.Stolz) 定理")
+        page9 = _paragraph_page(9, "及其应用 (50)\n§3. 单调整序变量.... 53")
+
+        rows = toc_entries_across_pages([page8, page9])
+
+        assert [(page_no, entry.name, entry.printed_page) for page_no, entry in rows] == [
+            (9, "33. 斯托尔茨 (O.Stolz) 定理 及其应用", 50),
+            (9, "§3. 单调整序变量", 53),
+        ]
+
+    def test_a_leading_page_number_closes_the_previous_page_s_last_entry(self):
+        """续页以一枚孤立页码起头（`(162) 96. …`）：这枚页码属于上一页最后一条无页码的条目。"""
+        page9 = _paragraph_page(9, "94. 反函数的导数 (160)\n95. 导数公式一览表")
+        page10 = _paragraph_page(10, "(162) 96. 函数的增量的公式 (162)")
+
+        rows = toc_entries_across_pages([page9, page10])
+
+        assert [(page_no, entry.name, entry.printed_page) for page_no, entry in rows] == [
+            (9, "94. 反函数的导数", 160),
+            (10, "95. 导数公式一览表", 162),
+            (10, "96. 函数的增量的公式", 162),
+        ]
+
+    def test_a_page_less_tail_does_not_swallow_the_next_numbered_entry(self):
+        """残尾（OCR 把两条页码吃成公式）没有页码、下一行又是编号起头：残尾弃用，不得并进下一枚条目。"""
+        page10 = _paragraph_page(
+            10,
+            r"$\frac{\infty}{\infty}$ 比例法则 (弦线法) $\frac{\infty}{\infty}$ 牛顿法则 (切线法) $\frac{\infty}{\infty}$",
+        )
+        page11 = _paragraph_page(11, "156. 例题及习题 (281)")
+
+        rows = toc_entries_across_pages([page10, page11])
+
+        assert [(entry.name, entry.printed_page) for _, entry in rows] == [("156. 例题及习题", 281)]
+
+    def test_running_headers_and_bare_page_numbers_are_not_entries(self):
+        """目录页的书眉与页脚不是条目：`目录` 与光秃秃的一枚数字整行跳过（`KA-57`）。"""
+        page = _paragraph_page(9, "目录\n9\n1. 前言 (1)")
+
+        rows = toc_entries_across_pages([page])
+
+        assert [(entry.name, entry.printed_page) for _, entry in rows] == [("1. 前言", 1)]
+
+    def test_a_continuation_header_is_furniture_too(self):
+        """续页书眉（`目录（续）`）与首页标记同一闭集：整行跳过，不并进任何条目。"""
+        page = _paragraph_page(9, "目录（续）\n1. 前言 (1)")
+
+        rows = toc_entries_across_pages([page])
+
+        assert [(entry.name, entry.printed_page) for _, entry in rows] == [("1. 前言", 1)]
+
+    def test_an_inner_leader_run_folds_but_single_symbols_survive(self):
+        """整段抄录腿与逐页腿同一把名字清洗（W3）：内部引导点串折成空格，单枚句点与连字符不动。"""
+        page = _paragraph_page(9, "第1章……集合论 .... 1\n2.10 一致连续 (88)\nε-δ 语言 (90)")
+
+        rows = toc_entries_across_pages([page])
+
+        assert [entry.name for _, entry in rows] == ["第1章 集合论", "2.10 一致连续", "ε-δ 语言"]
+
+    def test_full_width_parens_are_read_as_the_same_marker(self):
+        """全角括号与全角数字先经 NFKC：`（１２）` 与 `(12)` 是同一个页码标记。"""
+        page = _paragraph_page(9, "（１２）第 3 章 极限（３）")
+
+        rows = toc_entries_across_pages([page])
+
+        assert [(entry.name, entry.printed_page) for _, entry in rows] == [("第 3 章 极限", 3)]
+
+    def test_a_dotted_section_number_is_not_a_page_marker(self):
+        """`2.10`／`3.14` 里的单句点不是引导符：切开它们等于把节号劈成页码。"""
+        page = _paragraph_page(9, "2.10 一致连续 (88)\n3.14 圆周率 (91)")
+
+        rows = toc_entries_across_pages([page])
+
+        assert [entry.name for _, entry in rows] == ["2.10 一致连续", "3.14 圆周率"]
+
+    def test_explicit_chapters_demote_every_other_row_to_sections(self):
+        """本书有明写的章（`第N章`／`四章`／`绪论`）时，`1. 前言` 这类单级编号只是节，不是章。"""
+        page = _paragraph_page(
+            9,
+            "绪论 实数....1\n1. 前言 (1)\n第一章 极限论....28\n22. 变量、整序变量 (28)\n"
+            "四章 利用导数研究函数....226\n131. 函数为常数的条件 (226)",
+        )
+
+        rows = toc_entries_across_pages([page])
+
+        assert [(entry.name, entry.level) for _, entry in rows] == [
+            ("绪论 实数", 1),
+            ("1. 前言", 2),
+            ("第一章 极限论", 1),
+            ("22. 变量、整序变量", 2),
+            ("四章 利用导数研究函数", 1),
+            ("131. 函数为常数的条件", 2),
+        ]
+
+    def test_a_reference_group_in_the_toc_stays_a_top_level_row(self):
+        """目录自己列出的书尾件（`附录`／`索引`／`校订后记`）是顶级行，不挂在最后一章底下。"""
+        page = _paragraph_page(
+            12,
+            "第七章 微分学在几何上的应用 ..... 436\n附录 函数扩充的问题 ..... 508\n索引 ..... 519\n校订后记 ..... 525",
+        )
+
+        rows = toc_entries_across_pages([page])
+
+        assert [(entry.name, entry.level, reference_role_for_name(entry.name)[0]) for _, entry in rows] == [
+            ("第七章 微分学在几何上的应用", 1, "knowledge"),
+            ("附录 函数扩充的问题", 1, "reference"),
+            ("索引", 1, "reference"),
+            ("校订后记", 1, "reference"),
+        ]
+
+    def test_a_book_without_explicit_chapters_keeps_the_line_shape(self):
+        """没有明写章号的书（`1. 引言` 就是章）：不替它降级，层级仍由行形状给。"""
+        page = _paragraph_page(3, "1. 引言 (1)\n1.1 序的关系 (3)\n3 完备性 (9)")
+
+        rows = toc_entries_across_pages([page])
+
+        assert [entry.level for _, entry in rows] == [1, 2, 1]
+
+
+class TestNormalizeEntryLevels:
+    """书级层级归一：明写章号存在时，其余行一律是节；书目附件仍取顶级。"""
+
+    def _entries(self, *names: str) -> list[TocEntry]:
+        return [
+            TocEntry(name=name, printed_page=index + 1, level=entry_level(name), block_index=0)
+            for index, name in enumerate(names)
+        ]
+
+    def test_numbered_rows_are_demoted_when_an_explicit_chapter_exists(self):
+        rows = normalize_entry_levels(self._entries("第1章 极限论", "1. 前言", "1.1 序"))
+
+        assert [row.level for row in rows] == [1, 2, 2]
+
+    def test_a_section_row_is_not_promoted_by_the_chapter_shape(self):
+        """`第一节` 明写的是节，不是章：归一不会把 `第N节` 抬成顶级行。"""
+        rows = normalize_entry_levels(self._entries("第1章 极限论", "第一节 集合"))
+
+        assert [row.level for row in rows] == [1, 2]
+
+    def test_a_numbered_section_named_like_front_matter_stays_a_section(self):
+        """`§1. 引言` 是章里的第一节（b13 真机）：名字里的「引言」不得把它抬成顶级行。"""
+        rows = normalize_entry_levels(self._entries("第十一章 常数项无穷级数", "§1. 引言"))
+
+        assert [row.level for row in rows] == [1, 2]
+
+    def test_without_an_explicit_chapter_the_shape_is_left_alone(self):
+        rows = normalize_entry_levels(self._entries("1. 引言", "1.1 序的关系"))
+
+        assert [row.level for row in rows] == [1, 2]
+
+
+class TestFoldNumberedSubItems:
+    """`KA-62`：`§` 节下的纯编号条目是三级细目——二级只有一节时，细目不许把它切成半截。"""
+
+    @staticmethod
+    def _entries(*specs: tuple[int, str]) -> list[TocEntry]:
+        return [
+            TocEntry(name=name, printed_page=index + 1, level=level, block_index=0)
+            for index, (level, name) in enumerate(specs)
+        ]
+
+    def test_plain_numbered_rows_under_a_section_fold_to_level_three(self):
+        rows = fold_numbered_sub_items(
+            self._entries(
+                (1, "第一章 实数"),
+                (2, "§ 1. 极限"),
+                (2, "34. 单调整序变量"),
+                (2, "35. 区间套"),
+                (2, "§ 2. 连续"),
+                (2, "1. 连续的定义"),
+            )
+        )
+
+        assert [row.level for row in rows] == [1, 2, 3, 3, 2, 3]
+        assert [row.name for row in rows][2:4] == ["34. 单调整序变量", "35. 区间套"], "只降级不丢行"
+
+    def test_a_plain_numbered_row_without_a_section_stays_a_section(self):
+        rows = fold_numbered_sub_items(self._entries((2, "1. 前言"), (2, "2. 记号")))
+
+        assert [row.level for row in rows] == [2, 2], "没有 `§` 节的书一条也不动"
+
+    def test_a_dotted_subsection_number_is_not_a_plain_item_number(self):
+        rows = fold_numbered_sub_items(self._entries((2, "§ 1. 极限"), (2, "1.1 数列极限")))
+
+        assert [row.level for row in rows] == [2, 2]
+
+    def test_a_mid_section_non_numbered_row_closes_the_fold(self):
+        rows = fold_numbered_sub_items(
+            self._entries((2, "§ 1. 极限"), (2, "34. 变量"), (2, "习题"), (2, "35. 区间套"))
+        )
+
+        assert [row.level for row in rows] == [2, 3, 2, 2]
+
+    def test_an_explicit_chapter_resets_the_fold(self):
+        rows = fold_numbered_sub_items(
+            self._entries((1, "第一章"), (2, "§ 1. 极限"), (2, "34. 变量"), (1, "第二章"), (2, "35. 区间套"))
+        )
+
+        assert [row.level for row in rows] == [1, 2, 3, 1, 2]
+
+    def test_a_model_reported_level_three_passes_through(self):
+        rows = fold_numbered_sub_items(self._entries((2, "§ 1. 极限"), (3, "34. 变量")))
+
+        assert [row.level for row in rows] == [2, 3]
+
+
+def _body_block(
+    index: int,
+    text: str = "",
+    *,
+    kind: BlockType = BlockType.PARAGRAPH,
+    level: int | None = None,
+) -> Block:
+    extra = {"level": level} if kind is BlockType.HEADING else {}
+    return Block(
+        type=kind,
+        bbox=[72, 40 * index, 1168, 40 * index + 36],
+        index=index,
+        order=index,
+        text=text or None,
+        **extra,
+    )
+
+
+class TestKindReview:
+    """`KA-63`：`content` 开跑前的种类审校——行名是习题标签则点名，段内标签块拆成并列习题行。"""
+
+    @staticmethod
+    def _row(
+        node_id: str,
+        name: str,
+        *,
+        node_type: str = "point",
+        parent_id: str | None = "c1",
+        page_start: int = 10,
+        page_end: int = 12,
+    ) -> KindReviewRow:
+        return KindReviewRow(
+            node_id=node_id,
+            parent_id=parent_id,
+            name=name,
+            node_type=node_type,
+            page_start=page_start,
+            page_end=page_end,
+        )
+
+    def test_a_label_block_inside_a_point_span_splits_under_its_chapter(self):
+        """b18 形：节的行区间里挂着一枚整块「习题 1.1」——拆成章下的并列行，锚回那一块。"""
+        rows = [self._row("p1", "1.1 极限", page_start=10, page_end=10)]
+        pages = [
+            _page_of(
+                10,
+                _body_block(0, "1.1 极限"),
+                _body_block(1, "习题 1.1"),
+            )
+        ]
+
+        review = kind_review(rows, pages)
+
+        assert review.flags == ()
+        assert review.splits == (
+            KindSplit(parent_id="c1", name="习题 1.1", page=10, block_index=1),
+        )
+
+    def test_a_row_named_like_a_label_is_flagged_and_not_recreated(self):
+        """① 只披露不改写：行名是整块习题标签时不发点腿，也不把自己的锚块再拆一行。"""
+        rows = [self._row("p1", "习题 1.1", page_start=10, page_end=10)]
+        pages = [_page_of(10, _body_block(0, "习题 1.1"))]
+
+        review = kind_review(rows, pages)
+
+        assert review.flags == (KindFlag(node_id="p1", reason="exercise_label"),)
+        assert review.splits == ()
+
+    def test_a_label_already_carried_by_another_row_is_not_duplicated(self):
+        """已在册的行不再造：章区间扫到的那一枚标签，正是另一枚知识点行的锚点时跳过。"""
+        rows = [
+            self._row("c1", "第一章 极限", node_type="chapter", parent_id=None, page_start=10, page_end=12),
+            self._row("p1", "习题", page_start=10, page_end=10),
+        ]
+        pages = [_page_of(10, _body_block(0, "习题"))]
+
+        review = kind_review(rows, pages)
+
+        assert [flag.node_id for flag in review.flags] == ["p1"]
+        assert review.splits == ()
+
+    def test_chapter_and_point_spans_yield_one_split_per_label(self):
+        """章区间与点的区间重叠：同一枚标签只出一行（父＝章、按锚页去重）。"""
+        rows = [
+            self._row("c1", "第一章 极限", node_type="chapter", parent_id=None, page_start=10, page_end=12),
+            self._row("p1", "1.1 极限", page_start=10, page_end=11),
+        ]
+        pages = [_page_of(11, _body_block(0, "练习"))]
+
+        review = kind_review(rows, pages)
+
+        assert review.splits == (KindSplit(parent_id="c1", name="练习", page=11, block_index=0),)
+
+    def test_a_label_after_the_last_point_still_belongs_to_the_chapter(self):
+        """章尾习题不在任何点的区间里，也按章拆出。"""
+        rows = [
+            self._row("c1", "第一章 极限", node_type="chapter", parent_id=None, page_start=10, page_end=12),
+            self._row("p1", "1.1 极限", page_start=10, page_end=10),
+        ]
+        pages = [_page_of(12, _body_block(0, "习题"))]
+
+        review = kind_review(rows, pages)
+
+        assert review.splits == (KindSplit(parent_id="c1", name="习题", page=12, block_index=0),)
+
+    def test_reference_rows_are_not_audited(self):
+        """附录／索引这类行不归种类审校管：区间里的标签不因它们成行，也不点名。"""
+        rows = [self._row("o1", "附录", node_type="other", parent_id=None, page_start=10, page_end=12)]
+        pages = [_page_of(11, _body_block(0, "习题"))]
+
+        review = kind_review(rows, pages)
+
+        assert review.flags == ()
+        assert review.splits == ()
+
+    def test_the_audited_row_count_is_reported_even_when_nothing_happens(self):
+        rows = [self._row("p1", "1.1 极限", page_start=10, page_end=10)]
+        pages = [_page_of(10, _body_block(0, "1.1 极限"))]
+
+        review = kind_review(rows, pages)
+
+        assert review.rows == 1
+
+
+class TestSelectMaterialBlocks:
+    """`KA-64`：点腿材料＝块选择——页序＋块序、只收正文块、家具零入、按块渲染。"""
+
+    def test_blocks_are_ordered_by_page_then_index_and_furniture_is_dropped(self):
+        pages = [
+            _page_of(
+                12,
+                _body_block(1, "第二段"),
+                _body_block(0, "第一节"),
+            ),
+            _page_of(
+                11,
+                _body_block(0, "页眉", kind=BlockType.HEADER),
+                _body_block(1, "第一段"),
+                _body_block(2, "1", kind=BlockType.PAGE_NUMBER),
+                _body_block(3, "页脚", kind=BlockType.FOOTER),
+            ),
+        ]
+
+        blocks = select_material_blocks(pages, page_start=11, page_end=12)
+
+        assert [(block.page, block.block_index, block.text) for block in blocks] == [
+            (11, 1, "第一段"),
+            (12, 0, "第一节"),
+            (12, 1, "第二段"),
+        ]
+
+    def test_pages_outside_the_window_and_excluded_pages_contribute_nothing(self):
+        pages = [
+            _page_of(9, _body_block(0, "目录回声")),
+            _page_of(10, _body_block(0, "正文")),
+            _page_of(11, _body_block(0, "续页")),
+        ]
+
+        blocks = select_material_blocks(
+            pages, page_start=9, page_end=11, exclude_pages=(9, 11)
+        )
+
+        assert [block.text for block in blocks] == ["正文"]
+
+    def test_each_block_renders_through_the_page_renderer(self):
+        """块按页级渲染器的同一口径出文：公式带定界符、表原样 HTML、图给路径与题注。"""
+        pages = [
+            _page_of(
+                10,
+                _body_block(0, "标题", kind=BlockType.HEADING, level=2),
+                Block(
+                    type=BlockType.FORMULA,
+                    bbox=[72, 40, 1168, 100],
+                    index=1,
+                    order=1,
+                    latex="x^2",
+                    display=True,
+                ),
+                Block(
+                    type=BlockType.TABLE,
+                    bbox=[72, 110, 1168, 200],
+                    index=2,
+                    order=2,
+                    html="<table><tr><td>1</td></tr></table>",
+                ),
+                Block(
+                    type=BlockType.IMAGE,
+                    bbox=[72, 210, 1168, 300],
+                    index=3,
+                    order=3,
+                    path="images/p10-1.png",
+                    caption="图 1",
+                ),
+                Block(
+                    type=BlockType.LIST,
+                    bbox=[72, 310, 1168, 340],
+                    index=4,
+                    order=4,
+                    items=["甲", "乙"],
+                ),
+            )
+        ]
+
+        blocks = select_material_blocks(pages, page_start=10, page_end=10)
+
+        assert [block.text for block in blocks] == [
+            "## 标题",
+            "$$\nx^2\n$$",
+            "<table><tr><td>1</td></tr></table>",
+            "![图 1](images/p10-1.png)",
+            "- 甲\n- 乙",
+        ]
+        assert [block.chars for block in blocks] == [len(block.text) for block in blocks]
+
+    def test_a_block_type_is_reported_for_review(self):
+        pages = [_page_of(10, _body_block(0, "正文"))]
+
+        blocks = select_material_blocks(pages, page_start=10, page_end=10)
+
+        assert blocks[0].block_type == "paragraph"
+
+    def test_block_bounds_cut_the_two_ends_of_the_window(self):
+        """真机 b05：本节止于下一节标题块之前——首末两页按锚点块号裁，中间页整页收。"""
+        pages = [
+            _page_of(9, _body_block(0, "上一节尾"), _body_block(1, "导引标题"), _body_block(2, "导引正文")),
+            _page_of(10, _body_block(0, "导引续"), _body_block(13, "导引末"), _body_block(14, "有序集标题")),
+        ]
+
+        blocks = select_material_blocks(
+            pages, page_start=9, page_end=10, start_block=1, end_block=13
+        )
+
+        assert [block.text for block in blocks] == ["导引标题", "导引正文", "导引续", "导引末"]
+
+    def test_block_bounds_apply_only_to_the_pages_they_belong_to(self):
+        """窗口有多页时起点块号只管起点页、终点块号只管终点页，中间页不因块号被裁。"""
+        pages = [
+            _page_of(9, _body_block(0, "前"), _body_block(3, "起点")),
+            _page_of(10, _body_block(0, "中页首"), _body_block(9, "中页末")),
+            _page_of(11, _body_block(0, "终点页首"), _body_block(5, "终点块"), _body_block(6, "下一节")),
+        ]
+
+        blocks = select_material_blocks(
+            pages, page_start=9, page_end=11, start_block=3, end_block=5
+        )
+
+        assert [block.text for block in blocks] == ["起点", "中页首", "中页末", "终点页首", "终点块"]
+
+
+class TestPlanPointCalls:
+    """`KA-64`：预算内的单窗、块边界切窗、单块超预算按句界切、相邻小节合批。"""
+
+    @staticmethod
+    def _section(
+        node_id: str,
+        *texts: str,
+        parent_id: str = "c1",
+    ) -> PointSection:
+        return PointSection(
+            node_id=node_id,
+            parent_id=parent_id,
+            title=node_id,
+            blocks=tuple(
+                MaterialBlock(page=1, block_index=index, block_type="paragraph", text=text)
+                for index, text in enumerate(texts)
+            ),
+        )
+
+    def test_a_section_within_budget_is_one_call(self):
+        section = self._section("p1", "甲" * 20, "乙" * 20)
+
+        calls = plan_point_calls([section], budget=100, floor=10)
+
+        assert len(calls) == 1
+        assert calls[0].node_ids == ("p1",)
+        assert calls[0].merged is False
+        assert [block.text for block in calls[0].blocks] == ["甲" * 20, "乙" * 20]
+        assert calls[0].chars <= 100
+
+    def test_an_oversized_section_is_cut_at_block_boundaries(self):
+        section = self._section("p1", "甲" * 20, "乙" * 20, "丙" * 20)
+
+        calls = plan_point_calls([section], budget=45, floor=10)
+
+        assert len(calls) == 2
+        assert [block.text for block in calls[0].blocks] == ["甲" * 20, "乙" * 20]
+        assert [block.text for block in calls[1].blocks] == ["丙" * 20]
+        assert all(call.chars <= 45 for call in calls)
+        assert all(call.node_ids == ("p1",) for call in calls)
+
+    def test_a_single_oversized_block_is_cut_on_sentence_boundaries(self):
+        text = "甲" * 20 + "。" + "乙" * 20 + "。"
+        section = self._section("p1", text)
+
+        calls = plan_point_calls([section], budget=25, floor=10)
+
+        assert [block.text for call in calls for block in call.blocks] == [
+            "甲" * 20 + "。",
+            "乙" * 20 + "。",
+        ]
+        assert all(call.chars <= 25 for call in calls)
+        assert all(block.block_index == 0 for call in calls for block in call.blocks)
+
+    def test_adjacent_small_siblings_share_one_call(self):
+        sections = [self._section("p1", "甲" * 8), self._section("p2", "乙" * 8)]
+
+        calls = plan_point_calls(sections, budget=40, floor=10)
+
+        assert len(calls) == 1
+        assert calls[0].node_ids == ("p1", "p2")
+        assert calls[0].merged is True
+        assert [block.text for block in calls[0].blocks] == ["甲" * 8, "乙" * 8]
+
+    def test_small_sections_under_different_parents_are_not_merged(self):
+        sections = [
+            self._section("p1", "甲" * 8, parent_id="c1"),
+            self._section("p2", "乙" * 8, parent_id="c2"),
+        ]
+
+        calls = plan_point_calls(sections, budget=40, floor=10)
+
+        assert [call.node_ids for call in calls] == [("p1",), ("p2",)]
+
+    def test_a_merge_that_breaks_the_budget_is_not_taken(self):
+        sections = [self._section("p1", "甲" * 12), self._section("p2", "乙" * 12)]
+
+        calls = plan_point_calls(sections, budget=25, floor=15)
+
+        assert [call.node_ids for call in calls] == [("p1",), ("p2",)]
+
+    def test_a_section_above_the_floor_does_not_absorb_a_small_neighbour(self):
+        sections = [self._section("p1", "甲" * 12), self._section("p2", "乙" * 40)]
+
+        calls = plan_point_calls(sections, budget=100, floor=15)
+
+        assert [call.node_ids for call in calls] == [("p1",), ("p2",)]
+
+    def test_call_order_follows_the_screen_order(self):
+        sections = [
+            self._section("p1", "甲" * 20),
+            self._section("p2", "乙" * 8),
+            self._section("p3", "丙" * 8),
+        ]
+
+        calls = plan_point_calls(sections, budget=45, floor=10)
+
+        assert [call.node_ids for call in calls] == [("p1",), ("p2", "p3")]
+
+    def test_the_default_budget_and_floor_are_the_documented_constants(self):
+        assert CONTENT_INPUT_BUDGET_CHARS == 10000
+        assert CONTENT_MERGE_FLOOR_CHARS == 1500
+
+
+class TestChapterMaterialBlocks:
+    """`KA-65`：章是文件夹——章前材料止于首点锚页之前，同页只取首点标题块之前的块。"""
+
+    def test_the_folder_stops_before_the_first_point_page(self):
+        pages = [
+            _page_of(1, _body_block(0, "第 1 章 极限"), _body_block(1, "章前导语")),
+            _page_of(2, _body_block(0, "续页正文")),
+            _page_of(3, _body_block(0, "1.1 数列极限"), _body_block(1, "点正文")),
+        ]
+
+        blocks = chapter_material_blocks(pages, page_start=1, first_child_page=3)
+
+        assert [block.text for block in blocks] == ["第 1 章 极限", "章前导语", "续页正文"]
+
+    def test_a_shared_page_keeps_only_the_blocks_before_the_point_title(self):
+        pages = [
+            _page_of(
+                2,
+                _body_block(0, "第 1 章 极限"),
+                _body_block(1, "章前言"),
+                _body_block(2, "1.1 数列极限"),
+                _body_block(3, "点正文"),
+            )
+        ]
+
+        blocks = chapter_material_blocks(
+            pages, page_start=2, first_child_page=2, first_child_block=2
+        )
+
+        assert [block.text for block in blocks] == ["第 1 章 极限", "章前言"]
+
+    def test_a_shared_page_without_a_block_cutoff_yields_nothing(self):
+        """判不出首点从哪个块起读时不切页：宁可章少读一句，也不让章取走点的正文。"""
+        pages = [_page_of(2, _body_block(0, "第 1 章 极限"), _body_block(1, "点正文"))]
+
+        assert (
+            chapter_material_blocks(pages, page_start=2, first_child_page=2, first_child_block=None)
+            == ()
+        )
+
+    def test_a_chapter_without_children_has_no_material(self):
+        pages = [_page_of(1, _body_block(0, "第 1 章 极限"))]
+
+        assert chapter_material_blocks(pages, page_start=1, first_child_page=None) == ()
+
+    def test_a_child_before_the_chapter_page_is_dirty_and_yields_nothing(self):
+        pages = [_page_of(1, _body_block(0, "第 1 章 极限"))]
+
+        assert chapter_material_blocks(pages, page_start=1, first_child_page=0) == ()
+
+    def test_furniture_and_excluded_pages_contribute_nothing(self):
+        pages = [
+            _page_of(1, _body_block(0, "第 1 章 极限")),
+            _page_of(2, _body_block(0, "目录回声")),
+        ]
+
+        blocks = chapter_material_blocks(
+            pages, page_start=1, first_child_page=3, exclude_pages=(2,)
+        )
+
+        assert [block.text for block in blocks] == ["第 1 章 极限"]

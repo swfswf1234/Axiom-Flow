@@ -30,6 +30,7 @@ from axiom_flow.engines.base import KnowledgeEngine, ParseEngine
 from axiom_flow.orchestrator.knowledge import (
     KpAcceptance,
     LedgeredKnowledgeEngine,
+    ReferenceFetcher,
     kp_batch_row,
     run_knowledge_job,
 )
@@ -61,12 +62,14 @@ class JobRunner:
         knowledge_engine_factory: Callable[[str], KnowledgeEngine] | None = None,
         kp_call_ledger: LlmCallLedger | None = None,
         kp_call_identity: LlmCallIdentity | None = None,
+        reference_fetcher: ReferenceFetcher | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._engine_factory = engine_factory
         self._knowledge_engine_factory = knowledge_engine_factory
         self._kp_call_ledger = kp_call_ledger
         self._kp_call_identity = kp_call_identity
+        self._reference_fetcher = reference_fetcher
         self._data_root = Path(data_root)
         self._window_size = window_size
         self._executor: Executor | None = ThreadPoolExecutor(max_workers=1) if background else None
@@ -179,7 +182,11 @@ class JobRunner:
         try:
             with self._session_factory() as session:
                 outcome = run_knowledge_job(
-                    session, data_root=self._data_root, engine=engine, acceptance=acceptance
+                    session,
+                    data_root=self._data_root,
+                    engine=engine,
+                    acceptance=acceptance,
+                    reference_fetcher=self._reference_fetcher,
                 )
                 session.commit()
             self._record_kp_batch(kp_batch_row(acceptance, outcome))

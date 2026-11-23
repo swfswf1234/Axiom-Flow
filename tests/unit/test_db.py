@@ -1317,6 +1317,19 @@ class TestKpLedgerRow:
         assert row.result["failed_sections"] == 1
         assert (row.progress, row.failed_pages, row.pages, row.meta) == ({}, [], None, None)
 
+    def test_the_result_closed_set_ends_at_forty_two_keys(self):
+        """`KA-27` 的闭集钉在 42 枚：内容链六键（`KA-63`／`KA-64`／`KA-66`）各占末尾一格。"""
+        assert len(KP_RESULT_KEYS) == 42
+        assert len(set(KP_RESULT_KEYS)) == 42
+        assert KP_RESULT_KEYS[-6:] == (
+            "type_review_rows",
+            "type_review_flags",
+            "split_exercise_rows",
+            "point_windows",
+            "point_merges",
+            "material_ranges_rows",
+        )
+
     def test_kp_row_is_never_advanced_after_insert(self, session):
         """事件行只 INSERT：状态机回写三条都不认 kp 行，`updated_at` 恒等于 `created_at`。"""
         row = self._ledger(session)
@@ -1403,3 +1416,73 @@ class TestKpRepository:
 
         assert kp.get("afkp-a1").narrative_ref == "afkp-a1.md"
         assert kp.get("afkp-a1").summary == ""
+
+    def test_material_ranges_merge_into_meta_and_skip_noop_writes(self, session):
+        """`KA-66`：只并在册目录行的 `meta`，既有键逐键保留；空表与同值都不算写入。"""
+        kp = KpRepository(session)
+        self._node(session, node_kind="outline", meta={"toc_role": "knowledge"})
+        ranges = [{"page": 3, "block_indexes": [1, 2]}]
+
+        assert kp.set_material_ranges(book_id="b05", node_id="afkp-a1", ranges=ranges)
+        assert kp.get("afkp-a1").meta == {
+            "toc_role": "knowledge",
+            "material_ranges": ranges,
+        }
+        assert not kp.set_material_ranges(book_id="b05", node_id="afkp-a1", ranges=ranges)
+        assert not kp.set_material_ranges(book_id="b05", node_id="afkp-a1", ranges=[])
+        assert not kp.set_material_ranges(
+            book_id="b05",
+            node_id="afkp-a1",
+            ranges=[{"page": "3", "block_indexes": [1]}, "不是对象"],
+        ), "坏项丢光＝没有可写的区间"
+        assert kp.get("afkp-a1").meta["material_ranges"] == ranges
+
+    def test_material_ranges_only_touch_unconfirmed_outline_rows(self, session):
+        """点行与已背书行不写：取材区间是在册点行的机器读数，不与人工结论争身份。"""
+        kp = KpRepository(session)
+        self._node(session, "afkp-p1", node_kind="point")
+        self._node(session, "afkp-o1", node_kind="outline")
+        assert kp.set_confirmed("afkp-o1", confirmed=True).ok
+
+        ranges = [{"page": 1, "block_indexes": [0]}]
+        assert not kp.set_material_ranges(book_id="b05", node_id="afkp-p1", ranges=ranges)
+        assert not kp.set_material_ranges(book_id="b05", node_id="afkp-o1", ranges=ranges)
+        assert not kp.set_material_ranges(book_id="b11", node_id="afkp-o1", ranges=ranges)
+        assert kp.get("afkp-p1").meta is None
+        assert kp.get("afkp-o1").meta is None
+
+    def test_exercise_verify_writes_three_keys_and_skips_equal_writes(self, session):
+        """`KA-70`：三键并进 `meta`、其余键保留；同值不写，`failed` 不补假结论且清掉旧 note。"""
+        kp = KpRepository(session)
+        self._node(session, node_kind="point", meta={"toc_kind": "exercise"})
+
+        assert kp.set_exercise_verify(
+            book_id="b05", node_id="afkp-a1", state="done", verdict="reject", note="切到下一题"
+        )
+        assert kp.get("afkp-a1").meta == {
+            "toc_kind": "exercise",
+            "verify_state": "done",
+            "verify_verdict": "reject",
+            "verify_note": "切到下一题",
+        }
+        assert not kp.set_exercise_verify(
+            book_id="b05", node_id="afkp-a1", state="done", verdict="reject", note="切到下一题"
+        ), "同值不制造无意义的写入"
+        assert not kp.set_exercise_verify(
+            book_id="b05", node_id="afkp-a1", state="done", verdict="bogus"
+        ), "闭集外的结论不写"
+        assert kp.set_exercise_verify(book_id="b05", node_id="afkp-a1", state="failed")
+        assert kp.get("afkp-a1").meta == {"toc_kind": "exercise", "verify_state": "failed"}
+
+    def test_exercise_verify_only_touches_unconfirmed_point_rows(self, session):
+        """已背书行不碰：校验读数不与人工结论争同一行。"""
+        kp = KpRepository(session)
+        self._node(session, "afkp-p1", node_kind="point")
+        self._node(session, "afkp-o1", node_kind="outline")
+        assert kp.set_confirmed("afkp-p1", confirmed=True).ok
+
+        assert not kp.set_exercise_verify(book_id="b05", node_id="afkp-p1", state="failed")
+        assert not kp.set_exercise_verify(book_id="b05", node_id="afkp-o1", state="failed")
+        assert not kp.set_exercise_verify(book_id="b11", node_id="afkp-o1", state="failed")
+        assert kp.get("afkp-p1").meta is None
+        assert kp.get("afkp-o1").meta is None

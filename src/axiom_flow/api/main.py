@@ -3,10 +3,11 @@
 实现状态：Current（af_* 持久化 + 异步 parse-jobs + 分块预览；对照编辑为覆盖层合并）。
 只读端点不依赖模型服务与凭据；仅解析任务经引擎适配器直连模型服务（ADR 0004），且提交期
 探活（不可用 503，不落任务行）、引擎名按 `AXIOM_OCR_ENGINE`/请求体显式分派（无自动兜底）。
-读取面按**生效解析版本**解析目录（`af_books.active_job_id`，PLAN-004 / REQ-080）：指针唯一入口
-是 `_read_scope`，URL、响应结构与 `image_url` 字面量对根仓库前端保持不变。
+读取面按**已解析页最多的可见版本**解析目录（PLAN-030；未激活的 `partial`／`failed` 版本里已落盘的页
+同样可读）：作用域唯一入口是 `_read_scope`，URL、响应结构与 `image_url` 字面量对根仓库前端保持不变。
 """
 
+import logging
 import shutil
 import uuid
 from collections import defaultdict
@@ -15,6 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi import Path as PathParam
 from fastapi.responses import FileResponse, JSONResponse
@@ -25,7 +27,7 @@ from axiom_flow.api.admin import mount_admin
 from axiom_flow.config import Settings, load_settings
 from axiom_flow.db.engine import create_engine_for
 from axiom_flow.db.llm_ledger import LlmCallIdentity, LlmCallLedger
-from axiom_flow.db.models import AfBook, AfKp, AfOperation
+from axiom_flow.db.models import DOC_KIND_EXERCISE, AfBook, AfKp, AfOperation
 from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
@@ -40,6 +42,7 @@ from axiom_flow.db.repositories import (
     RegionRow,
     job_timing,
     public_progress,
+    sanitize_material_ranges,
 )
 from axiom_flow.engines.base import KnowledgeEngine, ParseEngine
 from axiom_flow.engines.factory import (
@@ -49,29 +52,52 @@ from axiom_flow.engines.factory import (
     build_text_engine,
     resolve_engine_name,
 )
-from axiom_flow.ingest import book_dir_for, ingest_book, version_dir_for, warn_transient_residue, write_manifest
+from axiom_flow.ingest import (
+    book_dir_for,
+    ensure_within,
+    ingest_book,
+    version_dir_for,
+    warn_transient_residue,
+    write_manifest,
+)
 from axiom_flow.normalize.chunking import build_chunks, read_chunk_set
 from axiom_flow.normalize.furniture import furniture_blocks, furniture_hints
 from axiom_flow.normalize.intents import apply_relabels, relabels_by_block
 from axiom_flow.normalize.toc import TOC_ROLE_KNOWLEDGE, node_type_of, node_types_of
-from axiom_flow.orchestrator import MODEL_UNAVAILABLE, JobRunner, rebuild_chunks
+from axiom_flow.orchestrator import (
+    MODEL_UNAVAILABLE,
+    JobRunner,
+    rebuild_chunks,
+    resolve_visible_version,
+)
 from axiom_flow.orchestrator.jobs import KpLedgerWiringError
 from axiom_flow.orchestrator.knowledge import (
     ExerciseReading,
     KpGateError,
+    ReferenceFetcher,
     SpanRow,
     accept_kp_job,
     anchor_review_flags,
+    book_stage_reading,
+    book_toc_pages,
+    collapse_outline_duplicates,
+    display_spans_of,
     exercise_workspace,
     order_for_export,
     read_narrative,
     regenerate_chapter_narrative,
     regenerate_section_summary,
-    section_spans_of,
+    split_optional_marker,
     unconfirmed_anchor_flags,
     validate_endorsement_links,
     write_narrative,
 )
+from axiom_flow.orchestrator.reparse import (
+    SCOPE_SELECTED,
+    build_reparse_plan,
+    resolve_scope,
+)
+from axiom_flow.reference import collect_reference_notes
 from axiom_flow.schemas import (
     SAFE_SEGMENT_PATTERN,
     AnchorReviewOut,
@@ -106,6 +132,7 @@ from axiom_flow.schemas import (
     KpNodePatch,
     KpOutlineDeclareIn,
     KpOutlineDeclareOut,
+    KpStageOut,
     KpSummaryRegenIn,
     KpWorkspaceOut,
     ManifestEntry,
@@ -120,9 +147,13 @@ from axiom_flow.schemas import (
     ParseStatus,
     ParseVersionOut,
     RegionRecord,
+    ReparsePageAdvice,
+    ReparsePlanOut,
     StructureRequest,
     SyncResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 # 路径参数中的 book_id 必须是安全路径段（防目录穿越，与 schemas 请求体同一约束）。
 SafeBookId = Annotated[str, PathParam(pattern=SAFE_SEGMENT_PATTERN)]
@@ -213,16 +244,83 @@ def _anchor_pages(node: AfKp) -> list[int]:
     )
 
 
-def _kp_page_spans(rows: Sequence[AfKp], last_page: int | None) -> dict[str, tuple[int, int]]:
-    """在册目录行 → 每行的正文区间（`KA-42`）：算式与点腿取材同一处，读面不自推。
+def _anchor_block(row: AfKp, page: int) -> int | None:
+    """一行在给定页上最早那块（与编排层 `_first_anchor_block` 同一判据）：块序缺失回 `None`。"""
+    indexes = [
+        int(index)
+        for anchor in (row.anchors or [])
+        if isinstance(anchor, dict) and int(anchor.get("page") or 0) == page
+        for index in (anchor.get("block_indexes") or [])
+        if isinstance(index, int) and index >= 0
+    ]
+    return min(indexes) if indexes else None
 
-    参与切分的只有 `gen_status='candidate'` 的目录行（`draft` 是在飞读数、`rejected` 是被本批取代的
-    旧读数，拿它们切区间会把中间那一段凭空挖掉）。`af_books.page_count` 缺时折回本行起点页——两键
-    退化是披露，不是整面报错的理由。
+
+PRACTICE_SYNC_TIMEOUT_SECONDS = 30.0
+
+#: 内嵌图片读腿的媒体类型白名单（REQ-179 R1）：题包图片由 MinerU 落盘为常见图像扩展名；
+#: 未登记的扩展名按字节流给，浏览器自行判定。
+_PACK_IMAGE_MEDIA = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+}
+
+
+def _course_id_of_book(session: Session, book_id: str) -> str:
+    """书的课程坐标（`af_books.course_id`）：同步腿按课程寻址，取不到就不同步（不猜一个空课程）。"""
+    book = BookRepository(session).get(book_id)
+    return str(getattr(book, "course_id", "") or "") if book is not None else ""
+
+
+def _post_practice_sync(gateway_url: str) -> Callable[[str, str], None]:
+    """构造「确认即同步」出站回调（REQ-168 W8）：确认落库后把书搬进 8900 的课后练习题库。
+
+    出站纪律与梳理网关（`MI-10`）同形：**`trust_env=False`** —— 8900 在回环上，交给 Windows
+    系统代理会得到 502／0 字节的假象。超时取 30s：这一步只做幂等 upsert，撞上大批（895 题）
+    也不该把 confirm 的响应拖住；超了按失败处理，由用户在梳理屏重发一次确认来补。
+
+    **失败只记警告、绝不外抛**：确认位已经落库、不可回退，把回调异常透成 5xx 会让用户以为
+    「确认失败」而反复重试，反而把已做成的事搅乱；真失败的后果只是「题还没进练习面」，
+    下一次确认（或直接调同步端点）即收敛。
+    """
+
+    def _sync(course_id: str, book_id: str) -> None:
+        url = f"{gateway_url}/api/v1/learn/courses/{course_id}/exercises/sync"
+        try:
+            with httpx.Client(trust_env=False, timeout=PRACTICE_SYNC_TIMEOUT_SECONDS) as client:
+                response = client.post(url, params={"book": book_id})
+            if response.status_code >= 400:
+                logger.warning(
+                    "确认后同步课后练习失败（书 %s）：%s %s", book_id, response.status_code,
+                    response.text[:200],
+                )
+        except httpx.HTTPError as exc:  # 连不上／超时／协议错：只记，不外抛
+            logger.warning("确认后同步课后练习失败（书 %s）：%s", book_id, type(exc).__name__)
+
+    return _sync
+
+
+def _kp_page_spans(
+    rows: Sequence[AfKp], last_page: int | None
+) -> dict[str, tuple[int | None, int | None, int | None, int | None]]:
+    """在册行 → 每行的显示段与按块切点（D-1~D-9）：算式住在编排层，读面不自推。
+
+    参与切分的是 `gen_status='candidate'` 的目录行与点行（`draft` 是在飞读数、`rejected` 是被本批取代
+    的旧读数，拿它们切段会把中间那一段凭空挖掉）。两者同进一棵树：目录段的终点止于首子之前，点段
+    管到下一枚点之前——层数不再由读面另立一套。`af_books.page_count` 缺时尾行只发起点，两键退化是
+    披露，不是整面报错的理由；锚点缺页的行不参与，读面因此发空四键。
+
+    四键＝`(page_start, page_end, start_block, end_block)`：后两枚是同页分行必要的块序——
+    `start_block` 是起点页上属于本行的第一块、`end_block` 是终点页上属于本行的最后一块（`None`＝整页）。
+    起点被游标抬到别的页时本行不在那页按块起读，`start_block` 照发 `None`。
     """
     items: list[SpanRow] = []
     for row in rows:
-        if row.node_kind != "outline" or row.gen_status != "candidate":
+        if row.node_kind not in ("outline", "point") or row.gen_status != "candidate":
             continue
         pages = _anchor_pages(row)
         if not pages:
@@ -236,31 +334,36 @@ def _kp_page_spans(rows: Sequence[AfKp], last_page: int | None) -> dict[str, tup
                 depth=row.depth or 1,
                 toc_role=str((row.meta or {}).get("toc_role") or TOC_ROLE_KNOWLEDGE),
                 toc_kind=str((row.meta or {}).get("toc_kind") or ""),
+                parent_id=row.parent_id,
+                block=_anchor_block(row, pages[0]),
             )
         )
     if not items:
         return {}
-    if last_page is None:
-        return {str(item.node_id): (item.page, item.page) for item in items if item.node_id}
-    first_page = min(item.page for item in items)
-    return {
-        str(span.parent_id): (span.page_start, span.page_end)
-        for span in section_spans_of(items, first_page=first_page, last_page=int(last_page))
-        if span.parent_id
-    }
+    by_id = {item.node_id: item for item in items}
+    result: dict[str, tuple[int | None, int | None, int | None, int | None]] = {}
+    for span in display_spans_of(items, last_page=last_page):
+        if not span.node_id:
+            continue
+        item = by_id[span.node_id]
+        start_block = item.block if span.page_start is not None and item.page == span.page_start else None
+        result[str(span.node_id)] = (span.page_start, span.page_end, start_block, span.end_block)
+    return result
 
 
-def _page_range_of(node: AfKp, spans: Mapping[str, tuple[int, int]] | None) -> tuple[int | None, int | None]:
-    """一行的两枚派生键：目录行读切分结果，点行读自己锚点的两端（屏侧只留一枚消费口）。"""
-    pages = _anchor_pages(node)
-    if node.node_kind == "outline":
-        return (spans or {}).get(node.node_id, (None, None))
-    return (pages[0], pages[-1]) if pages else (None, None)
+def _display_range_of(
+    node: AfKp, spans: Mapping[str, tuple[int | None, int | None, int | None, int | None]] | None
+) -> tuple[int | None, int | None, int | None, int | None]:
+    """一行的四枚显示键：一律读派生器结果，不按 `node_kind` 分两套算式（D-1）。
+
+    派生器只收参与行（在册候选、有锚点）；不在表里＝这一行不展示，四键为空是披露。
+    """
+    return (spans or {}).get(node.node_id, (None, None, None, None))
 
 
 def _kp_node_out(
     node: AfKp,
-    spans: Mapping[str, tuple[int, int]] | None = None,
+    spans: Mapping[str, tuple[int | None, int | None, int | None, int | None]] | None = None,
     node_types: Mapping[str, str] | None = None,
 ) -> KpNodeOut:
     """`af_kp` 一行的响应投影（工作区／背书回显／导出面同一份）。
@@ -268,14 +371,17 @@ def _kp_node_out(
     不发 `norm_key` 与整槽 `meta`：前者是去重用的派生值（冲突由 422 的点名承载），后者是禁进 WHERE
     的扩展槽（`database-design.md` 的 `meta` 列契约）。两枚身份位 `toc_role`／`toc_kind` 是例外，
     从槽里逐字取出带出（`KA-39`）——屏上要标「非知识点」，靠的就是它们。点行详情的两枚读数
-    `must_master`／`key_definitions`（`KA-57`）走同一条「逐键取出」的口径，槽里的坏值归空表。
-    `page_start`／`page_end` 同样是读时派生（`KA-42`）：调用方手里有整册行时传 `spans`，没有则目录行
-    两键为空——单行回显（背书腿）不为了两枚派生键去多读一整册。
+    `must_master`／`key_definitions`（`KA-57`）走同一条「逐键取出」的口径，槽里的坏值归空表；
+    第三枚 `material_ranges`（`KA-66`）走同一份净化，坏项丢弃、坏根值归空表。
+    `page_start`／`page_end` 是读时派生的**显示段**（D-1~D-10，与取证区间分家）：调用方手里有整册行时
+    传 `spans`，没有则两键为空——单行回显（背书腿）不为了两枚派生键去多读一整册。
+    `start_block`／`end_block` 是同一条派生腿上的按块切点：同页两点各占各的块段，屏上按这两枚切正文
+    （`KA-67`）；空＝那一端整页起／整页止，不猜块序。
     `node_type` 是第三枚派生键（`KA-44`）：四值类型要先看祖先的 `toc_kind` 才判得出习题的子行，
     所以同样由调用方按整册行算好递进来；缺省时按本行自己的身份位判（不猜祖先）。
     """
     meta = node.meta or {}
-    page_start, page_end = _page_range_of(node, spans)
+    page_start, page_end, start_block, end_block = _display_range_of(node, spans)
     toc_role = str(meta.get("toc_role") or TOC_ROLE_KNOWLEDGE)
     toc_kind = str(meta.get("toc_kind") or "")
     raw_mastery = meta.get("must_master")
@@ -299,6 +405,9 @@ def _kp_node_out(
     node_type = (node_types or {}).get(node.node_id) or node_type_of(
         depth=node.depth, toc_role=toc_role, toc_kind=toc_kind
     )
+    material_ranges = sanitize_material_ranges(meta.get("material_ranges"))
+    # 存量行名里还带着排版器的选学星号（`\*`）：成行处已卸，读面对旧行同口径卸（零数据修补）。
+    display_name, _ = split_optional_marker(node.name or "")
     return KpNodeOut(
         node_id=node.node_id,
         book_id=node.book_id,
@@ -308,7 +417,7 @@ def _kp_node_out(
         parent_id=node.parent_id,
         depth=node.depth,
         order_hint=node.order_hint,
-        name=node.name,
+        name=display_name,
         role=node.role or "",
         type=node.type or "",
         summary=node.summary or "",
@@ -318,6 +427,8 @@ def _kp_node_out(
         anchors=list(node.anchors or []),
         page_start=page_start,
         page_end=page_end,
+        start_block=start_block,
+        end_block=end_block,
         narrative_ref=node.narrative_ref or "",
         gen_status=node.gen_status,
         gen_batch=node.gen_batch or "",
@@ -328,6 +439,7 @@ def _kp_node_out(
         source_pages=[
             int(page) for page in (meta.get("source_pages") or []) if isinstance(page, int)
         ],
+        material_ranges=material_ranges,
         confirmed=node.confirmed,
         rev=node.rev,
         created_at=node.created_at,
@@ -353,6 +465,14 @@ def _kp_exercise_out(reading: ExerciseReading | None) -> KpExerciseOut | None:
     )
 
 
+def _is_exercise_book(book: AfBook | None) -> bool:
+    """习题集的类型派生走 S4 豁免（`exercise_book=True`）：章按书种类认，不靠子行认。
+
+    目录批先于题行落库，按教材口径「无子行即其他」会把整本目录降成附件、习题受理门永远放不开。
+    """
+    return book is not None and book.doc_kind == DOC_KIND_EXERCISE
+
+
 def _kp_node_echo(node: AfKp, session: Session) -> KpNodeOut:
     """单行回显（背书腿）也带派生两键：屏上已读到的区间不该被一次人工写入抹成 `null`（`KA-42`）。
 
@@ -364,7 +484,7 @@ def _kp_node_echo(node: AfKp, session: Session) -> KpNodeOut:
     return _kp_node_out(
         node,
         _kp_page_spans(rows, book.page_count if book is not None else None),
-        node_types_of(rows),
+        node_types_of(rows, exercise_book=_is_exercise_book(book)),
     )
 
 
@@ -423,6 +543,8 @@ def create_app(
     knowledge_engine_factory: Callable[[str], KnowledgeEngine] | None = None,
     kp_call_identity: LlmCallIdentity | None = None,
     background_jobs: bool = True,
+    reference_fetcher: ReferenceFetcher | None = None,
+    practice_sync: Callable[[str, str], None] | None = None,
 ) -> FastAPI:
     """应用工厂：数据根/数据库/引擎在创建时装配；测试可注入 sqlite 会话与假引擎。
 
@@ -435,6 +557,10 @@ def create_app(
     自己连的是哪家，所以由接线的人给。调用账本身由本工厂用同一个 `session_factory` 建，不需要外部注入。
     经 8900 网关的适配器自报 `accounts_externally`（R8 甲）：账由 8900 落，本仓既不需要身份、
     也不再包一层自写账。
+    `practice_sync(course_id, book_id)` 是「确认即同步」的出站回调（REQ-168 W8）：确认落库后由本仓
+    回调 8900 的 `POST /learn/courses/{course_id}/exercises/sync?book=`，把该书已确认的题投影进课后
+    练习。缺省走 `_post_practice_sync`（httpx，`trust_env=False`，与梳理网关同一出站纪律）；注入只
+    留给测试。**该回调绝不改变 confirm 的返回码**——确认已落库不可回退，回调失败只记警告。
     """
     settings = settings or load_settings()
     data_root = Path(settings.data_dir)
@@ -445,6 +571,8 @@ def create_app(
         session_factory = sessionmaker(bind=db_engine, future=True)
     make_engine = engine_factory or (lambda name: build_engine(name, settings))
     make_knowledge_engine = knowledge_engine_factory or (lambda name: build_text_engine(name, settings))
+    fetch_references = reference_fetcher or collect_reference_notes
+    sync_practice = practice_sync or _post_practice_sync(settings.engine_gateway_url)
     runner = JobRunner(
         session_factory=session_factory,
         engine_factory=make_engine,
@@ -454,6 +582,7 @@ def create_app(
         knowledge_engine_factory=make_knowledge_engine,
         kp_call_ledger=LlmCallLedger(session_factory),
         kp_call_identity=kp_call_identity,
+        reference_fetcher=fetch_references,
     )
 
     @asynccontextmanager
@@ -505,24 +634,31 @@ def create_app(
         return book_dir
 
     def _read_scope(session: Session, book_id: str) -> tuple[Path, str]:
-        """生效解析版本解析的唯一入口（V6）：返回 `(产物目录, job_id 作用域)`。
+        """读面作用域解析的唯一入口（PLAN-030）：返回 `(产物目录, job_id 作用域)`。
 
-        `active_job_id` 非空 → 该版本目录；为空 → 书目录根（legacy 根视图，迁移前存量产物与
-        重 ingest 后的目录都走这里，故根仓库前端不需迁移即可继续读取）。生效目录缺失时显式
-        404 而不回落根视图：静默回落会让读者把旧产物当成新版本核对。
+        作用域＝**已解析页最多的可见版本**（`orchestrator.versions.resolve_visible_version`）：
+        未激活的 `partial`／`failed` 版本里已落盘的页同样可读，`active_job_id` 只在页数并列时优先。
+        生效指针非空而目录缺失时仍显式 404 而不回落：静默回落会让读者把旧产物当成新版本核对。
+        没有带内容的版本时回落书目录根（legacy 根视图，迁移前存量产物与重 ingest 后的目录）。
         """
         book = BookRepository(session).get(book_id)
         book_dir = _require_book_dir(session, book_id)
-        if book is None or not book.active_job_id:
+        if book is None:
             return book_dir, LEGACY_JOB_ID
-        version_dir = version_dir_for(
-            data_root, book.domain_id, book.course_id, book_id, book.active_job_id
-        )
-        if not version_dir.is_dir():
-            raise HTTPException(
-                status_code=404, detail=f"生效版本产物缺失：{book_id} @ {book.active_job_id}"
+        if book.active_job_id:
+            active_dir = version_dir_for(
+                data_root, book.domain_id, book.course_id, book_id, book.active_job_id
             )
-        return version_dir, book.active_job_id
+            if not active_dir.is_dir():
+                raise HTTPException(
+                    status_code=404, detail=f"生效版本产物缺失：{book_id} @ {book.active_job_id}"
+                )
+        version_dir, job_id = resolve_visible_version(
+            session, data_root=data_root, book=book
+        )
+        if version_dir is None:
+            return book_dir, LEGACY_JOB_ID
+        return version_dir, job_id
 
     def _load_page(artifact_dir: Path, page_no: int) -> BlocksPage:
         path = artifact_dir / "pages" / f"p{page_no:04d}.blocks.json"
@@ -739,6 +875,26 @@ def create_app(
             pages=pages,
         )
 
+    @app.get("/api/v1/books/{book_id}/reparse-plan", response_model=ReparsePlanOut)
+    def get_reparse_plan(book_id: SafeBookId, session: SessionDep) -> ReparsePlanOut:
+        """只读重跑建议（PLAN-019）：逐页给出 DB 状态 + 文件核验 + 建议理由；**不替人决定、不触发重跑**。
+
+        `status` 来自 `af_pages`（DB 状态），`has_artifact` 来自版本目录（文件真实性）；
+        `status=parsed` 但 `has_artifact=false` 的页 suggested=true、reason=artifact_missing。
+        """
+        artifact_dir, job_id = _read_scope(session, book_id)
+        total = _page_total(session, book_id)
+        rows = PageRepository(session).list_for_book(book_id, job_id)
+        version_dir = None if job_id == LEGACY_JOB_ID else artifact_dir
+        advice = build_reparse_plan(rows, total_pages=total, version_dir=version_dir)
+        return ReparsePlanOut(book_id=book_id, job_id=job_id, total=total, pages=[
+            ReparsePageAdvice(
+                page_no=a.page_no, status=a.status, has_artifact=a.has_artifact,
+                suggested=a.suggested, reason=a.reason,
+            )
+            for a in advice
+        ])
+
     @app.get("/api/v1/books/{book_id}/manifest", response_model=list[ManifestEntry])
     def get_manifest(book_id: SafeBookId, session: SessionDep) -> list[ManifestEntry]:
         """生效版本的产物清单：文件路径 + 大小 + SHA-256（防篡改/增量），路径相对版本目录。
@@ -789,6 +945,24 @@ def create_app(
         if not image_path.is_file():
             raise HTTPException(status_code=404, detail=f"页图缺失：第 {page_no} 页")
         return FileResponse(image_path, media_type="image/png")
+
+    @app.get("/api/v1/books/{book_id}/images/{filename}")
+    def get_pack_image(book_id: SafeBookId, filename: str, session: SessionDep) -> FileResponse:
+        """生效版本目录的内嵌图片（REQ-179 R1）：题包写入面改写出的读腿 URL 的取图口。
+
+        只按单段文件名取 `pages/images/<filename>`（题包引用 `pages/images/<sha>.jpg` 的
+        尾段），路径分隔符一律 404——文件名是唯一入参，不接受任何目录形状；媒体类型按
+        扩展名白名单映射，未登记的扩展名按字节流给（浏览器可自行判定）。作用域与页图
+        读腿同一 `_read_scope`：无生效版本同口径 404。
+        """
+        artifact_dir, _ = _read_scope(session, book_id)
+        if "/" in filename or "\\" in filename or filename in (".", ".."):
+            raise HTTPException(status_code=404, detail="图片文件名非法（不接受路径分隔）")
+        image_path = ensure_within(artifact_dir, artifact_dir / "pages" / "images" / filename)
+        if not image_path.is_file():
+            raise HTTPException(status_code=404, detail=f"图片缺失：{filename}")
+        media_type = _PACK_IMAGE_MEDIA.get(image_path.suffix.lower(), "application/octet-stream")
+        return FileResponse(image_path, media_type=media_type)
 
     @app.put(
         "/api/v1/books/{book_id}/pages/{page_no}/blocks/{index}/edit",
@@ -999,10 +1173,32 @@ def create_app(
                 status_code=422,
                 detail=f"页码越界：{payload.book_id} 共 {book.page_count} 页，请求 {out_of_range}",
             )
+        total_pages = book.page_count or 0
+        # PLAN-019 范围表达：scope 显式时按 scope 解析目标页；scope 缺省则完全保持旧行为（向后兼容）。
+        if payload.scope == SCOPE_SELECTED and not payload.pages:
+            raise HTTPException(status_code=422, detail="scope=selected 必须提供 pages")
+        if payload.scope is not None:
+            artifact_dir, visible_job = _read_scope(session, payload.book_id)
+            version_dir = None if visible_job == LEGACY_JOB_ID else artifact_dir
+            advice = build_reparse_plan(
+                PageRepository(session).list_for_book(payload.book_id, visible_job),
+                total_pages=total_pages,
+                version_dir=version_dir,
+            )
+            target_list, reasons = resolve_scope(
+                scope=payload.scope,
+                pages=payload.pages,
+                advice=advice,
+                failed_pages=[],
+                total_pages=total_pages,
+            )
+            if not target_list:
+                raise HTTPException(status_code=422, detail="范围解析结果为空：没有需要重跑的页")
+        else:
+            target_list = payload.pages or list(range(1, total_pages + 1))
+            reasons = {}
         # 区域驱动受理门：只查目标页、只计 add（delete/merge 不产生模型提交）；全本提交逐页全查。
-        target_pages = (
-            set(payload.pages) if payload.pages else set(range(1, (book.page_count or 0) + 1))
-        )
+        target_pages = set(target_list)
         add_counts: dict[int, int] = {}
         for row in OperationRepository(session).list_regions_for_book(payload.book_id):
             if row.op == "add":
@@ -1022,20 +1218,37 @@ def create_app(
         except EngineSelectionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         _probe_model_service(make_engine(engine_name))
-        total = len(payload.pages) if payload.pages else (book.page_count or 0)
+        if payload.scope is not None:
+            # 用户裁决：受理时把当前可见版本的目标页状态先写 failed 并写明理由，再补跑；
+            # 只有所有门槛通过、确实要建任务时才写，失败路径不留半成品。
+            with session.no_autoflush:
+                page_repo = PageRepository(session)
+                for page_no in target_list:
+                    current = page_repo.get(payload.book_id, visible_job, page_no)
+                    reason = reasons.get(page_no, payload.scope)
+                    page_repo.upsert(
+                        payload.book_id, visible_job, page_no,
+                        status="failed",
+                        source=current.source if current else "",
+                        quality=current.quality if current else None,
+                        error=f"rerun requested: {reason}",
+                    )
+                session.flush()
+        total = len(target_list)
         job_id = uuid.uuid4().hex[:12]
+        stored_pages = target_list if payload.scope is not None else payload.pages
         job = OperationRepository(session).create(
             ParseJobRow(
                 job_id=job_id,
                 book_id=payload.book_id,
-                pages=payload.pages,
+                pages=stored_pages,
                 engine=engine_name,
                 status=JobStatus.QUEUED,
                 progress={"parsed": 0, "total": total, "failed": 0},
             )
         )
         session.commit()  # 先落库，后台线程才能读到任务行
-        runner.submit(job_id=job_id, book_id=payload.book_id, pages=payload.pages, engine=engine_name)
+        runner.submit(job_id=job_id, book_id=payload.book_id, pages=stored_pages, engine=engine_name)
         return ParseJob(
             id=job.job_id,
             book_id=job.book_id,
@@ -1208,19 +1421,27 @@ def create_app(
 
         本端点**不调** `_read_scope`：知识点是跨版本存活的人工资产，锚点按行自身 `job_id` 那一版解释，
         生效版本产物目录被删也不 404——读不到的落进 `review_flags`，一行都不改写、不删除（`KA-19`）。
-        排序与导出面共用 `order_for_export`，两屏看到的是同一个结构。
+        排序与导出面共用 `order_for_export`，两屏看到的是同一个结构。`stage` 是整本完成读数（`KA-58`）：
+        行集复用上面这一次读，未定位所需的目录页集合只从本版批次流水取一次，不逐行查询、不写库。
         """
         book = BookRepository(session).get(book_id)
         if book is None:
             raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
         repo = KpRepository(session)
-        nodes = order_for_export(repo.list_for_book(book_id))
+        rows = repo.list_for_book(book_id)
+        # 存量重影行读时折叠（D-13）：先排书序再折，留下的才是「书序第一枚」。
+        nodes = collapse_outline_duplicates(order_for_export(rows))
         flags = [
             *anchor_review_flags(session, data_root=data_root, nodes=nodes),
             *unconfirmed_anchor_flags(session, nodes),
         ]
         spans = _kp_page_spans(nodes, book.page_count)
-        types = node_types_of(nodes)
+        types = node_types_of(nodes, exercise_book=_is_exercise_book(book))
+        stage = book_stage_reading(
+            rows,
+            toc_pages=book_toc_pages(session, book_id=book_id, job_id=book.active_job_id),
+            exercise_book=_is_exercise_book(book),
+        )
         return KpWorkspaceOut(
             book_id=book_id,
             in_flight_batch=repo.find_draft_batch(book_id),
@@ -1231,6 +1452,13 @@ def create_app(
             ],
             exercise=_kp_exercise_out(
                 exercise_workspace(session, data_root=data_root, book=book)
+            ),
+            stage=KpStageOut(
+                rows=stage.rows,
+                endorsed_rows=stage.endorsed_rows,
+                blank_summaries=stage.blank_summaries,
+                unlocated_rows=stage.unlocated_rows,
+                done=stage.done,
             ),
         )
 
@@ -1310,6 +1538,23 @@ def create_app(
                     ).model_dump(),
                 )
             raise HTTPException(status_code=409, detail=f"确认动作未落库：{node_id}（并发改写，请重读后重试）")
+        # 确认即同步（REQ-168 W8，用户 2026-11-22 裁决）：确认落库后把该书已确认的题搬进课后练习。
+        # **只在真置位时发**：撤回不搬运（取消背书不该把题送进练习，也不该删已在册的行）；
+        # 失败只记警告、不改变本次 200 与 confirmed=1 —— 确认不可回退，重试会把已做成的事搅乱。
+        #
+        # **必须先 commit 再回调**：`db_session` 的提交发生在端点返回之后，若在此刻就看 8900 的
+        # 读面，上游读不到刚置位的那一行（它按 `confirmed≠0` 供给门筛），同步会白跑一趟。
+        # 先提交不影响本端点的原子性判据：走到这里时 404／409／422 三种拒绝都已排除、写入已成立。
+        if payload.confirmed and result.node.confirmed:
+            course_id = _course_id_of_book(session, result.node.book_id)
+            if course_id:
+                session.commit()
+                try:
+                    sync_practice(course_id, result.node.book_id)
+                except Exception as exc:  # noqa: BLE001 - 详见 docstring：任何失败都不得改本次响应
+                    logger.warning(
+                        "确认后同步课后练习失败（书 %s）：%s", result.node.book_id, type(exc).__name__
+                    )
         return KpConfirmOut(
             node_id=node_id,
             confirmed=result.node.confirmed,
@@ -1381,7 +1626,7 @@ def create_app(
     ) -> KpNarrativeOut:
         """章导读单点生成（`KA-47`）：梳理屏「一键生成／重新生成」的导读腿，同步等一次章级模型调用。
 
-        取材与提示词复用内容批次章腿（`KA-45` 的三块材料），写面只碰导读两处（正文落盘＋指针列），
+        取材与提示词复用内容批次章腿（`KA-65` 的章前块＋子点总结），写面只碰导读两处（正文落盘＋指针列），
         **覆盖**已有导读——与内容批次「已有就不覆盖」的分界是发起人：这里是人对这一章显式要求重写。
         判定序、在飞批次闸与长超时与单点重生成同族；本层只把拒绝原样搬给调用方，不重判。
         """
@@ -1395,6 +1640,7 @@ def create_app(
                 node_id=node_id,
                 if_rev=payload.if_rev,
                 revision_note=payload.revision_note,
+                reference_fetcher=fetch_references,
             )
         except KpGateError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -1423,6 +1669,7 @@ def create_app(
                 node_id=node_id,
                 if_rev=payload.if_rev,
                 revision_note=payload.revision_note,
+                reference_fetcher=fetch_references,
             )
         except KpGateError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -1462,8 +1709,12 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        spans = _kp_page_spans(rows, book.page_count)
-        types = node_types_of(rows)
+        # 显示段按整册在册行切（含点行）：只拿回显的那几行切，章的终点会吞掉它点子行的页。
+        # 存量重影先折（D-13），否则重影行会在切段时占走一页。类型也要在整册行上判（`KA-68`）：
+        # 声明回显只有目录行，缺子行时每一章都会被判成「其他」。
+        current = collapse_outline_duplicates(order_for_export(repo.list_for_book(book_id)))
+        spans = _kp_page_spans(current, book.page_count)
+        types = node_types_of(current, exercise_book=_is_exercise_book(book))
         return KpOutlineDeclareOut(
             book_id=book_id,
             outline=[_kp_node_out(node, spans, types) for node in rows],
@@ -1481,11 +1732,14 @@ def create_app(
         book = BookRepository(session).get(book_id)
         if book is None:
             raise HTTPException(status_code=404, detail=f"书目不存在：{book_id}")
-        nodes = order_for_export(
-            [node for node in KpRepository(session).list_for_book(book_id) if node.confirmed == 1]
-        )
-        spans = _kp_page_spans(nodes, book.page_count)
-        types = node_types_of(nodes)
+        rows = KpRepository(session).list_for_book(book_id)
+        # 折叠先于确认过滤：未确认的第一枚若被过滤掉，第二枚就会顶上来当「第一枚」，读面又出重影。
+        ordered = collapse_outline_duplicates(order_for_export(rows))
+        nodes = [node for node in ordered if node.confirmed == 1]
+        # 显示段在整册行上切、只投影已确认的行：拿过滤后的子集切，未确认的父不在树里，点段会跑到书尾。
+        spans = _kp_page_spans(ordered, book.page_count)
+        # 类型同样在整册行上判（`KA-68`）：子点没确认不代表父章不是章。
+        types = node_types_of(ordered, exercise_book=_is_exercise_book(book))
         return KpExportOut(
             book_id=book_id,
             nodes=[_kp_node_out(node, spans, types) for node in nodes],

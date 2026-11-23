@@ -1,13 +1,31 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-10-23
+最后更新：2026-11-23
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
 
 ## 关闭登记
 
+- PLAN-019 解析产物可信与增量重跑实施（Axiom-Flow，B 类，承载 ARCH-022）已完成（2026-11-23，按用户裁决
+  立项返工重定后 S1/S2/S3/S6 达成、S4/S5 移出转长线），计划按 **`Retain`** 保留在
+  [history/plans/2026-09/2026-09-28-parse-artifact-trust.md](../history/plans/2026-09/2026-09-28-parse-artifact-trust.md)（保留 2026-11-23 目标
+  重定义、ADR 0015 就地修订结论、scope/建议清单/受理先置 failed 的判据推导与历史沿革）；运行时事实源
+  以 [ADR 0015](../adr/0015-db-single-source-for-readiness.md)、
+  [api.md「`GET …/reparse-plan`」/「`POST …/parse-jobs`」](../architecture/api.md) 与
+  [reparse.py](../../src/axiom_flow/orchestrator/reparse.py) 为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-019 / ARCH-022 行。
+- PLAN-018 解析页区域驱动重解析与块结构编辑承接实施（Axiom-Flow，B 类，承载根侧请求 REQ-099）
+  已完成（2026-11-23，按用户口述真机验收关闭），计划按立项判定 **`Retain`** 归档至
+  [history/plans/2026-09](../history/plans/2026-09/2026-09-26-parsing-region-edit-typography-request.md)
+  （保留 R1~R6 对表与草案 A~F、用户裁决 Q1~Q5、W1/W2 落地结论与偏差登记、业务库窗口和
+  S1~S7 判据原文，作根侧 REQ-099 关闭证据）；运行时事实源以晋升后的
+  [parsing-pipeline.md `PP-20`/`PP-21`](../design/parsing-pipeline.md)、
+  [parsing-management.md `PM-18`](../design/parsing-management.md)、
+  [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[api.md](../architecture/api.md) 与
+  [database-design.md](../architecture/database-design.md) 为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-018 行。
 - PLAN-001 文档清理与任务台账重构（Axiom-Flow）已完成（2026-09-11），计划按 `Delete` 删除；
   事实并入 tracker 与相关文档。
 - V2-017 文档治理体系对齐（Axiom-Flow）已完成（2026-09-11），计划按 `Delete` 删除；
@@ -201,3 +219,28 @@
   **壳的路径已变更**：凡引用 `docs/plans/2026-10-21-af-table-family-rebuild.md` 处须改指上述归档位置
   （本批已同步 `docs/adr/0016`、`docs/adr/0017`、`docs/architecture/database-design.md`、
   `docs/design/knowledge-analysis.md` 与 `docs/trackers/*`）。
+- PLAN-029 书级三态派生读数请求（Axiom-Flow，B 类，承载根侧请求 REQ-156）已完成（2026-11-07，
+  W1~W4 逐项达成后关闭），计划按立项判定 **`Retain`** 归档至
+  [history/plans/2026-11](../history/plans/2026-11/2026-11-06-kp-book-stage-derived-read-request.md)
+  （保留三条件严口径的裁决推导、未定位「按本版目录页集合复算」与「集合取不到宁可不绿」两条边界、
+  统计域排除习题／其他附件行的理由、W1~W4 逐项读数与根侧兜底让位的交接读数）；运行时事实源不在壳内，
+  而以 [knowledge-analysis.md `KA-58`](../design/knowledge-analysis.md)（判据本体）、
+  [api.md 工作区回包](../architecture/api.md)（`stage` 五键形状）与
+  `tests/unit/test_knowledge_pipeline.py::TestBookStageReading`＋
+  `tests/contract/test_api_v1_contract.py::TestKpStageReading` 为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-029 行。
+- PLAN-031 目录整理流程与页段显示规则（Axiom-Flow，B 类）已完成（2026-11-09，W1~W9 逐项达成后关闭），
+  计划按关闭时改判 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-08-toc-display-flow.md](../history/plans/2026-11/2026-11-08-toc-display-flow.md)
+  （保留 Q1~Q6 裁决原文、W2~W9 交付读数与 b18／b12／b05 三条真机修正的变异复验；原判 `Delete` 改判理由＝
+  `knowledge-analysis.md`「承载沿革」直链本壳，且壳与实现均未入库、Git 锚点不成立）；运行时事实源以晋升后的
+  [knowledge-analysis.md `KA-42`／`KA-59`~`KA-62`](../design/knowledge-analysis.md) 与
+  [api.md 显示段与去重口径](../architecture/api.md) 为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-031 行。
+- PLAN-032 教材内容解析轮：种类审校、点梳理与章文件夹（Axiom-Flow，B 类）已完成（2026-11-09，W1~W8 交付；
+  W8 的教材三书 `stage=content` 真机窗口经用户当日裁决跳过，按例外收口），计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-08-content-curation-round.md](../history/plans/2026-11/2026-11-08-content-curation-round.md)
+  （保留内容链 P0~P3 裁决原文、W1~W8 逐项读数与「跳过真机窗口」的豁免依据）；运行时事实源以晋升后的
+  [knowledge-analysis.md `KA-63`~`KA-66`](../design/knowledge-analysis.md) 与
+  [api.md `material_ranges` 与六枚流水键](../architecture/api.md) 为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-032 行。

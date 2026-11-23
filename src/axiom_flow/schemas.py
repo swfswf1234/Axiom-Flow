@@ -550,6 +550,25 @@ class PageStateOut(BaseModel):
     edit_count: int = Field(default=0, description="本版本作用域内该页的 edit 意图行数")
 
 
+class ReparsePageAdvice(BaseModel):
+    """`GET /books/{id}/reparse-plan` 的逐页建议：DB 状态 + 文件核验，只建议不决定。"""
+
+    page_no: int
+    status: str
+    has_artifact: bool
+    suggested: bool
+    reason: str
+
+
+class ReparsePlanOut(BaseModel):
+    """只读重跑建议清单：作用域自证 + 逐页建议；不触发任何重跑。"""
+
+    book_id: str
+    job_id: str
+    total: int
+    pages: list[ReparsePageAdvice] = Field(default_factory=list)
+
+
 class PageListOut(BaseModel):
     """`GET /books/{id}/pages` 响应：**不分页**，逐页连续覆盖 `1..total`。
 
@@ -584,12 +603,19 @@ class PageData(BaseModel):
 
 
 class ParseJobCreate(BaseModel):
-    """POST /parse-jobs 请求体。"""
+    """POST /parse-jobs 请求体。
+
+    `scope` 与 `pages` 都是人的范围表达（PLAN-019 2026-11-23）：`pages` 显式即按该页列表执行；
+    `scope` 可另选 `all`/`unfinished`/`failed`/`selected`；两者都缺省时维持全本（向后兼容）。
+    """
 
     book_id: str = Field(pattern=SAFE_SEGMENT_PATTERN)
     pages: list[int] | None = Field(default=None, description="页范围（1 基）；None = 全部页（全本解析）")
     engine: Literal["mineru", "paddleocr-vl", "qwen-vl"] | None = Field(
         default=None, description="解析引擎；缺省回落 AXIOM_OCR_ENGINE（不自动兜底）"
+    )
+    scope: Literal["all", "unfinished", "failed", "selected"] | None = Field(
+        default=None, description="重跑范围；缺省且 pages 也缺省 = 全本（向后兼容）"
     )
 
 
@@ -758,6 +784,16 @@ class KpKeyDefinition(BaseModel):
     definition: str = Field(default="", description="一句话定义：它指什么、条件是什么")
 
 
+class KpMaterialRange(BaseModel):
+    """一条取材区间（`KA-66`）：这条详情读过哪一页的哪几块。"""
+
+    page: int = Field(description="取材页（1 起）")
+    block_indexes: list[int] = Field(
+        default_factory=list,
+        description="该页送进调用的块下标，升序去重",
+    )
+
+
 class KpNodeOut(BaseModel):
     """`af_kp` 一行的响应投影：人工背书域 + 来源与状态读数。
 
@@ -805,6 +841,16 @@ class KpNodeOut(BaseModel):
         description="读时派生的正文区间终点（`KA-42`，不落列）：目录行＝排序后下一枚在册目录行的起点页 − 1，"
         "末行到 `af_books.page_count`（该列缺 ⇒ 折回本行起点页）；点行＝自身锚点页的最大值。",
     )
+    start_block: int | None = Field(
+        default=None,
+        description="读时派生的按块起点（`KA-67`，不落列）：起点页上属于本行的第一块（取自锚 `block_indexes`）。"
+        "`null`＝从整页起，不猜块序；屏上按它与 `page_start` 切正文首段。",
+    )
+    end_block: int | None = Field(
+        default=None,
+        description="读时派生的按块终点（`KA-67`，不落列）：终点页上属于本行的最后一块——正文延续到下一行"
+        "起始页时那一页按块分读，本行止于下一行标题块之前（`null`＝整页）。屏上据此切尾，同页两点不互相越界。",
+    )
     narrative_ref: str = ""
     gen_status: Literal["draft", "candidate", "rejected"]
     gen_batch: str = ""
@@ -829,6 +875,12 @@ class KpNodeOut(BaseModel):
         description="配套模式题行的解答页（`KA-53`，取自 `meta`）：不是锚点、不参与 `KA-18` 的取证解释；"
         "非习题行恒空表。",
     )
+    material_ranges: list[KpMaterialRange] = Field(
+        default_factory=list,
+        description="点行的取材区间（`KA-66`，取自 `meta.material_ranges`）：回答「这条详情读了哪几块」，"
+        "逐页给块下标。章行、习题行与 `full`／`exercise` 通路的行恒为空表；坏项读面归空表，"
+        "不参与去重、确认位与任何受理判据。",
+    )
     confirmed: int = 0
     rev: int = 0
     created_at: datetime | None = None
@@ -852,6 +904,32 @@ class KpExerciseItemOut(BaseModel):
     confirmed: int = 0
     source_book_id: str = ""
     source_pages: list[int] = Field(default_factory=list)
+    match_state: str = Field(
+        default="",
+        description="逐题机器读数状态（REQ-161 W5）：`done` 已判读／`failed` 模型判定失败／空串未判读",
+    )
+    target_item: str = Field(
+        default="", description="对应的教材题目（题号原文）；空串＝模型判定不对应或未判读"
+    )
+    exercise_type: str = Field(default="", description="题型（证明题／计算题…）；空串＝未判读")
+    pair_state: str = Field(
+        default="",
+        description="配对读数（REQ-170 第二步）：`matched` 题面与解答同题／`unpaired` 未配上／"
+        "空串＝旧批次或独立模式；`unpaired` 时 `pair_reason` 点名原因",
+    )
+    pair_reason: str = Field(
+        default="", description="未配上的原因（一句话）；空串＝无原因可报或已配上"
+    )
+    verify_state: str = Field(
+        default="",
+        description="对读校验状态（REQ-170 第三步）：`done` 已判／`failed` 模型没给结论／空串＝没校验腿",
+    )
+    verify_verdict: str = Field(
+        default="",
+        description="校验结论（`done` 时才有意义）：`ok` 四问都过／`suspect` 交人看／"
+        "`reject` 明确错了",
+    )
+    verify_note: str = Field(default="", description="校验给出的一句中文理由（非 ok 时通常非空）")
 
 
 class KpExerciseOut(BaseModel):
@@ -870,13 +948,31 @@ class KpExerciseOut(BaseModel):
     done: bool = False
 
 
+class KpStageOut(BaseModel):
+    """整本书的梳理完成读数（`KA-58`）：四枚计数＋一枚合取判据，全部读时派生、零写库。
+
+    统计域＝在册活行里读时派生 `node_type` ∈ {chapter, point} 的那些；`exercise`／`other` 两类
+    附件行不计（它们不产出总结，计入就使任何带章末习题的书永不完成）。`done` 是严口径：
+    统计域非空 ∧ 每一行都有总结 ∧ 每一行都被确认 ∧ 未定位零枚；统计域零行恒 `false`。
+    未定位与 `KA-33` 同义（锚点非空且全部落在本版目录页上）；目录页集合取不到时 `done` 恒 `false`，
+    宁可黄、不假绿。
+    """
+
+    rows: int = Field(default=0, description="统计域内的在册行数")
+    endorsed_rows: int = Field(default=0, description="其中 `confirmed=1` 的行数")
+    blank_summaries: int = Field(default=0, description="其中 `summary` 为空串的行数")
+    unlocated_rows: int = Field(default=0, description="其中锚点仍全部停在本书目录页的行数（锚为空不计）")
+    done: bool = Field(default=False, description="三条件合取；统计域零行或目录页集合取不到时恒 false")
+
+
 class KpWorkspaceOut(BaseModel):
     """`GET /books/{id}/kp`：整册工作区（目录＋点＋未归档池一次给全）与复核标记。
 
     不分页是形状决定：目录树与「谁挂在谁下面」必须整册读，翻页会把结构切成两屏。
     `in_flight_batch` 就是 `KA-4` 的在飞批次号（无在飞为 `null`），界面据此禁用提交按钮。
     `exercise` 只在习题书或有题行／来源清单的书上有值（`KA-53`）：教材的共享主表里永不含习题行，
-    这一位对它恒 `null`，不制造第二套读数。
+    这一位对它恒 `null`，不制造第二套读数。`stage` 是整本完成读数（`KA-58`），书侧三态屏的
+    第三态取它，不读批次流水的结局列。
     """
 
     book_id: str
@@ -884,6 +980,9 @@ class KpWorkspaceOut(BaseModel):
     nodes: list[KpNodeOut] = Field(default_factory=list)
     review_flags: list[AnchorReviewOut] = Field(default_factory=list)
     exercise: KpExerciseOut | None = None
+    stage: KpStageOut = Field(
+        default_factory=KpStageOut, description="整本梳理完成读数（`KA-58`，读时派生、零列）"
+    )
 
 
 class KpLinkIn(BaseModel):

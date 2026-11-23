@@ -209,11 +209,11 @@ flowchart LR
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | PP-13 | **页级持久化：产物写先于页行提交**：每页成功或失败即 `session.commit()`，且**产物写先于页行提交**，因此「有页行必有对应版本目录里的产物文件」 | 这是断点续跑与「进程被杀不给出空版本」的地基 | `orchestrator/pipeline.py` 页级 commit → `tests/integration/test_parse_persistence.py` |
-| PP-14 | **版本目录唯一落点、齐备判据与激活轮换**：解析产物只写 `<book_dir>/versions/<job_id>/`（`job_id` = `uuid4().hex[:12]`，仍过 PP-5 双闸），内部布局与根布局同构；**齐备** = 目标页全部 `parsed` 且产物在位 + `chunks.json` 与 `manifest.json` 重算成功，同一次判定同时给出任务终态与是否激活生效指针（[PM-11](parsing-management.md)），故「`completed` 但未激活」不可能；**激活成功即删除被替换的旧版本目录**（删除只发生在指针提交之后；`legacy` 与被替换版本恰为本版本不删） | 磁盘上解析正本只留生效版本，历史可解释性由 `af_pages` 页行与 `af_operations` 的 parse 事件行承载、不依赖残留文件。未齐备、失败、中断一律不激活，文件保留在 `versions/` 下供排查、不自动删除、也不被端点读到——运行中被杀则指针仍指旧版，读取端不可能看到半版本。旧目录被读取中句柄持有时删除失败（Windows 共享违例）→ 只告警保留、任务终态不翻转，残留待清理 | `orchestrator/pipeline.py:_version_is_complete()/_retire_replaced_version()`、`ingest/artifacts.py:version_dir_for()` → `tests/unit/test_orchestrator.py`（含删除失败仅告警例） |
-| PP-15 | **写时复制播种**：新版本先按 `os.link` 从**当前生效作用域**（`active_job_id` 指向的版本目录，为空则根视图）继承页图与既有页产物，再写本次目标页；跳过 `manifest.json` / `chunks.json` 派生文件、`book.json` 与 `versions/` 子树——版本 `book.json` 由本次任务从 `af_books` 生成（引擎名与 ingest 时刻必须本版本自证，继承会带回上一版的陈旧值） | 例外：页图硬链接失败回落 `copy2` 并记 `WARNING`。后果：逐页重解析不必重跑整本，且旧版本的文件条目不受影响（`os.replace` 只换目录项） | `ingest/artifacts.py:seed_version_from/link_pages_into`（`_NOT_SEEDED`）、`orchestrator/pipeline.py`（`write_book_meta`） → `tests/unit/test_ingest.py`、`tests/unit/test_orchestrator.py` |
+| PP-14 | **版本目录唯一落点、齐备判据与激活轮换**：解析产物只写 `<book_dir>/versions/<job_id>/`（`job_id` = `uuid4().hex[:12]`，仍过 PP-5 双闸），内部布局与根布局同构；**齐备** = 目标页全部 `parsed` 且产物在位 + `chunks.json` 与 `manifest.json` 重算成功，同一次判定同时给出任务终态与是否激活生效指针（[PM-11](parsing-management.md)），故「`completed` 但未激活」不可能；**激活成功即删除被替换的旧版本目录**（删除只发生在指针提交之后；`legacy` 与被替换版本恰为本版本不删） | 磁盘上解析正本只留生效版本，历史可解释性由 `af_pages` 页行与 `af_operations` 的 parse 事件行承载、不依赖残留文件。未齐备、失败、中断一律不激活，文件保留在 `versions/` 下供排查、不自动删除；其中**已落盘的页仍可被读面读到**（PP-22），未解析的页如实 `pending`／`failed`——运行中被杀则指针仍指旧版，但读面按最全可见版本给内容、不合成半版本。旧目录被读取中句柄持有时删除失败（Windows 共享违例）→ 只告警保留、任务终态不翻转，残留待清理 | `orchestrator/pipeline.py:_version_is_complete()/_retire_replaced_version()`、`ingest/artifacts.py:version_dir_for()` → `tests/unit/test_orchestrator.py`（含删除失败仅告警例） |
+| PP-15 | **写时复制播种**：新版本先按 `os.link` 从**读面同一作用域**（PP-22 的「最全可见版本」，无带内容版本时回落根视图）继承页图与既有页产物，再写本次目标页；跳过 `manifest.json` / `chunks.json` 派生文件、`book.json` 与 `versions/` 子树——版本 `book.json` 由本次任务从 `af_books` 生成（引擎名与 ingest 时刻必须本版本自证，继承会带回上一版的陈旧值） | 例外：页图硬链接失败回落 `copy2` 并记 `WARNING`。后果：逐页重解析不必重跑整本，且旧版本的文件条目不受影响（`os.replace` 只换目录项） | `ingest/artifacts.py:seed_version_from/link_pages_into`（`_NOT_SEEDED`）、`orchestrator/pipeline.py`（`write_book_meta`） → `tests/unit/test_ingest.py`、`tests/unit/test_orchestrator.py` |
 | PP-16 | **清单基准：版本内 POSIX 相对路径**：版本 `manifest.json` 的路径基准是**版本目录内 POSIX 相对路径**（`pages/p0001.blocks.json`），不带 `versions/<job_id>/` 前缀（该字段经 8900 原样透传给前端） | 边界：根视图已无 `manifest.json`（清单端点对 legacy 作用域固定 404，「尚无生效版本」如实呈现）；`build_manifest()` 仍显式排除 `versions/` 子树与隐藏临时文件 | `ingest/artifacts.py:build_manifest()` → `tests/unit/test_ingest.py`、`tests/contract/test_api_v1_contract.py` |
 | PP-17 | **版本自证：SHA 与页数的写入时机**：parse 事件行的 `source_sha256` 与 `page_count` 在建任务后、调用引擎前写入，使「这一版解析的是哪份文件、当时全书多少页」在行内可证，不依赖根视图当前状态 | 重新 ingest 后 SHA 变化即可判定旧版本已不匹配当前源文件 | `orchestrator/pipeline.py` 建任务后调 `db/repositories.py:OperationRepository.record_source_snapshot` → `tests/unit/test_orchestrator.py` |
-| PP-18 | **页行同构与续跑认产物**：新版本播种后把基线里「已 `parsed` **且**产物在位」的页行复制进本版本作用域（`_inherit_page_rows`），因此 `af_pages` 始终如实描述该版本内容，`pages_done` 描述的是生效版本；续跑作用域 = `(book_id, job_id)`：同一 job 重跑时，状态 `parsed` **且** `blocks.json` 在位的页跳过引擎调用（不重解析、不重复落盘） | 只认页行不够——产物缺失时宁可重解析也不给出空版本 | `orchestrator/pipeline.py:_inherit_page_rows/_resumed_pages` → `tests/unit/test_orchestrator.py` |
+| PP-18 | **页行同构与续跑认产物**：新版本播种后把基线里「已 `parsed` **且**产物在位」的页行复制进本版本作用域（`_inherit_page_rows`），因此 `af_pages` 始终如实描述该版本内容，`pages_done` 描述的是本次任务版本（含继承页）的已解析页数；续跑作用域 = `(book_id, job_id)`：同一 job 重跑时，状态 `parsed` **且** `blocks.json` 在位的页跳过引擎调用（不重解析、不重复落盘） | 只认页行不够——产物缺失时宁可重解析也不给出空版本 | `orchestrator/pipeline.py:_inherit_page_rows/_resumed_pages` → `tests/unit/test_orchestrator.py` |
 
 #### 知识块与质量信号
 
@@ -227,6 +227,7 @@ flowchart LR
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
 | PP-21 | **区域驱动页解析：一框一裁剪一提交、一框至多一块**：有人工待识别框（`af_operations` 的 `structure` 意图行中 `payload.op='add'`）的页逐框解析——管线按框 bbox（原页图像素坐标，与 PP-7 同基准）裁剪页图，每框一次 `parse_page`，每次提交独立计超时并先过单一占用闸门（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 4）；该页**不提交整页检测**，框间空隙不成块。框内块先按声明的坐标空间以**裁剪图尺寸**逐轴映射（PP-8），再按裁剪原点平移回原页图坐标系——平移由编排侧完成，归一化侧不知裁剪。框内归一：单个存活块保持原类型与必需字段；多个存活块按阅读序拼接为一个 `paragraph`（文本取各块 markdown 渲染的拼接，公式保留定界符），bbox 取各块并集并夹在框内；无识别内容的框不出块，页质量信号按可见计数暴露（PP-9），不静默丢框。页内块数组按阅读序（`(y0, x0)` 字典序）排列并编 `index`/`order`；验收判据「画 3 框 → 恰 3 块」按有内容的框逐框成块成立 | 逐框过闸门：每框都是独立的模型提交，占用可能在框间变化，串行纪律与 PP-11 的窗口间探活同源。失败域：单框重试 1 次仍 `EngineError` 时**整页**记 `failed`（错误文本点名框序与 `region_id`）——缺框的页不满足一框一块，是半页产物，不落盘。边界：`delete`/`merge` 意图不改解析写面（重解析后的 IoU 重锚定属读投影）；框数上限与受理前 422 归受理面（[api.md](../architecture/api.md)）；无人工框的页与整本未声明框时回落默认检测路径——回滚面只是任务入口的分支，不动产物与版本语义 | `orchestrator/pipeline.py`（区域驱动分支 `_handle_region_page`，读人工框经 `db/repositories.py:OperationRepository.list_regions_for_book`） → `tests/unit/test_orchestrator.py`（`TestRegionDrivenParse`：每框一提交／一框至多一块／单框失败整页判 failed／无框页回落／全本带框页路由／逐框闸门）、`tests/contract/test_api_v1_contract.py`（框数受理前 422） |
+| PP-22 | **读面作用域＝已解析页最多的可见版本**：可见＝版本目录存在、任务已离开 `queued`/`running`、`af_pages` 有 `parsed` 行、且任务创建时刻不早于 `af_books.ingested_at`（重 ingest 前的老版本不算可见）；候选按 `parsed` 数取最大，并列时 `active_job_id` 优先、再按创建序取最新。唯一入口 `orchestrator/versions.py:resolve_visible_version()`，读面（`api/main.py:_read_scope`）与解析基线（PP-15）共用 | 未激活的 `partial`／`failed` 版本里已落盘的页因此可读；`active_job_id` 非空而目录缺失仍显式 404 不回落。**激活门槛不变**（仍是本次目标页齐备，PP-14），「部分可读」不等于「已生效」；补页任务激活后继承基线版本，激活成功后删除被替换版本与基线版本目录 | `orchestrator/versions.py`、`api/main.py:_read_scope()`、`orchestrator/pipeline.py`（基线与 `_retire_replaced_version` 调用） → `tests/contract/test_api_v1_contract.py:TestPartialVersionReadFace` |
 
 ## 失败与质量语义
 
@@ -240,8 +241,8 @@ flowchart LR
 | 整页条目全部未能归一 | 不判空白页、不整页回退，计入 `dropped_block_count`（PP-9、PP-12） |
 | 模型服务提交期不可用 | 不创建任务行、不产出任何产物（状态机侧后果见 [PM 失败与质量语义](parsing-management.md)）；受理后故障 → 任务 `failed`，已解析页与产物保留可续跑 |
 | 模型服务被占用 | 任务在编排层等待闸门，等待期不提交任何内容（闸门判据与文案归属见 [MI-12](model-integration.md)） |
-| 电源中断/进程被杀 | 页级持久化不变式（PP-13）保证已提交页产物齐备 → 启动期归一把遗留活动行判 `interrupted` → 同一 `(book_id, job_id)` 续跑「无行 ∪ failed」页；未激活的版本指针不动，读取端继续看到上一个完整版本 |
-| 磁盘产物被外部删除 | 如实暴露：生效版本目录缺失即 404 不回落根视图；页行 `parsed` 而无产物在逐页清单原样呈现（改判会让磁盘事故从台账消失） |
+| 电源中断/进程被杀 | 页级持久化不变式（PP-13）保证已提交页产物齐备 → 启动期归一把遗留活动行判 `interrupted` → 同一 `(book_id, job_id)` 续跑「无行 ∪ failed」页；读面按最全可见版本给内容（PP-22），未激活版本只露出已落盘页 |
+| 磁盘产物被外部删除 | 如实暴露：`active_job_id` 指向的版本目录缺失即 404 不回落；页行 `parsed` 而无产物在逐页清单原样呈现（改判会让磁盘事故从台账消失） |
 | 激活轮换时旧版本目录被读取持有 | 删除失败只告警并保留目录（PP-14）：指针已切换，残留是磁盘面不是语义面，任务终态不翻转 |
 
 进度写入与终态判据的归属见 [PM-11、PM-15](parsing-management.md)；全本任务因按解析窗口提交，进度**按窗口**
@@ -288,7 +289,7 @@ flowchart LR
   [ADR 0007](../adr/0007-parse-status-semantics.md) 划定终态判据）；PP-10 由 ARCH-018 确立；
   PP-19、PP-20 由 ARCH-004 / ARCH-009 确立；PP-2/14/15/16 的根视图退役与激活轮换修订由
   PLAN-017（REQ-097）确立；PP-21（区域驱动页解析）按
-  [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 4/5 由 PLAN-018（REQ-099 承接）确立。
+  [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 4/5 由 PLAN-018（REQ-099 承接）确立；PP-22（读面作用域＝已解析页最多的可见版本）由 PLAN-030（REQ-160 承接）确立。
 - **配置语境**：MinerU 直连地址读 `QED_OCR_MODEL_URL`（5002，`QED_MINERU_URL` 已删除且无别名）；
   单次调用超时读 `AXIOM_OCR_TIMEOUT`；窗口大小读 `AXIOM_PARSE_WINDOW_SIZE`。模型生命周期与调参归 8900，
   本仓库只连接（PLAN-002 配置简化）。v1 的 `llm_client.py` / `fallback/` 已随 `engines/` 落地退役。

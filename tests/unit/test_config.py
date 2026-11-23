@@ -283,11 +283,10 @@ class TestEngineConfig:
         monkeypatch.setenv("QED_ENGINE_GATEWAY_URL", "http://127.0.0.1:9100/")
         assert load_settings().engine_gateway_url == "http://127.0.0.1:9100"
 
-    def test_the_curation_timeout_outlives_the_gateway_own_call_budget(self, isolated, monkeypatch):
-        """8900 侧单次调用预算（现网 `QED_LLM_TIMEOUT`）实测 300s：本仓等待必须更长，否则慢模型
-        的合法回复会被适配器先掐掉，读成「这一节没产物」。"""
-        assert load_settings().kp_timeout == 360
-        assert load_settings().kp_timeout > 300
+    def test_the_curation_timeout_matches_the_gateway_own_call_budget(self, isolated, monkeypatch):
+        """8900 侧单次调用预算（`QED_LLM_TIMEOUT`，600s）：本仓等待同值，不留余量差
+        （原「必须长于」的口径已撤销）。"""
+        assert load_settings().kp_timeout == 600
 
         monkeypatch.setenv("AXIOM_KP_TIMEOUT", "120")
         assert load_settings().kp_timeout == 120
@@ -295,7 +294,7 @@ class TestEngineConfig:
     def test_a_bad_curation_timeout_falls_back_to_the_default(self, isolated, monkeypatch):
         monkeypatch.setenv("AXIOM_KP_TIMEOUT", "notnum")
 
-        assert load_settings().kp_timeout == 360
+        assert load_settings().kp_timeout == 600
 
 
 class TestOverrides:

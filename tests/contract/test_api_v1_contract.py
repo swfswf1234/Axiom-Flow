@@ -41,6 +41,7 @@ from axiom_flow.db.repositories import (
     LEGACY_JOB_ID,
     BookRepository,
     BookSyncRow,
+    KpBatchRow,
     KpNodeRow,
     KpRepository,
     OperationRepository,
@@ -60,6 +61,7 @@ from axiom_flow.engines.base import (
 )
 from axiom_flow.engines.factory import build_text_engine
 from axiom_flow.engines.kp_gateway import KP_SLOT_NAME
+from axiom_flow.ingest import version_dir_for
 from axiom_flow.orchestrator.knowledge import norm_key_for
 from axiom_flow.schemas import KP_REVIEW_NOTE_MAX_CHARS, NARRATIVE_MAX_CHARS, BlockType
 from tests.support.llm_ledger_schema import create_ledger_table, read_ledger_rows
@@ -232,6 +234,7 @@ def _build(
     knowledge_engine_factory=None,
     kp_call_identity=_TEST_LLM_IDENTITY,
     background_jobs: bool = False,
+    practice_sync=None,
 ):
     """隔离数据根 + SQLite 内存库 + 假引擎；返回 (client, session_factory)。
 
@@ -273,6 +276,8 @@ def _build(
         knowledge_engine_factory=knowledge_engine_factory,
         kp_call_identity=kp_call_identity,
         background_jobs=background_jobs,
+        reference_fetcher=lambda *args, **kwargs: (),
+        practice_sync=practice_sync,
     )
     return TestClient(app), session_factory
 
@@ -282,6 +287,28 @@ def client(tmp_path, monkeypatch) -> TestClient:
     test_client, _ = _build(tmp_path, monkeypatch)
     with test_client as live:
         yield live
+
+
+def _capture_root_sync(monkeypatch, *, raise_error: bool = False):
+    """让随后 `_live`／`_kp_build` 建的应用注入一枚记账桩，替换「确认即同步」的出站回调。
+
+    `_kp_build` 把 `**kwargs` 透传给 `_build`，故 patch 装配层的默认形参即可覆盖全部在册用例的
+    建法。替换的是 `create_app` 的注入点而不是 httpx：调用点与「失败吞并」两条口径都能在本仓
+    断言，不靠真实网络。`raise_error=True` 模拟 8900 不可达／超时那条形。
+    """
+    calls: list[tuple[str, str]] = []
+
+    def _fake(course_id: str, book_id: str) -> None:
+        calls.append((course_id, book_id))
+        if raise_error:
+            raise RuntimeError("8900 down")
+
+    original = _build
+    monkeypatch.setattr(
+        "tests.contract.test_api_v1_contract._build",
+        lambda *args, **kwargs: original(*args, **kwargs, practice_sync=_fake),
+    )
+    return calls
 
 
 def _sync_book(client: TestClient, book_id: str = "mathanalysis-b05") -> None:
@@ -562,6 +589,45 @@ class TestPagesAndManifest:
         _parsed_book(client)
         assert client.get("/api/v1/books/mathanalysis-b05/pages/99").status_code == 404
         assert client.get("/api/v1/books/mathanalysis-b05/pages/99/image").status_code == 404
+
+    def test_pack_image_endpoint_serves_embedded_picture(self, client, tmp_path):
+        """REQ-179 R1 读腿：生效版本目录 `pages/images/<name>` 按文件名取字节。
+
+        题包写入面把图片引用改写成 `/api/v1/books/{id}/images/<name>`（8900 字节转发），
+        本端点是那份 URL 的唯一取图口：与页图读腿同一 `_read_scope` 作用域；路径分隔与
+        越界一律 404，不落到目录外；无生效版本同页图口径 404。
+        """
+        _parsed_book(client)
+        job_id = client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"]
+        images_dir = (
+            tmp_path
+            / "data"
+            / "parsed"
+            / "math-advanced"
+            / "math_analysis"
+            / "mathanalysis-b05"
+            / "versions"
+            / job_id
+            / "pages"
+            / "images"
+        )
+        images_dir.mkdir(parents=True, exist_ok=True)
+        (images_dir / "abc123.jpg").write_bytes(b"\xff\xd8fake-jpeg-bytes")
+
+        response = client.get("/api/v1/books/mathanalysis-b05/images/abc123.jpg")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.content == b"\xff\xd8fake-jpeg-bytes"
+
+        # 防穿越与缺文件一律 404
+        assert client.get("/api/v1/books/mathanalysis-b05/images/nested/x.jpg").status_code == 404
+        assert client.get("/api/v1/books/mathanalysis-b05/images/missing.jpg").status_code == 404
+
+    def test_pack_image_endpoint_requires_active_version(self, client):
+        _sync_book(client)
+        _ingest(client)
+        response = client.get("/api/v1/books/mathanalysis-b05/images/abc123.jpg")
+        assert response.status_code == 404
 
     def test_manifest_requires_active_version(self, client, tmp_path):
         """manifest 是**版本**的自证：ingest 过但无生效版本时，根视图没有 manifest 可给 → 404。
@@ -2424,11 +2490,77 @@ class TestKpCurationEndpoints:
         assert set(ledger["result"]) <= set(KP_RESULT_KEYS)
         assert ledger["result"]["candidate_rows"] == reading["counts"]["candidate"]
         assert ledger["created_at"] is not None
+        assert {
+            key: ledger["result"][key]
+            for key in (
+                "type_review_rows",
+                "type_review_flags",
+                "split_exercise_rows",
+                "point_windows",
+                "point_merges",
+                "material_ranges_rows",
+            )
+        } == {
+            "type_review_rows": 0,
+            "type_review_flags": [],
+            "split_exercise_rows": 0,
+            "point_windows": 0,
+            "point_merges": 0,
+            "material_ranges_rows": 0,
+        }, "六枚内容键恒发，零值出 0／空数组（`KA-27`）"
         # 目录阶段以模型为正腿（`KA-35` 改判）：判页一次＋逐页整理每页一次，知识点每节一次；跑完照常关闭
         assert [name for name, _ in stub.outline_calls] == ["toc_pages", "toc_entries"]
         assert len(stub.section_calls) >= 1
         assert stub.closed is True
         assert self._kp_count(session_factory) == reading["counts"]["candidate"]
+
+    def test_a_content_round_reports_its_six_readings(self, tmp_path, monkeypatch):
+        """`KA-63`~`KA-66`：content 提交后六枚流水键各有值，取材区间与调用块集合逐块相等。"""
+        client, session_factory, stub = self._live(tmp_path, monkeypatch)
+        with session_factory() as session:
+            repository = KpRepository(session)
+            for node_id, name, page, depth, parent in (
+                ("afkp-ch1", "第 1 章 极限", 1, 1, None),
+                ("afkp-s11", "1.1 数列极限", 2, 2, "afkp-ch1"),
+            ):
+                repository.create(
+                    KpNodeRow(
+                        node_id=node_id,
+                        book_id=self.BOOK,
+                        name=name,
+                        norm_key=norm_key_for(name),
+                        node_kind="outline",
+                        depth=depth,
+                        parent_id=parent,
+                        order_hint=page,
+                        anchors=[{"page": page, "block_indexes": [0], "snippet": name}],
+                        gen_status="candidate",
+                        meta={"toc_role": "knowledge"},
+                    )
+                )
+            session.commit()
+
+        gen_batch = self._submit(client, stage="content")
+
+        reading = client.get(f"/api/v1/books/{self.BOOK}/kp-jobs/{gen_batch}").json()
+        result = reading["ledger"]["result"]
+        assert (result["type_review_rows"], result["type_review_flags"]) == (2, [])
+        assert result["split_exercise_rows"] == 0
+        assert (result["point_windows"], result["point_merges"]) == (0, 0)
+        assert result["material_ranges_rows"] == 1
+        # 短桩的章总结带「这一章」自称（用户口径 2026-11-09），首版不过即重试一次，故章腿两次调用。
+        assert len(stub.section_calls) == 1 and len(stub.chapter_calls) == 2
+
+        grouped: dict[int, set[int]] = {}
+        for block in stub.section_calls[0].blocks:
+            grouped.setdefault(block.page, set()).add(block.block_index)
+        expected = [
+            {"page": page, "block_indexes": sorted(grouped[page])} for page in sorted(grouped)
+        ]
+        node = next(
+            node for node in self._workspace(client)["nodes"] if node["node_id"] == "afkp-s11"
+        )
+        assert node["material_ranges"] == expected, "读面区间与本次调用块集合逐块相等"
 
     def test_the_book_face_reads_the_batch_outcome_and_the_derived_in_flight(
         self, tmp_path, monkeypatch
@@ -2920,6 +3052,92 @@ class TestKpCurationEndpoints:
         response = client.post("/api/v1/kp/nodes/afkp-never/confirm", json={"confirmed": True})
         assert response.status_code == 404
 
+    # ---------------------------------------------------------------- 确认后回调 8900 同步腿
+
+    def test_confirm_calls_the_root_sync_leg_once(self, tmp_path, monkeypatch):
+        """确认成功即以该书 `course_id` 回调 8900 同步腿（REQ-168 W8）：题才进课后练习。"""
+        calls = _capture_root_sync(monkeypatch)
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        response = client.post(
+            f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": True}
+        )
+        assert response.status_code == 200, response.text
+        assert calls == [("math_analysis", self.BOOK)]
+
+    def test_confirm_survives_a_failing_sync_leg(self, monkeypatch, tmp_path):
+        """确认已落库不可回退：回调失败只记警告，**不改 confirm 的 200 与 confirmed=1**。"""
+        _capture_root_sync(monkeypatch, raise_error=True)
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        response = client.post(
+            f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": True}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["confirmed"] == 1
+
+    def test_confirm_commits_before_calling_the_sync_leg(self, tmp_path, monkeypatch):
+        """回调发出时确认位必须已在库里可见：`db_session` 的提交在端点之后，不先提交就白跑一趟。
+
+        判据取在回调内部查库（用注入桩拿同一 `session_factory` 的另一条会话），模拟 8900 侧的
+        供给门读面——它按 `confirmed≠0` 筛，读不到新行就等于零题同步。
+        """
+        seen: list[int] = []
+
+        def _fake(course_id: str, book_id: str) -> None:
+            with session_holder[0]() as probe:
+                row = probe.execute(
+                    select(AfKp).where(AfKp.book_id == book_id, AfKp.confirmed == 1)
+                ).first()
+                seen.append(1 if row is not None else 0)
+
+        session_holder: list = [None]
+        original = _kp_build
+
+        def _patched(tmp_path, monkeypatch, **kwargs):
+            client, session_factory, stub = original(tmp_path, monkeypatch, **kwargs)
+            session_holder[0] = session_factory
+            return client, session_factory, stub
+
+        monkeypatch.setattr("tests.contract.test_api_v1_contract._kp_build", _patched)
+        client, session_factory, _ = self._live(tmp_path, monkeypatch, practice_sync=_fake)
+        self._submit(client)
+        node = self._node(client)
+        response = client.post(
+            f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": True}
+        )
+        assert response.status_code == 200, response.text
+        assert seen == [1], "回调发出时确认位未提交，8900 供给门会读不到该行"
+
+    def test_withdraw_does_not_call_the_sync_leg(self, tmp_path, monkeypatch):
+        """撤回不触发同步：取消背书不该把题搬进课后练习，也不该删已在册的行。"""
+        calls = _capture_root_sync(monkeypatch)
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        client.post(f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": True})
+        calls.clear()
+        response = client.post(
+            f"/api/v1/kp/nodes/{node['node_id']}/confirm", json={"confirmed": False}
+        )
+        assert response.status_code == 200, response.text
+        assert calls == []
+
+    def test_rejected_confirm_never_calls_the_sync_leg(self, tmp_path, monkeypatch):
+        """422（缺背书项）与 409（序号冲突）都没落库，一律不回调——只有真写入才搬运。"""
+        calls = _capture_root_sync(monkeypatch)
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        conflict = client.post(
+            f"/api/v1/kp/nodes/{node['node_id']}/confirm",
+            json={"confirmed": True, "if_rev": node["rev"] + 3},
+        )
+        assert conflict.status_code == 409, conflict.text
+        assert calls == []
+
     # ---------------------------------------------------------------- 目录整批声明
 
     def test_outline_declaration_detaches_children_of_absent_entries_and_deletes_nothing(
@@ -3125,7 +3343,8 @@ class TestKpCurationEndpoints:
         assert body["rev"] == chapter["rev"] + 1
         assert body["narrative_ref"] in (None, ""), "章总结腿不写导读指针"
         assert stub.section_calls == [], "章腿不该走单节取材"
-        assert [material.title for material in stub.chapter_calls] == ["第 1 章 极限"]
+        # 短桩总结自带「这一章」自称，触发同模型一次重试；两次调用的章材料同一份。
+        assert [material.title for material in stub.chapter_calls] == ["第 1 章 极限", "第 1 章 极限"]
 
     def test_regenerating_an_exercise_summary_is_422(self, tmp_path, monkeypatch):
         """习题与其他不生成总结：令文口径「什么都不需要」。"""
@@ -3240,6 +3459,212 @@ class TestKpDetailReads:
         ]
         assert (node["source_book_id"], node["source_pages"]) == ("mathanalysis-b07", [3])
 
+    def test_material_ranges_are_the_same_on_the_three_faces(self, tmp_path, monkeypatch):
+        """`KA-66`：取材区间取自 `meta.material_ranges`，工作区／单行回显／导出三面同值。"""
+        client, session_factory = _kp_build(tmp_path, monkeypatch)[:2]
+        _parsed_book(client)
+        ranges = [{"page": 1, "block_indexes": [3, 4]}]
+        with session_factory() as session:
+            KpRepository(session).create(
+                KpNodeRow(
+                    node_id="afkp-range1",
+                    book_id=self.BOOK,
+                    name="一致收敛",
+                    norm_key=norm_key_for("一致收敛"),
+                    anchors=[{"page": 1, "block_indexes": [0], "snippet": "回指正文"}],
+                    meta={"material_ranges": ranges},
+                )
+            )
+            session.commit()
+
+        workspace = client.get(f"/api/v1/books/{self.BOOK}/kp").json()["nodes"][0]
+        assert workspace["material_ranges"] == ranges
+        echo = client.patch("/api/v1/kp/nodes/afkp-range1", json={"summary": "一句话"}).json()
+        assert echo["material_ranges"] == ranges
+
+        with session_factory() as session:
+            assert KpRepository(session).set_confirmed("afkp-range1", confirmed=True).ok
+            session.commit()
+        exported = client.get(f"/api/v1/books/{self.BOOK}/kp/export").json()["nodes"][0]
+        assert exported["material_ranges"] == ranges
+
+    def test_malformed_material_ranges_read_back_as_an_empty_or_cleaned_table(self, tmp_path, monkeypatch):
+        """坏项丢弃、坏根值归空表，点行不受影响（`KA-66` 与 `KA-57` 同轴）。"""
+        client, session_factory = _kp_build(tmp_path, monkeypatch)[:2]
+        _parsed_book(client)
+        with session_factory() as session:
+            repository = KpRepository(session)
+            repository.create(
+                KpNodeRow(
+                    node_id="afkp-range2",
+                    book_id=self.BOOK,
+                    name="函数极限",
+                    norm_key=norm_key_for("函数极限"),
+                    anchors=[{"page": 1, "block_indexes": [0], "snippet": "回指正文"}],
+                    meta={"material_ranges": "不是数组"},
+                )
+            )
+            repository.create(
+                KpNodeRow(
+                    node_id="afkp-range3",
+                    book_id=self.BOOK,
+                    name="连续函数",
+                    norm_key=norm_key_for("连续函数"),
+                    anchors=[{"page": 1, "block_indexes": [0], "snippet": "回指正文"}],
+                    meta={
+                        "material_ranges": [
+                            "不是对象",
+                            {"page": "1", "block_indexes": [0]},
+                            {"page": 1, "block_indexes": ["x", 2]},
+                        ]
+                    },
+                )
+            )
+            session.commit()
+
+        nodes = {
+            node["node_id"]: node
+            for node in client.get(f"/api/v1/books/{self.BOOK}/kp").json()["nodes"]
+        }
+        assert nodes["afkp-range2"]["material_ranges"] == []
+        assert nodes["afkp-range3"]["material_ranges"] == [
+            {"page": 1, "block_indexes": [2]}
+        ]
+
+
+class TestKpStageReading:
+    """`KA-58`：整册工作区带一枚读时派生的 `stage`（零列、零新端点），完成＝三条件合取。
+
+    这里证的是**接线**：五键形状、统计域、以及目录页集合确实来自本版批次流水——纯函数的四例在
+    `tests/unit/test_knowledge_pipeline.py::TestBookStageReading`，两处不重复判同一件事。
+    """
+
+    BOOK = "mathanalysis-b05"
+
+    def _live(self, tmp_path, monkeypatch):
+        client, session_factory, _ = _kp_build(tmp_path, monkeypatch)
+        _parsed_book(client)
+        return client, session_factory
+
+    def _stage(self, client) -> dict:
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp")
+        assert response.status_code == 200, response.text
+        return response.json()["stage"]
+
+    def _seed_row(
+        self,
+        session_factory,
+        *,
+        node_id: str,
+        name: str,
+        page: int,
+        summary: str,
+        confirmed: bool,
+        depth: int = 2,
+        parent_id: str | None = None,
+    ) -> None:
+        with session_factory() as session:
+            repository = KpRepository(session)
+            repository.create(
+                KpNodeRow(
+                    node_id=node_id,
+                    book_id=self.BOOK,
+                    name=name,
+                    norm_key=norm_key_for(name),
+                    parent_id=parent_id,
+                    depth=depth,
+                    summary=summary,
+                    anchors=[{"page": page, "block_indexes": [0], "snippet": "回指正文"}],
+                )
+            )
+            if confirmed:
+                assert repository.set_confirmed(node_id, confirmed=True).ok
+            session.commit()
+
+    def _seed_toc_pages(self, session_factory, *, job_id: str, pages: list[int]) -> None:
+        with session_factory() as session:
+            OperationRepository(session).create_kp_batch(
+                KpBatchRow(
+                    gen_batch="afkp-seedtoc001",
+                    book_id=self.BOOK,
+                    job_id=job_id,
+                    status="ok",
+                    result={"outline_toc_pages": pages},
+                )
+            )
+            session.commit()
+
+    def test_the_workspace_carries_a_five_key_stage_reading(self, tmp_path, monkeypatch):
+        """零行书也带 `stage`：五键齐备、计数为零、`done` 恒 `false`（没有可确认的行不是绿色）。"""
+        client, _ = self._live(tmp_path, monkeypatch)
+
+        workspace = client.get(f"/api/v1/books/{self.BOOK}/kp").json()
+
+        assert workspace["stage"] == {
+            "rows": 0,
+            "endorsed_rows": 0,
+            "blank_summaries": 0,
+            "unlocated_rows": 0,
+            "done": False,
+        }
+        assert workspace["nodes"] == [] and workspace["in_flight_batch"] is None
+        assert workspace["review_flags"] == [] and workspace["exercise"] is None
+
+    def test_done_turns_true_only_when_all_three_conditions_hold(self, tmp_path, monkeypatch):
+        """两行皆有总结、皆已确认、锚都在正文页 ⇒ `done=true`；缺任一条由下两例各打一次。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        job_id = client.get(f"/api/v1/books/{self.BOOK}").json()["active_job_id"]
+        self._seed_toc_pages(session_factory, job_id=job_id, pages=[1, 2])
+        self._seed_row(
+            session_factory, node_id="afkp-stagec1", name="第一章", page=3,
+            summary="本章讲极限。", confirmed=True, depth=1,
+        )
+        self._seed_row(
+            session_factory, node_id="afkp-stagep1", name="数列极限", page=4,
+            summary="ε-N 定义。", confirmed=True, parent_id="afkp-stagec1",
+        )
+
+        stage = self._stage(client)
+
+        assert stage == {
+            "rows": 2,
+            "endorsed_rows": 2,
+            "blank_summaries": 0,
+            "unlocated_rows": 0,
+            "done": True,
+        }
+
+    def test_a_blank_summary_blocks_done(self, tmp_path, monkeypatch):
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        job_id = client.get(f"/api/v1/books/{self.BOOK}").json()["active_job_id"]
+        self._seed_toc_pages(session_factory, job_id=job_id, pages=[1, 2])
+        self._seed_row(
+            session_factory, node_id="afkp-stagec2", name="第一章", page=3,
+            summary="   ", confirmed=True, depth=1,
+        )
+        self._seed_row(
+            session_factory, node_id="afkp-stagep2", name="数列极限", page=4,
+            summary="ε-N 定义。", confirmed=True, parent_id="afkp-stagec2",
+        )
+
+        stage = self._stage(client)
+
+        assert (stage["rows"], stage["blank_summaries"], stage["done"]) == (2, 1, False)
+
+    def test_a_row_still_anchored_on_the_toc_pages_blocks_done(self, tmp_path, monkeypatch):
+        """未定位按**本版目录页集合**判（`KA-33` 同义）：目录页集合直接取自本版批次流水，不是行上标记。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        job_id = client.get(f"/api/v1/books/{self.BOOK}").json()["active_job_id"]
+        self._seed_toc_pages(session_factory, job_id=job_id, pages=[1, 2])
+        self._seed_row(
+            session_factory, node_id="afkp-stagep2", name="函数极限", page=1,
+            summary="ε-δ 定义。", confirmed=True,
+        )
+
+        stage = self._stage(client)
+
+        assert (stage["rows"], stage["unlocated_rows"], stage["done"]) == (1, 1, False)
+
 
 class TestFullChainRegression:
     """`W15`：三块串成一条链的本地读数（解析完成 → 开始梳理 → 梳理完成；目录 → 详情；来源回指）。
@@ -3303,6 +3728,7 @@ class TestFullChainRegression:
         assert points[0]["must_master"] == [] and points[0]["key_definitions"] == [], (
             "桩不给详情读数，两键仍必须在场（空表而不是缺键）"
         )
+        assert points[0]["material_ranges"] == [], "full 通路不写取材区间，键仍必须在场"
         assert workspace["exercise"] is None, "教材的习题读面恒 null"
 
     def test_an_exercise_row_reads_back_its_source_book_and_pages(self, tmp_path, monkeypatch):
@@ -3670,7 +4096,7 @@ class TestKpNarrativeGeneration:
         material = stub.chapter_calls[-1]
         assert material.title == "第 1 章 极限"
         assert ("1.1 数列极限", "数列极限就是 ε-N 语言。") in material.point_summaries
-        assert material.intro_pages and material.intro_pages[0].page_no == 1
+        assert material.blocks and material.blocks[0].page == 1, "章前材料止于首点锚页之前"
         assert self._file(tmp_path, "afkp-ch1").read_text(encoding="utf-8") == body["content"]
         assert self._row(session_factory, "afkp-ch1")[0] == "afkp-ch1.md"
 
@@ -4166,10 +4592,10 @@ class TestAdminPurgeEndpoint:
 
 
 class TestDerivedPageRange:
-    """④ 读面派生的正文区间两键（`KA-42`）：目录行到「下一条目录行之前」，点行到自己锚点的两端。
+    """显示段两键（D-1~D-10）：目录行止于首子之前、点行管到下一枚点之前、同页先到者占页。
 
-    需求方第九令要的是屏上那句「从 X 页到 Y 页」写得准，而算式的正本在点腿取材里——屏侧自推就会
-    与模型实际读过的正文分叉。两键读时算、不落列（零 DDL），根侧 8900 字节转发零改码。
+    取证区间（`section_spans_of`，章含自己的知识点页）与显示段是两条算式：屏上那句「从 X 页到 Y 页」
+    按这里的段切片，点腿取材仍按取证区间。两键读时算、不落列（零 DDL），根侧 8900 字节转发零改码。
     """
 
     BOOK = "mathanalysis-b05"
@@ -4245,8 +4671,8 @@ class TestDerivedPageRange:
             "kp-n3": (9, 12),
         }
 
-    def test_a_missing_page_count_falls_back_to_each_rows_own_start_page(self, tmp_path, monkeypatch):
-        """`af_books.page_count` 缺 ⇒ 折回本行起点页，且一行都不丢：两键退化不是整面 500。"""
+    def test_a_missing_page_count_leaves_the_tail_end_open(self, tmp_path, monkeypatch):
+        """D-9：`af_books.page_count` 缺 ⇒ 非尾行仍按下一行切，尾行只发起点，不猜书末。"""
         client, session_factory = self._live(tmp_path, monkeypatch, page_count=None)
         for index, page in enumerate((2, 5), start=1):
             self._seed(
@@ -4259,7 +4685,7 @@ class TestDerivedPageRange:
                 anchors=[{"page": page}],
             )
 
-        assert self._ranges(client) == {"kp-n1": (2, 2), "kp-n2": (5, 5)}
+        assert self._ranges(client) == {"kp-n1": (2, 4), "kp-n2": (5, None)}
 
     def test_a_row_without_anchors_has_no_range_to_report(self, tmp_path, monkeypatch):
         """没有锚点就没有起点页：两键为空是披露，机器不替它编一个区间（`KA-26` 同轴）。"""
@@ -4276,10 +4702,10 @@ class TestDerivedPageRange:
 
         assert self._ranges(client) == {"kp-n1": (None, None)}
 
-    def test_an_exercise_row_gets_a_real_span_while_a_symbol_table_keeps_one_page(
+    def test_an_exercise_row_ends_before_the_next_row_and_a_tail_symbol_table_runs_on(
         self, tmp_path, monkeypatch
     ):
-        """`KA-46`：习题行是附件身份位，但区间按树序发（正文就在标题页之后）；同批符号表仍只发一页。"""
+        """D-7：习题段到下一行之前（正文就在标题页之后）；书尾附件连续到书末，不退回单页。"""
         client, session_factory = self._live(tmp_path, monkeypatch)
         self._seed(
             session_factory,
@@ -4298,6 +4724,7 @@ class TestDerivedPageRange:
             node_kind="outline",
             depth=2,
             order_hint=2,
+            parent_id="kp-ch1",
             anchors=[{"page": 6}],
             meta={"toc_role": "reference", "toc_kind": "exercise"},
         )
@@ -4312,20 +4739,217 @@ class TestDerivedPageRange:
             meta={"toc_role": "reference", "toc_kind": "symbol_table"},
         )
 
-        assert self._ranges(client) == {"kp-ch1": (2, 8), "kp-ex": (6, 8), "kp-sym": (9, 9)}
+        assert self._ranges(client) == {"kp-ch1": (2, 5), "kp-ex": (6, 8), "kp-sym": (9, 12)}
 
-    def test_point_rows_take_the_two_ends_of_their_own_anchors(self, tmp_path, monkeypatch):
-        """点行两键＝锚点 min／max：屏侧只留一枚消费口，不给「目录行读派生键、点行自算」两套代码。"""
+    def test_point_rows_own_the_pages_up_to_the_next_point_and_stop_at_the_chapter_end(
+        self, tmp_path, monkeypatch
+    ):
+        """D-5：点段起点取自身最小锚页、终点到下一枚点锚页之前；末枚点到章末（此处＝书末）。"""
         client, session_factory = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory,
+            node_id="kp-ch1",
+            name="第1章",
+            node_kind="outline",
+            depth=1,
+            order_hint=1,
+            anchors=[{"page": 2}],
+        )
         self._seed(
             session_factory,
             node_id="kp-p1",
             name="ε-δ 语言",
             node_kind="point",
+            depth=2,
+            order_hint=2,
+            parent_id="kp-ch1",
             anchors=[{"page": 4}, {"page": 3}],
         )
+        self._seed(
+            session_factory,
+            node_id="kp-p2",
+            name="连续性",
+            node_kind="point",
+            depth=2,
+            order_hint=3,
+            parent_id="kp-ch1",
+            anchors=[{"page": 6}],
+        )
 
-        assert self._ranges(client)["kp-p1"] == (3, 4)
+        assert self._ranges(client) == {
+            "kp-ch1": (2, 2),
+            "kp-p1": (3, 5),
+            "kp-p2": (6, 12),
+        }
+
+    def test_a_same_page_pair_carries_its_cut_blocks_on_the_read_face(self, tmp_path, monkeypatch):
+        """同页两点：读面补发派生起点块／终点块，屏上据此按块切（不按页切）。
+
+        前一点止于后一点标题块前（`end_block`）、后一点从自己的标题块起（`start_block`）——两行同占
+        一页、各读各的块段，这正是「在知识点名称那一行切分」的读面形态；块号缺失的行两键为空。
+        """
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        rows = (
+            ("kp-ch1", "第1章", "outline", 1, None, 2, 0),
+            ("kp-p1", "广义实数系", "outline", 2, "kp-ch1", 3, 4),
+            ("kp-p2", "复数域", "outline", 2, "kp-ch1", 3, 15),
+            ("kp-ch2", "第2章", "outline", 1, None, 5, 0),
+        )
+        for order, (node_id, name, kind, depth, parent, page, block) in enumerate(rows, start=1):
+            self._seed(
+                session_factory,
+                node_id=node_id,
+                name=name,
+                node_kind=kind,
+                depth=depth,
+                order_hint=order,
+                parent_id=parent,
+                anchors=[{"page": page, "block_indexes": [block]}],
+            )
+
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp")
+        assert response.status_code == 200, response.text
+        cuts = {
+            node["node_id"]: (
+                node["page_start"],
+                node["page_end"],
+                node["start_block"],
+                node["end_block"],
+            )
+            for node in response.json()["nodes"]
+        }
+
+        assert cuts == {
+            "kp-ch1": (2, 2, 0, None),
+            "kp-p1": (3, 3, 4, 14),
+            "kp-p2": (3, 4, 15, None),
+            "kp-ch2": (5, 12, 0, None),
+        }
+
+    def test_the_export_face_cuts_the_same_segments_as_the_workspace(self, tmp_path, monkeypatch):
+        """D-10：导出面在整册行上切段、只投影已确认行——未确认的父不在输出里，点段也不跑到书尾。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        rows = (
+            ("kp-ch1", "第1章", "outline", 1, None, 2),
+            ("kp-p1", "ε-δ 语言", "point", 2, "kp-ch1", 3),
+            ("kp-p2", "连续性", "point", 2, "kp-ch1", 6),
+        )
+        for order, (node_id, name, kind, depth, parent, page) in enumerate(rows, start=1):
+            self._seed(
+                session_factory,
+                node_id=node_id,
+                name=name,
+                node_kind=kind,
+                depth=depth,
+                order_hint=order,
+                parent_id=parent,
+                anchors=[{"page": page}],
+            )
+        with session_factory() as session:
+            KpRepository(session).set_confirmed("kp-p2", confirmed=True)
+            session.commit()
+
+        workspace = self._ranges(client)
+        exported = client.get(f"/api/v1/books/{self.BOOK}/kp/export")
+        assert exported.status_code == 200, exported.text
+        export = {
+            node["node_id"]: (node["page_start"], node["page_end"])
+            for node in exported.json()["nodes"]
+        }
+
+        assert export == {"kp-p2": (6, 12)}
+        assert export["kp-p2"] == workspace["kp-p2"], "同一行在两面上的显示段必须逐字相同"
+
+    def test_a_stored_duplicate_outline_row_is_folded_on_the_read_face(self, tmp_path, monkeypatch):
+        """D-13：存量重影由读面折叠——同父同名只出书序第一枚，不修补数据。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory,
+            node_id="kp-ch1",
+            name="第1章",
+            node_kind="outline",
+            depth=1,
+            order_hint=1,
+            anchors=[{"page": 2}],
+        )
+        for node_id, order, page in (("kp-a", 2, 3), ("kp-b", 3, 5)):
+            self._seed(
+                session_factory,
+                node_id=node_id,
+                name="1.1 极限",
+                node_kind="outline",
+                depth=2,
+                order_hint=order,
+                parent_id="kp-ch1",
+                anchors=[{"page": page}],
+            )
+
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp")
+        assert response.status_code == 200, response.text
+        nodes = [node for node in response.json()["nodes"] if node["node_kind"] == "outline"]
+
+        assert [node["node_id"] for node in nodes] == ["kp-ch1", "kp-a"]
+
+    def test_the_same_name_under_two_chapters_stays_on_the_read_face(self, tmp_path, monkeypatch):
+        """反向判据：父位不同就不是重影——两章的「习题课」各出一行。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        rows = (
+            ("kp-ch1", "第1章", 1, None, 2),
+            ("kp-a1", "习题课", 2, "kp-ch1", 3),
+            ("kp-ch2", "第2章", 1, None, 6),
+            ("kp-a2", "习题课", 2, "kp-ch2", 7),
+        )
+        for order, (node_id, name, depth, parent, page) in enumerate(rows, start=1):
+            self._seed(
+                session_factory,
+                node_id=node_id,
+                name=name,
+                node_kind="outline",
+                depth=depth,
+                order_hint=order,
+                parent_id=parent,
+                anchors=[{"page": page}],
+            )
+
+        response = client.get(f"/api/v1/books/{self.BOOK}/kp")
+        assert response.status_code == 200, response.text
+        names = [node["name"] for node in response.json()["nodes"] if node["node_kind"] == "outline"]
+
+        assert names == ["第1章", "习题课", "第2章", "习题课"]
+
+    def test_the_export_face_folds_the_same_duplicates(self, tmp_path, monkeypatch):
+        """D-10／D-13：导出面与工作区共用同一把去重键，两枚都背书也只外发第一枚。"""
+        client, session_factory = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory,
+            node_id="kp-ch1",
+            name="第1章",
+            node_kind="outline",
+            depth=1,
+            order_hint=1,
+            anchors=[{"page": 2}],
+        )
+        for node_id, order, page in (("kp-a", 2, 3), ("kp-b", 3, 5)):
+            self._seed(
+                session_factory,
+                node_id=node_id,
+                name="1.1 极限",
+                node_kind="outline",
+                depth=2,
+                order_hint=order,
+                parent_id="kp-ch1",
+                anchors=[{"page": page}],
+            )
+        with session_factory() as session:
+            repo = KpRepository(session)
+            for node_id in ("kp-ch1", "kp-a", "kp-b"):
+                repo.set_confirmed(node_id, confirmed=True)
+            session.commit()
+
+        exported = client.get(f"/api/v1/books/{self.BOOK}/kp/export")
+        assert exported.status_code == 200, exported.text
+
+        assert [node["node_id"] for node in exported.json()["nodes"]] == ["kp-ch1", "kp-a"]
 
     def test_a_single_row_echo_keeps_its_derived_range(self, tmp_path, monkeypatch):
         """背书腿的单行回显同样带两键：屏上已读到的区间不该被一次人工写入抹成 `null`。"""
@@ -4348,8 +4972,13 @@ class TestDerivedPageRange:
         assert body["summary"] == "人工写的章级总结"
         assert (body["page_start"], body["page_end"]) == (2, 4)
 
-    def test_a_chapter_runs_to_the_next_chapter_not_the_next_row(self, tmp_path, monkeypatch):
-        """章区间按树序算：首节与章共用一页时，章不塌成那一页（`DEFECT-028` 的读面一侧）。"""
+    def test_a_chapter_sharing_a_page_with_its_first_section_shows_only_that_page(
+        self, tmp_path, monkeypatch
+    ):
+        """D-4／D-6 的读面一侧：章与首节同页时章只展示那一页，首节顺延到下一页起算。
+
+        取证区间（`section_spans_of`）仍把首节的正文页算给章——两条算式各有各的用途，本用例只钉显示段。
+        """
         client, session_factory = self._live(tmp_path, monkeypatch)
         rows = (
             ("kp-c1", "第1章 实数", 1, 2, None),
@@ -4370,14 +4999,14 @@ class TestDerivedPageRange:
             )
 
         assert self._ranges(client) == {
-            "kp-c1": (2, 8),
-            "kp-s11": (2, 6),
+            "kp-c1": (2, 2),
+            "kp-s11": (3, 6),
             "kp-s12": (7, 8),
             "kp-c2": (9, 12),
         }
 
-    def test_a_reference_row_spans_only_its_own_page(self, tmp_path, monkeypatch):
-        """附件行只占自己那页：书目／索引之后没有内容可读，别把书尾算进它的区间。"""
+    def test_a_front_matter_row_spans_only_its_own_page(self, tmp_path, monkeypatch):
+        """D-7：书前件（锚页早于第一枚知识点行）单页——符号表不把正文页吞进自己的显示段。"""
         client, session_factory = self._live(tmp_path, monkeypatch)
         self._seed(
             session_factory,
@@ -4433,3 +5062,97 @@ class TestDerivedPageRange:
             "kp-ex": "exercise",
             "kp-bib": "other",
         }
+
+
+class _ScriptedEngines:
+    """同一引擎按阶段切换故障域：受理前的探活与任务执行都会向工厂取引擎。"""
+
+    def __init__(self, engine: FakeEngine) -> None:
+        self.engine = engine
+
+    def __call__(self, name: str) -> FakeEngine:
+        return self.engine
+
+
+class TestPartialVersionReadFace:
+    """PLAN-030：未激活版本里已解析的页可读；补页任务从最全版本继承并激活。"""
+
+    BOOK = "mathanalysis-b05"
+
+    def _book_dir(self, tmp_path):
+        return tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / self.BOOK
+
+    def test_partial_version_pages_are_readable_without_active_pointer(self, tmp_path, monkeypatch):
+        fake = _WindowedEngine(fail_spans={(3, 4)})
+        client, _ = _build(
+            tmp_path,
+            monkeypatch,
+            engine_factory=lambda name: fake,
+            book_pages=6,
+            parse_window_size=2,
+        )
+        _sync_book(client)
+        _ingest(client)
+
+        job = client.post("/api/v1/parse-jobs", json={"book_id": self.BOOK}).json()
+        assert job["status"] == "partial"
+        assert client.get(f"/api/v1/books/{self.BOOK}").json()["active_job_id"] is None
+
+        listed = client.get(f"/api/v1/books/{self.BOOK}/pages")
+        assert listed.status_code == 200, listed.text
+        body = listed.json()
+        assert (body["scope"], body["job_id"]) == ("active", job["id"])
+        states = {page["page_no"]: page for page in body["pages"]}
+        assert [(states[no]["status"], states[no]["has_artifact"]) for no in (1, 2)] == [
+            ("parsed", True),
+            ("parsed", True),
+        ]
+        assert (states[3]["status"], states[3]["has_artifact"]) == ("failed", False)
+        assert client.get(f"/api/v1/books/{self.BOOK}/pages/1").status_code == 200
+
+    def test_backfill_inherits_fullest_version_and_activates(self, tmp_path, monkeypatch):
+        fake = _WindowedEngine(fail_spans={(3, 4)})
+        client, _ = _build(
+            tmp_path,
+            monkeypatch,
+            engine_factory=_ScriptedEngines(fake),
+            book_pages=6,
+            parse_window_size=2,
+        )
+        _sync_book(client)
+        _ingest(client)
+
+        partial = client.post("/api/v1/parse-jobs", json={"book_id": self.BOOK}).json()
+        assert partial["status"] == "partial"
+        assert client.get(f"/api/v1/books/{self.BOOK}").json()["pages_done"] == 4
+
+        fake.fail_spans.clear()
+        backfill = client.post(
+            "/api/v1/parse-jobs", json={"book_id": self.BOOK, "pages": [3, 4]}
+        ).json()
+
+        assert backfill["status"] == "completed", backfill
+        book = client.get(f"/api/v1/books/{self.BOOK}").json()
+        assert (book["active_job_id"], book["pages_done"]) == (backfill["id"], 6)
+        states = client.get(f"/api/v1/books/{self.BOOK}/pages").json()["pages"]
+        assert [page["status"] for page in states] == ["parsed"] * 6
+        assert all(page["has_artifact"] for page in states)
+
+        retired = version_dir_for(
+            tmp_path / "data", "math-advanced", "math_analysis", self.BOOK, partial["id"]
+        )
+        assert not retired.is_dir(), "被继承的旧版本在激活后应清理，盘上只留生效版本"
+
+    def test_missing_active_version_dir_stays_404(self, tmp_path, monkeypatch):
+        client, _ = _build(tmp_path, monkeypatch, engine_factory=lambda name: FakeEngine())
+        _parsed_book(client)
+        job_id = client.get(f"/api/v1/books/{self.BOOK}").json()["active_job_id"]
+
+        shutil.rmtree(
+            version_dir_for(tmp_path / "data", "math-advanced", "math_analysis", self.BOOK, job_id)
+        )
+
+        response = client.get(f"/api/v1/books/{self.BOOK}/pages")
+
+        assert response.status_code == 404
+        assert "生效版本产物缺失" in response.json()["detail"]
