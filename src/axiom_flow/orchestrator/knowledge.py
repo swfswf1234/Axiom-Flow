@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -43,8 +44,12 @@ from axiom_flow.db.repositories import (
     sanitize_material_ranges,
 )
 from axiom_flow.engines.base import (
+    CHAPTER_TEXT_PROMPT_VERSION,
     ChapterInput,
     ChapterReply,
+    ChapterTextInput,
+    ChapterTextPoint,
+    ChapterTextSource,
     EngineError,
     ExerciseClassifyInput,
     ExerciseClassifyItem,
@@ -128,6 +133,7 @@ from axiom_flow.normalize.toc import (
     locate_entries,
     node_type_of,
     node_types_of,
+    normalize_entry_levels,
     page_full_text,
     page_sample_text,
     pick_in_window,
@@ -138,7 +144,13 @@ from axiom_flow.normalize.toc import (
     toc_entries_across_pages,
     toc_marker_pages,
 )
-from axiom_flow.schemas import BlocksPage, BlockType, LastCurationResult
+from axiom_flow.schemas import (
+    BlocksPage,
+    BlockType,
+    ChapterTextCheck,
+    ChapterTextRequest,
+    LastCurationResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1135,6 +1147,8 @@ def _sequential_toc_readings(
             for row in reading.entries:
                 entries.extend(_cleaned_model_entries(page, row))
             if on_page is not None and len(entries) > start:
+                page_entries = _normalize_model_levels(entries[start:])
+                entries[start:] = page_entries
                 on_page(entries, start)
     if not found:
         return _SequentialTocRead(fallback_pages=tuple(sorted(set(fallback))), judged_pages=tuple(judged))
@@ -1146,6 +1160,7 @@ def _sequential_toc_readings(
             for page_no, entry in toc_entries_across_pages(pages)
         ]
         fallback.extend(found)
+    entries = _normalize_model_levels(entries)
     return _SequentialTocRead(
         toc_pages=tuple(sorted({*found, *fallback})),
         entries=tuple(entries),
@@ -1254,8 +1269,20 @@ def _entries_from_pages(
         for row in rows:
             entries.extend(_cleaned_model_entries(page, row))
         if on_page is not None and len(entries) > start:
+            page_entries = _normalize_model_levels(entries[start:])
+            entries[start:] = page_entries
             on_page(entries, start)
-    return entries, fallback
+    return _normalize_model_levels(entries), fallback
+
+
+def _normalize_model_levels(
+    entries: Sequence[tuple[int, TocEntry, str]],
+) -> list[tuple[int, TocEntry, str]]:
+    normalized = normalize_entry_levels([entry for _, entry, _ in entries])
+    return [
+        (page, fixed, model_ref)
+        for (page, _entry, model_ref), fixed in zip(entries, normalized, strict=True)
+    ]
 
 
 def _cleaned_model_entries(page: BlocksPage, row: Any) -> list[tuple[int, TocEntry, str]]:
@@ -1555,7 +1582,7 @@ def _outline_identity(model_ref: str, name: str) -> tuple[str, str]:
     """
     if is_exercise_label(name):
         return TOC_ROLE_REFERENCE, "exercise"
-    if model_ref == OUTLINE_MODEL_REF_TOC:
+    if model_ref in (OUTLINE_MODEL_REF_TOC, OUTLINE_MODEL_REF_LLM):
         return reference_role_for_name(name)
     return TOC_ROLE_KNOWLEDGE, ""
 
@@ -1858,8 +1885,8 @@ def build_outline(
             node
             for node in nodes
             if (previous := landed_by_id.get(node.row.node_id)) is not None
-            and (node.row.anchors, node.row.order_hint, node.row.parent_id)
-            != (previous.anchors, previous.order_hint, previous.parent_id)
+            and (node.row.anchors, node.row.order_hint, node.row.parent_id, node.row.depth)
+            != (previous.anchors, previous.order_hint, previous.parent_id, previous.depth)
         ]
         if changed:
             sink.repoint(changed)
@@ -5838,6 +5865,49 @@ def retry_exercise_book_items(
 # --------------------------------------------------------------------------- 章级总结与导读（KA-45）
 
 
+def normalize_chapter_text_request(request: ChapterTextRequest) -> ChapterTextRequest:
+    """规范化课程证据的序列顺序，供提示词与证据哈希共用。"""
+    body = request.model_dump(mode="json", exclude_none=True)
+    for source in body["sources"]:
+        source["points"].sort(key=lambda point: (point["name"], point["summary"]))
+    body["sources"].sort(key=lambda source: (source["book_id"], source["chapter_name"]))
+    return ChapterTextRequest.model_validate(body)
+
+
+def chapter_text_material(request: ChapterTextRequest) -> ChapterTextInput:
+    """把课程证据映射为无页码、无块锚的章腿输入。"""
+    normalized = normalize_chapter_text_request(request)
+    return ChapterTextInput(
+        course_id=normalized.course_id,
+        chapter_kp_id=normalized.chapter_kp_id,
+        chapter_name=normalized.chapter.name,
+        chapter_summary=normalized.chapter.summary,
+        chapter_narrative=normalized.chapter.narrative,
+        sources=tuple(
+            ChapterTextSource(
+                book_id=source.book_id,
+                title=source.title,
+                chapter_name=source.chapter_name,
+                summary=source.summary,
+                points=tuple(
+                    ChapterTextPoint(name=point.name, summary=point.summary) for point in source.points
+                ),
+            )
+            for source in normalized.sources
+        ),
+    )
+
+
+def chapter_text_evidence_sha256(request: ChapterTextRequest) -> str:
+    """由显式目标、规范化证据与提示词版本计算确定性哈希。"""
+    payload = {
+        "prompt_version": CHAPTER_TEXT_PROMPT_VERSION,
+        "evidence": normalize_chapter_text_request(request).model_dump(mode="json", exclude_none=True),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class ChapterBuild:
     """章腿的读数：问到的章数、写进 `summary` 的章数、落盘的导读篇数、失败章与点名清单。"""
@@ -5945,17 +6015,18 @@ ReferenceFetcher = Callable[[str, Sequence[str]], Sequence[ReferenceNote]]
 
 
 def _with_reference_notes(
-    material: ChapterInput,
+    material: ChapterInput | ChapterTextInput,
     point_titles: Sequence[str],
     fetcher: ReferenceFetcher | None,
     *,
     node_id: str,
-) -> ChapterInput:
+) -> ChapterInput | ChapterTextInput:
     """给章材料挂上检索资料（PLAN-033）：检索只是增强面，任何外部故障都退回无检索材料。"""
     if fetcher is None:
         return material
+    title = material.chapter_name if isinstance(material, ChapterTextInput) else material.title
     try:
-        notes = tuple(fetcher(material.title, tuple(point_titles)))
+        notes = tuple(fetcher(title, tuple(point_titles)))
     except Exception:  # noqa: BLE001 - 外部源故障不得吃掉整章
         logger.warning("章级检索失败，按无检索资料继续：%s", node_id, exc_info=True)
         return material
@@ -6002,12 +6073,19 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", "", text or "").lower()
 
 
-def _chapter_corpus(material: ChapterInput) -> str:
-    """出处语料：章名＋章前正文＋子点名称与总结＋检索资料（标题与摘要）。"""
-    parts = [material.title]
-    parts.extend(block.text for block in material.blocks)
-    for title, summary in material.point_summaries:
-        parts.extend((title, summary))
+def _chapter_corpus(material: ChapterInput | ChapterTextInput) -> str:
+    """出处语料：章名＋教材材料＋子点名称与总结＋检索资料（标题与摘要）。"""
+    if isinstance(material, ChapterTextInput):
+        parts = [material.chapter_name, material.chapter_summary, material.chapter_narrative]
+        for source in material.sources:
+            parts.extend((source.title, source.chapter_name, source.summary))
+            for point in source.points:
+                parts.extend((point.name, point.summary))
+    else:
+        parts = [material.title]
+        parts.extend(block.text for block in material.blocks)
+        for title, summary in material.point_summaries:
+            parts.extend((title, summary))
     for note in material.reference_notes:
         parts.extend((note.title, note.text))
     return _squash(" ".join(parts))
@@ -6065,7 +6143,7 @@ def _chapter_text_issues(text: str, corpus: str) -> list[str]:
 
 
 def chapter_issues(
-    material: ChapterInput,
+    material: ChapterInput | ChapterTextInput,
     replied: ChapterReply,
     *,
     check_summary: bool = True,
@@ -6121,26 +6199,37 @@ def _engine_model_name(engine: KnowledgeEngine) -> str:
 
 def chapter_reply_with_retry(
     engine: KnowledgeEngine,
-    material: ChapterInput,
+    material: ChapterInput | ChapterTextInput,
     *,
     check_summary: bool = True,
     check_narrative: bool = True,
 ) -> tuple[ChapterReply, tuple[str, ...]]:
     """一次生成＋同模型一次重试（C-5／C-6）：不过则附修改要求重发，仍不过则原样交回并给命中项。
 
-    首版调用失败照旧抛出（失败域不变）；重试调用失败保留首版与命中项——此时「照写并注明」比
-    整章作废更接近用户口径。重试返回空段时用首版该段兜底，命中项按最终要写的两段重算。
+    首版调用失败照旧抛出（失败域不变）；书籍章腿重试失败保留首版与命中项。课程级章腿的重试
+    失败不得把不确定出站结果改写成首版成功，直接抛给 API 映射为 503。重试返回空段时用首版该段
+    兜底，命中项按最终要写的两段重算。
     """
-    replied: ChapterReply = engine.chapter(material)
+    if isinstance(material, ChapterTextInput):
+        generate = getattr(engine, "chapter_text", None)
+        if not callable(generate):
+            raise EngineError("当前文字引擎未提供 chapter_text 课程级章腿")
+        target_id = material.chapter_kp_id
+    else:
+        generate = engine.chapter
+        target_id = material.parent_id
+    replied: ChapterReply = generate(material)
     issues = chapter_issues(
         material, replied, check_summary=check_summary, check_narrative=check_narrative
     )
     if not issues:
         return replied, ()
     try:
-        retried: ChapterReply = engine.chapter(replace(material, retry_issues=issues))
+        retried: ChapterReply = generate(replace(material, retry_issues=issues))
     except EngineError as exc:
-        logger.warning("章腿重试失败，保留首版并落注记：%s（%s）", material.parent_id, exc)
+        if isinstance(material, ChapterTextInput):
+            raise
+        logger.warning("章腿重试失败，保留首版并落注记：%s（%s）", target_id, exc)
         return replied, issues
     merged = ChapterReply(
         summary=retried.summary or replied.summary,
@@ -6150,6 +6239,29 @@ def chapter_reply_with_retry(
         material, merged, check_summary=check_summary, check_narrative=check_narrative
     )
     return merged, remaining
+
+
+def generate_chapter_text(
+    engine: KnowledgeEngine,
+    request: ChapterTextRequest,
+    reference_fetcher: ReferenceFetcher | None = None,
+) -> tuple[ChapterReply, tuple[str, ...], str]:
+    """课程级多书同章生成：复用检索、确定性校验与同模型一次重试。"""
+    material = chapter_text_material(request)
+    point_titles = tuple(point.name for source in material.sources for point in source.points)
+    material = _with_reference_notes(
+        material,
+        point_titles,
+        reference_fetcher,
+        node_id=material.chapter_kp_id,
+    )
+    replied, issues = chapter_reply_with_retry(engine, material)
+    return replied, issues, _engine_model_name(engine)
+
+
+def chapter_text_check(issues: Sequence[str], model: str) -> ChapterTextCheck:
+    """把确定性校验结果与只读模型名组装为冻结响应块。"""
+    return ChapterTextCheck(passed=not issues, issues=list(issues), model=model)
 
 
 def extract_chapters(
@@ -7205,6 +7317,7 @@ class _KpOutlineSink:
                     "anchors": node.row.anchors,
                     "order_hint": node.row.order_hint,
                     "parent_id": node.row.parent_id,
+                    "depth": node.row.depth,
                 }
                 for node in nodes
             ],

@@ -1,7 +1,7 @@
 # ADR 0004：解析管线归位与模型直连（对齐根仓库 ADR 0014）
 
 状态：Accepted
-最后更新：2026-10-26
+最后更新：2026-11-26
 关联代码：`src/axiom_flow/engines/`、`src/axiom_flow/orchestrator/`、`src/axiom_flow/ingest/`
 关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_design_documents.py`
 
@@ -35,13 +35,12 @@ v0.1 模型形态（[ADR 0002](0002-pending-design-location.md) 承接的
    （2026-09-17 用户裁决，PLAN-002）。
 5. **数据落点**：产物落 `<QED_DATA_ROOT>/parsed/<domain_id>/<course_id>/<book_id>/`；数据库
    统一 `qed` 库 `af_*` 命名空间表族（首建时四表：af_books/af_parse_jobs/af_pages/af_block_edits）。
-6. **独立性**：解析不再要求 8900 在线；模型服务可经根仓库脚本手动启停。`qed_llm_calls`
-   调用记录由本仓库在直连成功路径自写（`service=axiom_flow`）。
-   （修订文本梳理半边，2026-10-26 用户出裁并批准代改在册措辞：**文本槽位的出站经 8900 统一
-   中转**——prompt 由本仓组装、调用由本仓发起，但一次调用**只落一行账且由 8900 写**，本仓的自写腿与
-   包装器在该通路不启用（归因随请求体上送）。故本条的「直连自写」语义限定在图像槽位；文本槽位以
-   [knowledge-analysis.md](../design/knowledge-analysis.md) 的 `KA-22`／`KA-23` 为准。服务启动仍不依赖
-   8900 与模型在线，梳理批次只能人工发起，因此「一起来就在跑模型」不成立。）
+6. **独立性与记账边界**：解析不再要求 8900 在线；模型服务可经根仓库脚本手动启停。文本槽位的
+   出站经 8900 统一中转，prompt 由本仓组装、调用由本仓发起；生产 `qed_llm_calls` 统一由 8900 写，
+   AF 不重复直写同一笔，本地账本包装器不启用。图像槽位继续直连模型服务，但不因此恢复 AF 自写
+   生产账的旧语义。调用记账与共享表业务写入的完整边界以
+   [ADR 0020](0020-shared-table-write-and-llm-accounting-boundary.md) 为准；服务启动仍不依赖 8900
+   与模型在线，梳理批次只能人工发起。
 
 ## 后果
 
@@ -55,5 +54,6 @@ v0.1 模型形态（[ADR 0002](0002-pending-design-location.md) 承接的
 
 取代：无（部分修订 [ADR 0002](0002-pending-design-location.md) 承接的 `model-mode-config.md`
 中「MinerU 仅经 8900 网关可达」的解析路径，该设计文档归档 `history/design/`）。
-被取代：无。
+部分被取代：决定 6 的「图像槽位由本仓库自写调用账」语义由
+[ADR 0020](0020-shared-table-write-and-llm-accounting-boundary.md) 取代；模型直连与生命周期归属不变。
 来源：根仓库 `QED-Engine/docs/adr/0014-parsing-ownership-and-model-boundary.md`（同轮对齐）。

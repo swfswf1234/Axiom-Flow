@@ -2,211 +2,228 @@
 
 设计状态：Accepted
 确认状态：已确认
-实现状态：Verified（v2 拓扑与 8902 服务面已落地并真机取证）
-最后更新：2026-11-07
-关联代码：`src/axiom_flow/api/main.py`（应用装配与生命周期）、`src/axiom_flow/config.py`（端口、数据根、引擎地址）、`scripts/axiom_flow_service.py`（8902 唯一启停入口）
+实现状态：Verified（8902 服务面、解析版本与梳理通路已实现）
+最后更新：2026-11-27
+关联代码：`src/axiom_flow/api/main.py`（应用装配与生命周期）、`src/axiom_flow/config.py`（端口、数据根、引擎地址）、`scripts/axiom_flow_service.py`（8902 启停入口）
 关联测试：`tests/contract/test_architecture_documents.py`、`tests/contract/test_fixed_document_form.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、
 [ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、
 [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)
 
-> 本篇只回答一个问题：**这套系统由哪些进程组成、各段职责归谁、边界画在哪里**。
-> 端点字段、表结构、模块映射、流程判据都不在这里——它们各有唯一事实源，见下方「读者路径」。
+> 本篇只回答：**这套系统由哪些进程组成、各段职责归谁、边界画在哪里**。
+> 端点字段见 [api.md](api.md)，模块映射见 [code-map.md](code-map.md)，全库列级设计见根文档
+> `../../../docs/architecture/database-design.md`；本篇不复制字段或 DDL。
 
 ## 目的与边界
 
-Axiom-Flow 是 QED-Engine 的**后端解析组件**：把 PDF 教材完整解析为统一格式（Markdown/LaTeX/
-结构化块），支撑前端做高还原对照展示与人工校验。**模型生命周期归 8900、解析管线归本仓库**
-（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）；前端由 QED-Engine 负责，
-本仓库只保证 API 契约与产物格式稳定。
+Axiom-Flow 是运行在 **8902** 的独立后端解析服务，把已登记的 PDF 资料转化为可对照、可复核、可继续梳理的
+结构化产物。它负责：
 
-本篇**不管**的内容与其事实源：
+- **PDF ingest**：校验源文件、计算哈希、渲染 150 DPI 页图并登记 ingest 元数据。
+- **解析与 OCR**：经引擎适配器调用 MinerU，归一化为 Markdown、LaTeX 与结构化版面块，完成公式、表格和
+  图片还原的前后处理。
+- **质量审阅**：产出页级质量信号、失败页清单与可追溯错误，支持人工块编辑、页确认和结构意图。
+- **解析版本**：一次解析作业产生一个版本，支持同版本续跑、生效指针切换和按版本读取。
+- **知识点梳理与长文产物**：从生效版本生成章、节、知识点、关系与来源锚点，长叙述写入 `kp/` 文件。
 
-| 不管 | 唯一事实源 |
+边界按服务职责划分：
+
+| 边界 | 归属 |
 | --- | --- |
-| 端点参数、响应结构、错误码 | [api.md](api.md) |
-| 表结构与列语义、迁移序列 | [database-design.md](database-design.md) |
-| 模块 ↔ 设计 ↔ 测试的映射 | [code-map.md](code-map.md) |
-| 解析流程、状态流转、引擎协议、梳理通路、质量门槛与验收判据 | [design/](../design/index.md) 四篇的「确定规范」条文（`PP-n` / `PM-n` / `MI-n` / `KA-n`） |
-| 工程治理规则 | [standards/](../standards/index.md) |
-| 当前进度、排期、阻塞与遗留 | [trackers/](../trackers/index.md)（`project-status.md` 与 `todo.md`） |
+| 前端展示与学习交互 | QED-Engine 前端 8903；浏览器只连 8900，不直连 8902 |
+| 网关、配置、服务托管与模型生命周期 | QED-Engine 后端 8900 |
+| 资料发现、下载、校验与书目登记 | QED-Tracker 8901；Axiom-Flow 只消费其已验证书目 |
+| 解析管线、版本编排、归一化与产物落盘 | Axiom-Flow 8902 |
+| 模型文件、启停、探针与调参 | 8900；Axiom-Flow 经适配器直连模型服务，不经 8900 转发解析流量 |
+| API 契约与产物格式稳定 | Axiom-Flow 本仓库；跨项目只经 HTTP、共享数据根和隔离表族协作 |
 
-**读者路径**：
+解析引擎分派是显式的：未实现或未知引擎直接报错，不静默回落。预处理恒在 `ingest/`，后处理恒在
+`normalize/`，不把本仓库职责转成引擎侧调参开关。
 
-| 读者 | 顺序 |
+### 架构事实源
+
+| 范围 | 入口 |
 | --- | --- |
-| 新接手的开发者 | 本篇 → [code-map.md](code-map.md) → [design/parsing-pipeline.md](../design/parsing-pipeline.md) → [guides/development.md](../guides/development.md) |
-| 8903 前端 / 8900 网关 | [api.md](api.md) 全文 → [design/parsing-management.md](../design/parsing-management.md) 的状态语义 → 产物布局（本篇） |
-| 运维与数据操作 | [guides/operations.md](../guides/operations.md) → 本篇「失败与兼容语义」 → [database-design.md](database-design.md) 迁移节 |
-| 模型/引擎侧 | [design/model-integration.md](../design/model-integration.md)（配置、适配器契约、失败语义） |
+| 三项目四服务总体边界 | `../../../docs/architecture/four-service-architecture.md` |
+| 8900 对外契约 | `../../../docs/architecture/api-contracts.md` |
+| 全库 16 表列级设计 | `../../../docs/architecture/database-design.md` |
+| Axiom-Flow 端点 | [api.md](api.md) |
+| Axiom-Flow 数据库迁移与实现镜像 | [database-design.md](database-design.md) |
+| 模块、设计与测试映射 | [code-map.md](code-map.md) |
+| 解析、模型与梳理判据 | [design/](../design/index.md) |
 
 ## 当前契约
 
-### 版本与纪元
-
-- **文档与架构纪元＝v2**（推倒重来后的新序列，[ADR 0001](../adr/0001-v2-exploration-direction.md)；
-  v1 资料整体在 `docs/history/v1-20260814/`，只解释背景，不覆盖当前设计）。纪元是**文档与决策
-  序列**，不随产品版本改写，因此不出现在文档标题里。
-- **产品版本＝v1.0（解析与知识库优化轮）**，登记在 [ADR 索引](../adr/index.md)；版本切换由用户确认，
-  v0.1 的已交付/未交付判据见本篇「能力矩阵（v0.1）」（交付基线，随版本留档），逐任务进度只在
-  [`trackers/project-status.md`](../trackers/project-status.md)。
-- **包版本与 HTTP 自报版本**是第三个独立坐标（`pyproject.toml` 与 `axiom_flow.__version__`，
-  经 FastAPI 的 `version` 字段自报），与上面两者都不等价；三者关系变化时须同步
-  [api.md 的服务信息](api.md)。
-
 ### 进程与端口
 
-| 角色 | 地址 | 归属仓库 | 生命周期由谁管 | 谁消费 |
-| --- | --- | --- | --- | --- |
-| Axiom-Flow API（8902） | `http://127.0.0.1:8902/api/v1` | **本仓库** | 本仓库 `scripts/axiom_flow_service.py`（根仓库可黑盒调用） | 8900 网关 |
-| MinerU 推理服务（5002） | `http://127.0.0.1:5002` | 根仓库 `scripts/image-model/`（WSL 容器） | 根仓库 8900 | 8902 的引擎适配器**直连** |
-| 网关与模型生命周期（8900） | 根仓库 | QED-Engine | 根仓库 | 8903 前端 |
-| 书目数据服务（8901） | 根仓库 | QED-Engine | 根仓库 | 8902 的 `POST /books/sync` |
-| 对照与校验前端（8903） | 根仓库 | QED-Engine | 根仓库 | 人 |
-| MySQL `qed` 库 | 本机 | 共享实例（`af_*` 表族为本方私有命名空间） | 建表与结构＝本仓库 Alembic；实例＝环境侧 | 8902 |
-| 集成测试库 `qed_test` | 本机 | 本方自有 `af_*` 表族 + `alembic_version` | 测试夹具（显式 opt-in） | `tests/integration/` |
-
-**只经 HTTP 与数据库交互，跨仓库不存在代码依赖**：模型文件、启停、探针、资源互斥与调参全在根仓库
-一侧；本仓库不感知具体模型，也不暴露调参入口。
-
-### 运行拓扑
+| 角色 | 地址 | 生命周期 | 与 8902 的关系 |
+| --- | --- | --- | --- |
+| Axiom-Flow API 与作业执行器 | `127.0.0.1:8902/api/v1` | 本仓库服务脚本 | 对外 REST 与后台单 worker |
+| QED-Engine 后端 | `127.0.0.1:8900` | 根仓库 | HTTP 网关、模型生命周期、文本梳理中转 |
+| QED-Tracker | `127.0.0.1:8901` | 子仓库 | 8902 经 HTTP 同步已验证书目 |
+| QED-Engine 前端 | `127.0.0.1:8903` | 根仓库 | 只经 8900 消费 8902 数据 |
+| MinerU 推理服务 | `127.0.0.1:5002` | 8900 托管 | 8902 引擎适配器 HTTP 直连 |
+| MySQL 业务库 | `qed` | 环境侧 | 8902 写 `af_*`，按契约消费共享 `qed_*` |
 
 ```mermaid
 flowchart TB
-    subgraph QED["QED-Engine（前端/网关）"]
-        UI["前端 8903 对照与校验"]
-        GW["8900 网关<br/>数据域适配 + 模型生命周期"]
-        BOOK["8901 书目数据服务<br/>qt_books"]
+    subgraph QED["QED-Engine"]
+        UI["前端 8903"]
+        GW["8900 网关<br/>数据域适配 + 模型生命周期 + 文本调用"]
+        BOOK["8901 书目服务"]
     end
-    subgraph WIN["Windows 本地（本仓库）"]
-        API["8902 FastAPI<br/>解析编排 + 对外 API v1"]
+    subgraph AF["Axiom-Flow 8902"]
+        API["FastAPI<br/>API + 作业编排"]
         ENG["引擎适配器<br/>mineru / paddleocr-vl / qwen-vl"]
-        DB[("qed 库 af_* 表族")]
-        DATA["QED_DATA_ROOT/parsed/&lt;domain&gt;/&lt;course&gt;/&lt;book_id&gt;/<br/>页图 + markdown + blocks.json + chunks.json + versions/"]
-        RAW["QED_DATA_ROOT/raw/&lt;domain&gt;/&lt;course&gt;/&lt;*.pdf&gt;（只读）"]
+        DB[("qed 库<br/>af_* 四表")]
+        DATA["QED_DATA_ROOT/parsed/<br/>页图 + Markdown + blocks + chunks + versions + kp"]
+        RAW["QED_DATA_ROOT/raw/<br/>源 PDF（只读）"]
     end
-    subgraph MODELS["本地模型服务（8900 启停托管）"]
-        MA["MinerU 容器 5002（mineru-api）"]
+    subgraph MODELS["本地模型服务"]
+        MA["MinerU 5002"]
         PV["PaddleOCR-VL（预留）"]
     end
 
-    UI -->|"REST /api/v1（只连 8900）"| GW
+    UI -->|"REST：唯一入口"| GW
     GW -->|"数据域适配"| API
-    GW -->|"模型生命周期 /models"| MA
-    API -->|"取已验证书目"| BOOK
-    API -->|"引擎适配器直连"| ENG
-    ENG -->|"HTTP"| MA
+    API -->|"书目同步 HTTP"| BOOK
+    API --> ENG
+    ENG -->|"HTTP 直连"| MA
     ENG -.->|"预留"| PV
-    API -->|"任务/页/编辑状态"| DB
+    API -->|"文本梳理 HTTP"| GW
+    API -->|"任务、页、意图与梳理状态"| DB
     API -->|"只读源 PDF"| RAW
     API -->|"产物落盘"| DATA
 ```
 
-一次请求的完整时序（含 8900 透传与作业轮询形状）事实源在
-[api.md 的服务信息节](api.md)，本篇不重复。
+### 运行约束
 
-### 数据边界与产物布局
+- API 受理后由单 worker 串行执行解析与梳理；同一时刻只允许一个解析占用模型服务，避免叠加 GPU 负载。
+- 模型占用探针每 5 秒复看，最长等待 900 秒；“被占用”与“服务不可用”分列，不互相冒充。
+- 服务启动不要求 8900 或模型在线；数据根、数据库配置和管理面开关仍须显式满足。
+- 8902 离线时 8900 返回 503 并降级展示；8901 离线只影响同步，已同步书目照常可读。
+- 模型提交期探活失败返回 503 且不创建任务行；受理后的故障落入任务终态，不伪造从未运行的任务。
 
-数据根顶层是**白名单登记制**（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）：顶层只允许
-下列目录，白名单之外一律为野生区，发现即登记处置；条目的增删权限在根仓库 ADR 0018，本仓库不自行
-扩张。本服务在该骨架里的位置是**唯一写入 `parsed/`**。
+### 程序设计架构
+
+### 分层
+
+程序按 **API → 作业/版本服务 → 解析引擎/模型客户端 → 产物仓储** 分层，依赖只向下：
+
+| 层 | 主要落点 | 职责 |
+| --- | --- | --- |
+| API | `src/axiom_flow/api/` | REST v1、参数校验、同步/ingest/解析/梳理受理、只读投影、人工编辑与确认、非公开管理面 |
+| 作业与版本服务 | `src/axiom_flow/orchestrator/` | 单 worker 调度、受理门、版本播种与续跑、终态与激活、启动期归一、梳理批次与长文生成 |
+| 解析引擎与模型客户端 | `src/axiom_flow/engines/`、`normalize/`、`schemas.py` | MinerU 协议、文本网关客户端、统一页结果、坐标/类型/公式归一、质量信号与分块 |
+| 产物仓储 | `src/axiom_flow/ingest/artifacts.py`、`src/axiom_flow/db/repositories.py` | 数据根内原子落盘、路径闸、清单与哈希；`af_*` 元数据、状态、事件与意图持久化 |
+
+API 不直接拼装引擎协议；作业服务不绕过仓储写文件或写库；引擎差异在适配层消化，归一化层只认统一
+`PageResult` 与 `Block` 形状。
+
+### 版本作用域
+
+- 一次解析作业对应 `af_operations` 的 parse 事件行，`op_id` 即 `job_id`，产物落在
+  `parsed/<domain>/<course>/<book>/versions/<job_id>/`。
+- `af_books.active_job_id` 是唯一生效指针；`NULL` 表示根视图 `legacy`，不是“无数据”。
+- `af_pages` 以 `(book_id, job_id, page_no)` 隔离页状态；同 job 重放时，已 `parsed` 且产物在位的页跳过引擎。
+- 块编辑意图绑定版本；页级结构意图不带版本坐标、跨版本存活；`af_kp.job_id` 只记录取证版本，不参与节点作用域。
+- 目标页齐备且清单重算成功后，任务终态与版本激活使用同一判据；`partial`、`failed` 不切生效指针。
+
+### 事件与人工意图
+
+`af_operations` 用 `lifecycle` 分开两类行：
+
+- `event` 记录发生过什么，包括解析版本生命周期与梳理批次流水；非 parse 事件只插入不改写。
+- `intent` 保存人工当前意图，块编辑按 `intent_key` 幂等 upsert，结构意图按书行锁整批替换。
+- 机器路径不替人置 `af_kp.confirmed`；页确认与知识确认都是人工位，不能被批次收尾或启动归一覆盖。
+
+知识点梳理从生效版本读取页产物，经文本网关生成目录与知识点，写入 `af_kp` 和 `kp/<node_id>.md`；
+人工复核只更新人工域与确认位，跨仓提升仍走 8900 的契约通路。
+
+### 数据与资源边界
+
+### 数据库所有权
+
+Axiom-Flow 只拥有 `af_*` 四张私有表：
+
+| 表 | 边界职责 |
+| --- | --- |
+| `af_books` | 书目快照、ingest/解析进度、生效版本指针与梳理结局 |
+| `af_operations` | 解析版本事件、梳理批次流水与人工意图 |
+| `af_pages` | 一个版本内一页的状态、质量、产物索引与确认态 |
+| `af_kp` | 章、节、知识点、关系、锚点、批次与人工确认 |
+
+共享 `qed_*` 不归本仓库改结构：`qed_domain`/`qed_course` 是只读坐标，`qed_knowledge_point` 按根契约消费与
+提升，`qed_llm_calls` 是统一调用账，生产账由 8900 写，本服务不重复记账。全库 16 表列级设计正本只在根文档
+`../../../docs/architecture/database-design.md`；本仓库 [database-design.md](database-design.md) 只承载迁移链、
+运行约束与实现镜像。
+
+### HTTP 边界
+
+- 8903 → 8900 → 8902 是唯一前端数据链；8900 消费 `af_*` 只经 8902 API。
+- 8902 → 8901 只取已验证书目；不直连 `qt_*`，不把对方表结构复制进本仓库。
+- 8902 → MinerU 是解析直连；8902 → 8900 只承载文本梳理中转与契约消费。
+- 跨仓库不存在 Python 代码依赖；模型容器不挂载 Windows 盘，产物由 Windows 编排层落盘。
+
+### 数据根产物
+
+`QED_DATA_ROOT` 必须显式配置且为既有目录，不静默回退到仓库内路径。本服务只读 `raw/`，只写 `parsed/`，
+不写数据根 `tmp/`；正常服务路径也不写 `backups/`。
 
 <!-- data-root-whitelist:start -->
 - `raw/` — 源 PDF 只读输入区（QED-Tracker 写入，本服务只读不写）
-- `tmp/` — 临时区（**本服务不写**，见 `PP-6`）
-- `parsed/` — 解析产物区（**本服务唯一写入区**）
+- `tmp/` — 临时区（本服务不写）
+- `parsed/` — 解析产物区（本服务唯一写入区）
 - `backups/` — D 类数据操作的备份留痕例外区
 <!-- data-root-whitelist:end -->
 
 ```text
 <QED_DATA_ROOT>/
-├── raw/<domain_id>/<course_id>/*.pdf          # 源 PDF，只读、不复制
+├── raw/<domain_id>/<course_id>/*.pdf
 └── parsed/<domain_id>/<course_id>/<book_id>/
-    ├── book.json                              # ingest 元数据（page_count / sha256 / source_file）
-    ├── pages/p<NNNN>.png|md|blocks.json       # 根视图（active_job_id 为 NULL 时的生效作用域）
-    ├── manifest.json  chunks.json             # 根视图清单与知识块
-    └── versions/<job_id>/                     # 一个解析版本 = 一次解析任务，内部布局与根视图同构
-        ├── pages/…  manifest.json  chunks.json
+    ├── pages/p<NNNN>.png
+    ├── versions/<job_id>/
+    │   ├── book.json
+    │   ├── pages/p<NNNN>.png|md|blocks.json
+    │   ├── manifest.json
+    │   └── chunks.json
+    └── kp/<node_id>.md
 ```
 
-> 上图只展开本服务读写的两区（`raw/` 只读、`parsed/` 唯一写入）；白名单里的 `tmp/` 与
-> `backups/` 不在产物布局内，本服务不写它们（`PP-6`）。
+产物路径必须位于数据根内，路径段由统一构造器校验；写入采用同目录临时件加原子替换。页图、Markdown、
+版面块、分块与长文是文件正本，数据库只存元数据、状态、索引与指针，不存大字段正文。
 
-- **数据根必须显式配置**：`QED_DATA_ROOT` 缺失即在启动期报错，不静默回退到仓库内目录，任何仓内
-  路径都不得当数据根（[ADR 0009](../adr/0009-data-root-must-be-explicit.md)）。
-- **仓库工作区目录卫生**（[ADR 0012](../adr/0012-workspace-directory-hygiene.md)）：仓库根 `tmp/` 是仓内
-  唯一临时与留档区（一次性窗口脚本、取证留档、备份件；`.gitignore` 排除、不入库、可随手清理）；
-  仓内 `data/` 留档区已退役、不得复现；`scripts/` 只放长期受管脚本；`logs/` 只写本项目日志且文件数
-  ≤3；本仓库不含前端（`web/` 已删除，UI 归 QED-Engine 根仓库）。注意仓库根 `tmp/` 与数据根
-  `<QED_DATA_ROOT>/tmp/`（本服务不写，`PP-6`）是两个不同位置。
-- **写入与清除同域**：产物路径一律经 `ingest/artifacts.py` 的两个构造器生成（自带 `parsed/`
-  前缀与单段名校验），清除作用域同样限 `parsed/` 子树（[api.md](api.md) 管理端点节）。
-- 路径唯一格式与原子落盘判据是 [parsing-pipeline.md 的 `PP-3`/`PP-4`](../design/parsing-pipeline.md)；
-  「哪一版生效」的唯一事实源是 `af_books.active_job_id`，切版＝单列 UPDATE，不搬文件（`PP-14`/`PP-15`）。
-- 全部落盘路径必须位于数据根之内，`domain_id`/`course_id`/`book_id`/`job_id` 必须是安全单段（`PP-5`）。
-- 引擎中间产物只存在于内存，数据根下不出现作业临时目录（`PP-6`）。
+### 资源与安全边界
 
-### 边界原则
-
-- **模型生命周期与应用层分离**：模型文件、启停、探针、资源互斥与**模型调参**由根仓库 8900 管理；
-  本仓库只经引擎适配器消费模型服务端点（[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)）。
-- **解析直连、无自动兜底**：Axiom-Flow 直连本地模型服务，不经 8900 网关，保证解析管线在本仓库
-  一端可完整调试；引擎分派是显式的，未实现或未知即报错，不静默切换引擎。
-- **预处理与后处理恒在本仓库**：输入整形只落 `ingest/`，结果修补只落 `normalize/`，不靠引擎侧
-  新增调参开关（[model-integration.md 的 `MI-15`](../design/model-integration.md)）。
-- **数据边界**：源 PDF 只读；产物落 `QED_DATA_ROOT/parsed/`，目录布局沿用根仓库 dataset 约定
-  （只链接不复制）。
-- **元数据入 DB**：书目 / 操作事件与人工意图（解析任务、块编辑、结构声明）/ 页状态与确认 / 知识点
-  结构落 `qed` 库 `af_*` **四表**（`af_books`、`af_operations`、`af_pages`、`af_kp`，
-  [database-design.md](database-design.md)），产物正本在文件系统，DB 不存大字段。
-- **WSL 只经 HTTP**：容器不挂载 Windows 盘，产物一律由 Windows 编排层落盘。
-- **测试隔离**：默认测试不访问公网、不调用外部模型服务、不写运行数据库；MySQL 层只在显式 opt-in
-  时启用，且只用 `qed_test` 内本方自有的 `af_*` 表族（[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)）。
-
-### 能力矩阵（v0.1）
-
-| 能力 | 状态 | 判据事实源 |
-| --- | --- | --- |
-| 书目同步与 af_* 私有表族读写 | 已交付 | `PM-1`~`PM-5` |
-| PDF ingest（150 DPI 页图 + 元数据 + 原子落盘） | 已交付 | `PP-2`~`PP-4` |
-| MinerU 适配（窗口串行提交、逐页提交、坐标与公式归一） | 已交付 | `PP-8`~`PP-12`、`MI-5`~`MI-10` |
-| 知识块切分与质量信号 | 已交付 | `PP-19`、`PP-20` |
-| 解析版本作用域（写时复制播种、续跑认产物、生效指针） | 已交付 | `PP-14`~`PP-18`、`PM-6` |
-| 状态语义（结局三态、进度/结局分列、启动期归一） | 已交付 | [ADR 0007](../adr/0007-parse-status-semantics.md)、`PM-8`~`PM-15` |
-| 只读对照数据供给（清单 / 逐页状态 / 页图 / 分块 / 版本 / 作业列表） | 已交付 | [api.md](api.md) ③ 类 |
-| 块级人工编辑落库与回显 | 已交付 | `PM-3`、`PM-5` |
-| 页级结构意图声明落库（人工框 / 删块 / 并块，跨版本存活） | 已实现，待真机窗口 | [ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[api.md](api.md) ③ 类 |
-| 非公开一键清除（先清后建） | 已交付 | [api.md 管理面节](api.md)、`PM-17` |
-| 知识点梳理与提升通路（种类分流、四值阶段、批次三态、确认与只读导出） | 本侧通路已实现（受理门七道＋种类×阶段／重跑组合／目标教材三类组合门、两阶段执行体、收尾与启动期归一、十一条端点、批次流水与调用账追加行、教材与习题集两条习题腿、知识点详情两枚读数，文本引擎适配器也已接入＝`KA-22` 的 `qed-gateway`）；缺 8900 拉取式提升作业与真机梳理窗口 | [knowledge-analysis.md](../design/knowledge-analysis.md) `KA-1`~`KA-57` |
-| PaddleOCR-VL / qwen-vl 引擎槽位 | 预留，未实现 | `MI-11`~`MI-13` |
-| 8903 端到端联调与重建产物后的真机校验写入 | 未交付（等根侧排期与产物重建窗口） | 只在 `trackers/` 登记 |
-| 检索 / 知识图谱 / 数学解析器 / 学习交互 | 非 v0.1 目标 | [roadmap](../trackers/roadmap.md) |
+- 模型文件、启停、探针、资源互斥与调参归 8900；8902 只持有调用协议与必要地址。
+- 密钥只从环境或 `.env` 读取，不进入响应、日志、异常或数据库自由文本。
+- 默认测试不访问公网、不调用外部模型、不写运行数据库；MySQL 集成测试仅在显式 opt-in 时使用 `qed_test`。
+- 本服务不隐式扫描用户数据根；测试与运维动作使用临时目录或显式批准的人工窗口。
 
 ## 失败与兼容语义
 
-- **谁离线时谁降级**：8902 离线 → 8900 返回 503 并降级展示，不影响其他界面；8901 离线 → 同步
-  取数失败（503），已同步行照常可读；模型服务离线 → 提交期探活 503 且**不创建任务行**。逐条
-  错误码定义在 [api.md](api.md)，本仓库侧的完整失败面在
-  [parsing-management.md](../design/parsing-management.md) 的「失败与质量语义」段。
-- **如实报错，不静默回落**：生效版本目录缺失即 404；页行标 `parsed` 而产物不在位，在逐页清单里
-  原样暴露，不改判、不回落根视图。静默改判会让磁盘事故从台账上消失。
-- **契约稳定性承诺**：切版不改 URL 与响应结构；归一化映射表版本与产物必须成对，修复前落盘的产物
-  与其版面块下标不回溯修正（`PP-9`）；`af_*` 是本方私有命名空间，不改根仓库的表。
-- **并发与资源边界**：同一时刻只允许一个解析占用模型服务（编排层占用闸门在提交之前，占用与
-  「服务不可用」两种原因分列文案，`MI-9`/`MI-10`）；窗口大小与超时是配置项而非自适应值。
-- **兼容基线**：SQLite 与 MySQL 双栈同一份 DDL，迁移必须升降级可往返；旧版本产物按
-  `versions/<job_id>/` 保留，不被自动删除。
+- **失败隔离**：逐页路径单页最多重试一次；窗口级失败不重试，同 job 续跑恢复。已成功页先落产物再提交页行，
+  后续异常不回滚已交付页。
+- **重启归一**：服务在受理首个请求前把遗留 `queued`/`running` 改为 `interrupted`，书目进度收回 `pending`；
+  该规则以单实例部署为前提。
+- **600s 墙是单次调用预算，不是整本作业总墙**：OCR 的一个窗口或一页共享 600 秒 deadline，梳理单次文本
+  调用同为 600 秒。全本最坏挂钟随窗口数增长，约为“窗口数 × 600 秒”加处理开销；900 秒模型占用等待是另一道闸。
+- **不静默回落**：生效版本目录缺失返回 404；页行称已解析而产物缺失时逐页披露，不改判为根视图。
+- **兼容基线**：SQLite 与 MySQL 双栈共用契约；旧版本产物按 `versions/<job_id>/` 保留，不被自动删除。
 
 ## 验证与追溯
 
-- **本篇的守护**：`tests/contract/test_architecture_documents.py`（目录集合、拓扑图边界标签、
-  `实现状态` 取值与单行有界）与 `tests/contract/test_fixed_document_form.py`（元数据体裁、
-  H2 骨架白名单、契约正文段零任务编号与日期）。
-- **决策依据**：[ADR 0001](../adr/0001-v2-exploration-direction.md)（v2 纪元与后端解析定位）、
-  [ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型边界与管线归属）、
-  [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（测试隔离）、
-  [ADR 0007](../adr/0007-parse-status-semantics.md)（状态语义三分）、
-  [ADR 0008](../adr/0008-fixed-doc-form-and-metadata-genres.md)（体裁化元数据与可对账契约）。
-- **来源**：跨项目契约（端口号、`.env` 键、dataset 布局）以 QED-Engine 根仓库 `docs/` 为准，
-  本仓库只链接不复制；「能力矩阵」各行对应的实现轮次与真机取证记录在
-  [trackers/completed.md](../trackers/completed.md)。
+### 守护面
+
+- 架构契约测试守护元数据、拓扑图边界标签、数据库表族与文档结构。
+- 固定文档测试守护正文去过程化、端点表和列清单与运行真源双向对账。
+- 单元测试覆盖 ingest、引擎适配、归一化、编排、仓储、迁移和启动归一；集成测试覆盖显式隔离的 MySQL
+  提交与并发语义。
+- 跨仓联调只通过 8900/8901/8902 的 HTTP 契约与共享数据根布局，不以代码共享替代服务边界。
+
+### 维护规则
+
+- 迁移链只线性追加，唯一 base 不改写；ORM、迁移与本仓库数据库实现镜像必须同窗口同步。
+- 服务启动不自动迁移；生产 `qed` 库 DDL 属人工窗口，须先备份留指纹、批准、执行并复核。
+- 解析版本、事件/意图、确认位和保留裁剪口径变更时，同步设计、实现镜像、code-map 与对应测试。
+- 跨项目端口、HTTP 契约、数据根布局和共享表设计以根仓库架构文档为准；本仓库只维护自身实现事实。

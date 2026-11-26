@@ -1,7 +1,7 @@
 # ADR 索引
 
 状态：Current
-最后更新：2026-11-06
+最后更新：2026-11-26
 
 本目录登记影响长期约束的决定。编号从 0001 重新开始（v2 新纪元，v1 决策已归档至
 `docs/history/v1-20260814/adr/`）。规则见 [ADR 治理](../standards/adr-governance.md)。
@@ -37,5 +37,6 @@
 | [0017](0017-database-design-eight-chapter-skeleton.md) | 数据库设计篇改用根侧八章编号体（骨架体裁分治：四段体为默认、`database-design.md` 用八章；追溯段随体裁移动、可对账锚点与章号解耦；部分取代 ADR 0008 决定 2 与决定 3 的适用范围） | Accepted |
 | [0018](0018-task-column-bound-and-progress-ban.md) | 台账「任务」列的列界与进度措辞禁词（≤600 字、禁 `已执行`／`已落地`／`已完成`／`当前在`／`进度＝`／`已了结`／`待裁` 与 `裁决[①-⑳]` 序号引用；把 ADR 0013「不写进度」由措辞升为可判据，不改三列语义） | Accepted |
 | [0019](0019-curation-outcome-and-book-kind-columns.md) | 梳理结局位与种类位入 `af_books`（两枚真列：`doc_kind` 由同步行 `roles` 派生写、两值闭集、未声明即不受理；`last_curation_result` 只由批次收尾与启动期归一写；base 之后加列、表族仍四表） | Accepted |
+| [0020](0020-shared-table-write-and-llm-accounting-boundary.md) | 共享表业务写入与调用记账边界（跨项目按契约读写、8900 维护结构但不独占业务写；`qed_llm_calls` 生产账统一 8900 写；既有提升单向与课程级直写分路） | Accepted |
 
-下一个可用编号：0020
+下一个可用编号：0021

@@ -5,7 +5,8 @@ description: Use when a QED task is implemented and gates pass — runs the full
 
 # QED 任务收尾（门禁 → 关闭 → 同步）
 
-声称完成前先调用 `verification-before-completion`，本技能负责流程性收尾。
+声称完成前必须有本次会话内新鲜、完整的验证输出（证据纪律见 `qed-verification` 第 3 节）；
+本技能负责流程性收尾。
 判据正文只在 `docs/standards/task-lifecycle.md`（收口节拍与关闭判定）与
 `docs/standards/doc-governance.md`（归档与删除），本技能只给步骤与指针。
 

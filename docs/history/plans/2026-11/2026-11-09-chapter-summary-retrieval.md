@@ -1,16 +1,16 @@
 # 章节总结与导读：章级检索增强与点总结改判（chapter-summary-retrieval）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-11-09
-关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、管线归本仓）、
-[ADR 0015](../adr/0015-db-single-source-for-readiness.md)（就绪单源）
-关联设计：[knowledge-analysis.md](../design/knowledge-analysis.md)（`KA-43` 点腿与节级总结、`KA-45` 章腿两段、
-`KA-48` 单点重生成、`KA-57` 详情提示词冻结）、
-[api.md](../architecture/api.md)（`KpNodeOut` 的 `summary`／`narrative` 读面）、
-[model-integration.md](../design/model-integration.md)（8900 文字网关与槽位）
+最后更新：2026-11-23
+关联 ADR：[ADR 0004](../../../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、管线归本仓）、
+[ADR 0015](../../../adr/0015-db-single-source-for-readiness.md)（就绪单源）
+关联设计：[knowledge-analysis.md](../../../design/knowledge-analysis.md)（`KA-43` 点腿与节级总结、`KA-45` 章腿两段、
+`KA-48` 单点重生成、`KA-57` 详情提示词冻结、`KA-72` 章级检索增强、`KA-73` 点总结定位与成文校验升级）、
+[api.md](../../../architecture/api.md)（`KpNodeOut` 的 `summary`／`narrative` 读面）、
+[model-integration.md](../../../design/model-integration.md)（8900 文字网关与槽位）
 关联 Tracker：docs/trackers/todo.md（PLAN-033 镜像行）
-归档判定：待定（实现与质量窗口交付后按 `qed-closeout` 判 Retain/Delete；设计条文晋升 `KA-43`／`KA-45`／新条文）
+归档判定：Retain（设计条文与用户质量确认的推导留档；运行时事实源以晋升后的设计与代码为准）
 
 ## 目标与成功标准
 
@@ -70,7 +70,7 @@
 | 长度口径 | 现有字数为推荐、非强制；以语义要求为准 |
 | 校验失败 | 同一模型附修改要求重试一次；仍不过则写明后照写，异常只记 `meta.chapter_check` |
 
-## 内容契约（拟晋升，待质量窗口确认）
+## 内容契约（已晋升，见知识分析设计 `KA-72`／`KA-73`）
 
 | 编号 | 规则 |
 | --- | --- |
@@ -82,9 +82,9 @@
 | C-6 | **确定性校验**：两段非空且形状可解析；禁页数（`共 N 页`／`p49–80` 一类页区间）、禁全书结构词（`全书`／`本书`／`这门课`／`本章位于`）、禁后续章节承接句；输出中带「定理／定义／准则／公式／判别法／检验法／法则」的名称须在材料或检索资料中出现。覆盖率不作失败条件。 |
 | C-7 | **注明面＝章行 `meta.chapter_check`**：仅在「重试后仍不过」时写 `{passed, issues, model}`（`passed=false`；`issues` 为命中项短句数组；`model` 为探测到的当前模型名，未知写空串）。通过时不写这一键。不新增 `result` 键（`KP_RESULT_KEYS` 仍 42），不扩批次账本。 |
 
-## 现状链路（代码事实）
+## 现状链路（立项时代码事实，留档）
 
-| 步 | 现在做什么 | 落点 | 与目标口径的缺口 |
+| 步 | 立项时做什么 | 落点 | 与目标口径的缺口 |
 | --- | --- | --- | --- |
 | 点总结 | 每节一次调用，`section_summary` 约 80~200 字，提示词要求「最后说清这一节在所在章里的位置」 | `engines/kp_gateway.py:_POINTS_PROMPT`（:117）、`points()`（:830） | 角度偏「压缩＋章节定位」，不是要点与定义的提取 |
 | 章材料 | 章前块＋子点总结，无检索资料 | `engines/base.py:ChapterInput`（:181）、`orchestrator/knowledge.py:_chapter_material`（:4415） | 没有定义校准来源；子点总结若压缩失真会一路带进章 |
@@ -113,8 +113,8 @@
 | W4 | 章材料与提示词：`ChapterInput` 增检索资料块；`_CHAPTER_PROMPT` 按 C-1／C-2 重写（去全书结构、去后续章节、点总结作素材不作复述）；`_chapter_prompt` 的页区间行按需保留但不得进入正文口径 | 完成（2026-11-09） |
 | W5 | 章侧模型名探测：只读 `GET /config/models` 取当前文字槽位模型名，供 `meta.chapter_check.model` 使用；探测失败留空、不阻断、不切换槽位 | 完成（2026-11-09） |
 | W6 | 校验与重试链：C-6 的确定性校验、C-5 的同模型一次重试、失败照写与 C-7 的 `meta.chapter_check` 写入；单测覆盖禁句、页数、无出处定理名、重试后仍失败仍写入并可读回注记 | 完成（2026-11-09）；2026-11-10 按用户口径补三条：总结禁「本章／这一章」自称、总结与导读禁课程用途陈述、导读禁「学完这一章……」收束 |
-| W7 | 质量窗口（C 类）：b05 第 3 章重生成总结与导读，记录模型档位、检索条目与校验读数，交用户按 S1／S2 评估 | 窗口已跑（2026-11-10）：`deepseek-v4-flash-0731`、中文维基 3 条（子序列／上极限和下极限／级数）、校验通过无 `chapter_check`；按用户口径删去章节自称、用途陈述与励志收尾后已重生成（章行 rev=10）；待 S1／S2 终评与代理接线裁决 |
-| W8 | 条文与门禁：用户确认窗口结论后，`KA-43`／`KA-45` 改写＋新条文（检索增强、校验与升级、点总结定位）晋升；`api.md` 与 `model-integration.md` 随步；全量门禁 | 待开始 |
+| W7 | 质量窗口（C 类）：b05 第 3 章重生成总结与导读，记录模型档位、检索条目与校验读数，交用户按 S1／S2 评估 | 窗口已跑（2026-11-10）：`deepseek-v4-flash-0731`、中文维基 3 条（子序列／上极限和下极限／级数）、校验通过无 `chapter_check`；按用户口径删去章节自称、用途陈述与励志收尾后已重生成（章行 rev=10）；**2026-11-23 用户裁决「我认可质量，经过我的判断可以收尾了」＝S1／S2 通过** |
+| W8 | 条文与门禁：C-1~C-7 晋升知识分析设计 `KA-72`／`KA-73`，`api.md`／`model-integration.md` 随步；全量门禁 | 完成（2026-11-23）：`KA-72` 章级检索增强／`KA-73` 点总结定位与成文校验升级入册，`KA-43`／`KA-45`／`KA-65` 回指；`api.md` 总结腿三块↔四块口径改写、检索预留非公开边界澄清；`model-integration.md` 只读模型名探测进 MI 表；全量门禁绿 |
 
 ## 验证与验收
 
@@ -133,6 +133,14 @@
 提示词与检索包按工作项粒度提交、逐项可回退：回退＝删检索包接入与 `ChapterInput` 新块、还原两条提示词；
 校验与升级链是章腿内的独立入口，回退不碰点腿、目录腿与既有批次账本。检索缓存只在进程内，回退无需清库。
 质量窗口若结论不达标，保留旧提示词版本重跑同一样本，不覆盖已确认行。
+
+## 过程与证据（2026-11-23 收尾）
+
+- **S7 人类质量裁决**（用户问答，2026-11-23）：「我认可质量，经过我的判断可以收尾了」。裁决对象＝W7 冻结样本 b05 第 3 章重生成后的章总结与导读（S1／S2）；其上已有 2026-11-10 的风格反馈「删去章节自称、用途陈述与励志收尾」并已重生成（章行 rev=10）。本裁决把 W7 从「待 S1／S2 终评与代理接线裁决」推进为通过；按壳「结论经用户确认后才把提示词与检索口径晋升设计」的判据，W8 方可执行。
+- **W1~W6、S8 代码与测试证据**：点总结与章提示词改写见 `engines/kp_gateway.py` `_POINTS_PROMPT`／`_CHAPTER_PROMPT`；章级检索包见 `src/axiom_flow/reference.py`；检索资料块见 `engines/base.py:ChapterInput`；模型名探测、校验重试与注记见 `engines/kp_gateway.py:current_model_name` 与 `orchestrator/knowledge.py` `_chapter_issues`／`chapter_reply_with_retry`／`set_chapter_check`。定向三套测试 `tests/unit/test_reference.py`、`tests/unit/test_engine_kp_gateway.py`、`tests/unit/test_knowledge_pipeline.py` 581 passed（只读复核，2026-11-23）。`KP_RESULT_KEYS` 42 键不变、`chapter_check` 只进 `KP_META_KEYS`；三阶段值与点腿调用数无变化、零新端点/DDL。
+- **W8 晋升证据**：`KA-72`／`KA-73` 新条文入 `docs/design/knowledge-analysis.md`，`KA-43`／`KA-45`／`KA-65` 加回指；`architecture/api.md` 单点总结/导读生成腿的材料口径同步；`design/model-integration.md` 的文字网关表补只读探测行。设计正文按固定文档规范去任务编号与日期；来源与沿革只写在本节和 design 的「追溯」段。
+- **门禁**：全量 `pytest tests -q -p no:cacheprovider` **1734 passed / 18 skipped** ＋ `ruff check src tests` All checks passed（2026-11-23 收尾复跑；定向治理/文档契约 68 passed）。
+- **代理接线**：W7 行原含「代理接线裁决」，本次用户裁决未单列该词；按 fail-open 与 `trust_env=False` 既有口径不变，不新增代理配置或出站改动。
 
 ## 关闭与归档
 

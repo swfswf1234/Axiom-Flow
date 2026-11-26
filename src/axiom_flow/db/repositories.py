@@ -1585,8 +1585,50 @@ class KpRepository:
         self.session.flush()
         if result.rowcount:
             return KpWriteResult(True, False, self.get(node_id))
-        node = self.get(node_id)
+        node = self.session.scalars(
+            select(AfKp)
+            .where(AfKp.node_id == node_id)
+            .execution_options(populate_existing=True)
+        ).one_or_none()
         return KpWriteResult(False, node is not None, node)
+
+    def rejudge_outline(
+        self, node_id: str, fields: dict[str, Any], *, if_rev: int | None = None
+    ) -> KpWriteResult:
+        conditions = [AfKp.node_id == node_id, AfKp.node_kind == "outline", AfKp.confirmed == 0]
+        if if_rev is not None:
+            conditions.append(AfKp.rev == if_rev)
+        result = self.session.execute(
+            update(AfKp)
+            .where(*conditions)
+            .values(**fields, rev=AfKp.rev + 1, updated_at=utc_now())
+        )
+        self.session.flush()
+        if not result.rowcount:
+            node = self.session.scalars(
+                select(AfKp)
+                .where(AfKp.node_id == node_id)
+                .execution_options(populate_existing=True)
+            ).one_or_none()
+            editable = node is not None and node.node_kind == "outline" and not node.confirmed
+            rev_conflict = bool(editable and if_rev is not None and node.rev != if_rev)
+            return KpWriteResult(False, rev_conflict, node)
+        if fields.get("depth") == 1:
+            self.session.execute(
+                update(AfKp)
+                .where(
+                    AfKp.parent_id == node_id,
+                    AfKp.node_kind == "outline",
+                    AfKp.confirmed == 0,
+                    AfKp.gen_status.in_(("draft", "candidate")),
+                )
+                .values(gen_status="rejected", rev=AfKp.rev + 1, updated_at=utc_now())
+            )
+            self.session.flush()
+        node = self.session.scalars(
+            select(AfKp).where(AfKp.node_id == node_id).execution_options(populate_existing=True)
+        ).one()
+        return KpWriteResult(True, False, node)
 
     def set_confirmed(
         self, node_id: str, *, confirmed: bool, if_rev: int | None = None
@@ -1987,12 +2029,12 @@ class KpRepository:
     def repoint_draft_outline(
         self, *, book_id: str, gen_batch: str, patches: Sequence[dict[str, Any]]
     ) -> int:
-        """同批定稿改写（`KA-40`）：把早落的目录行改写到终值锚点／屏上序，只写 `anchors`/`order_hint`/`parent_id`。
+        """同批定稿改写（`KA-40`）：把早落的目录行改写到终值锚点／屏上序／层级，只写 `anchors`/`order_hint`/`parent_id`/`depth`。
 
         逐页落行时偏移还没标定全，锚与序都是临时读数；定稿这一次是同一批内唯一的改写，不是新一轮
         背书——所以 `rev` **不递增**（早落行与定稿行是同一批的两次读数，序号加上去，人工的 `if_rev`
-        就会把「机器自己把锚修准了」读成「有人改过这行」而平白撞一次 409）。改名与改层级走不到这里：
-        `name`/`depth` 不在可写列里，形状在语句发出前就拒。
+        就会把「机器自己把锚修准了」读成「有人改过这行」而平白撞一次 409）。改名走不到这里：
+        `name` 不在可写列里，形状在语句发出前就拒。
 
         `WHERE` 四条件是判据位，不是优化：`book_id` ∧ `gen_batch` 把范围钉在「这一批自己的行」上（别人家的
         批次、上一批的旧候选都碰不到）、`gen_status='draft'` 只碰未定稿行（`KA-9`：收尾之后这一批归 `candidate`，
@@ -2000,13 +2042,17 @@ class KpRepository:
         confirmed=1` 是可达状态，光靠 `draft` 挡不住已确认的行）；四条之外逐条再钉 `node_id` 认行。
         """
         for patch in patches:
-            unknown = sorted(set(patch) - {"node_id", "anchors", "order_hint", "parent_id"})
+            unknown = sorted(set(patch) - {"node_id", "anchors", "order_hint", "parent_id", "depth"})
             if unknown:
-                raise ValueError(f"af_kp 同批改写面之外的键：{unknown}（`KA-40`：只改锚、序、挂父）")
+                raise ValueError(f"af_kp 同批改写面之外的键：{unknown}（`KA-40`：只改锚、序、挂父与层级）")
         written = 0
         now = utc_now()
         for patch in patches:
-            values = {key: patch[key] for key in ("anchors", "order_hint", "parent_id") if key in patch}
+            values = {
+                key: patch[key]
+                for key in ("anchors", "order_hint", "parent_id", "depth")
+                if key in patch
+            }
             if not values:
                 continue
             result = self.session.execute(

@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：In Progress（区域驱动已落单元/契约守护，真机验证未做；余者已实现并真机取证）
-最后更新：2026-10-22
+最后更新：2026-11-26
 关联代码：`src/axiom_flow/ingest/`、`src/axiom_flow/schemas.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`、`src/axiom_flow/orchestrator/`
 关联测试：`tests/unit/test_ingest.py`、`tests/unit/test_schemas.py`、`tests/unit/test_engines.py`、`tests/unit/test_normalize.py`、`tests/unit/test_chunking.py`、`tests/unit/test_orchestrator.py`、`tests/contract/test_api_v1_contract.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：[ADR 0001](../adr/0001-v2-exploration-direction.md)、[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)、[ADR 0007](../adr/0007-parse-status-semantics.md)、[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)、[ADR 0015](../adr/0015-db-single-source-for-readiness.md)
@@ -228,6 +228,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | PP-21 | **区域驱动页解析：一框一裁剪一提交、一框至多一块**：有人工待识别框（`af_operations` 的 `structure` 意图行中 `payload.op='add'`）的页逐框解析——管线按框 bbox（原页图像素坐标，与 PP-7 同基准）裁剪页图，每框一次 `parse_page`，每次提交独立计超时并先过单一占用闸门（[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md) 决定 4）；该页**不提交整页检测**，框间空隙不成块。框内块先按声明的坐标空间以**裁剪图尺寸**逐轴映射（PP-8），再按裁剪原点平移回原页图坐标系——平移由编排侧完成，归一化侧不知裁剪。框内归一：单个存活块保持原类型与必需字段；多个存活块按阅读序拼接为一个 `paragraph`（文本取各块 markdown 渲染的拼接，公式保留定界符），bbox 取各块并集并夹在框内；无识别内容的框不出块，页质量信号按可见计数暴露（PP-9），不静默丢框。页内块数组按阅读序（`(y0, x0)` 字典序）排列并编 `index`/`order`；验收判据「画 3 框 → 恰 3 块」按有内容的框逐框成块成立 | 逐框过闸门：每框都是独立的模型提交，占用可能在框间变化，串行纪律与 PP-11 的窗口间探活同源。失败域：单框重试 1 次仍 `EngineError` 时**整页**记 `failed`（错误文本点名框序与 `region_id`）——缺框的页不满足一框一块，是半页产物，不落盘。边界：`delete`/`merge` 意图不改解析写面（重解析后的 IoU 重锚定属读投影）；框数上限与受理前 422 归受理面（[api.md](../architecture/api.md)）；无人工框的页与整本未声明框时回落默认检测路径——回滚面只是任务入口的分支，不动产物与版本语义 | `orchestrator/pipeline.py`（区域驱动分支 `_handle_region_page`，读人工框经 `db/repositories.py:OperationRepository.list_regions_for_book`） → `tests/unit/test_orchestrator.py`（`TestRegionDrivenParse`：每框一提交／一框至多一块／单框失败整页判 failed／无框页回落／全本带框页路由／逐框闸门）、`tests/contract/test_api_v1_contract.py`（框数受理前 422） |
 | PP-22 | **读面作用域＝已解析页最多的可见版本**：可见＝版本目录存在、任务已离开 `queued`/`running`、`af_pages` 有 `parsed` 行、且任务创建时刻不早于 `af_books.ingested_at`（重 ingest 前的老版本不算可见）；候选按 `parsed` 数取最大，并列时 `active_job_id` 优先、再按创建序取最新。唯一入口 `orchestrator/versions.py:resolve_visible_version()`，读面（`api/main.py:_read_scope`）与解析基线（PP-15）共用 | 未激活的 `partial`／`failed` 版本里已落盘的页因此可读；`active_job_id` 非空而目录缺失仍显式 404 不回落。**激活门槛不变**（仍是本次目标页齐备，PP-14），「部分可读」不等于「已生效」；补页任务激活后继承基线版本，激活成功后删除被替换版本与基线版本目录 | `orchestrator/versions.py`、`api/main.py:_read_scope()`、`orchestrator/pipeline.py`（基线与 `_retire_replaced_version` 调用） → `tests/contract/test_api_v1_contract.py:TestPartialVersionReadFace` |
+| PP-23 | **批量取页＝同一可见版本内的逐页可归因读取**：`POST /books/{book_id}/pages/batch` 收 1–32 个互不重复的 1 基页号，一次请求只调一次 `_read_scope` 并回显实际 `job_id`／`scope`；请求级空集、超上限、重复、越界或字段非法整体 422，合法请求整体 200。逐页只接受本作用域 `af_pages.status='parsed'` 且 blocks 与 Markdown 都在位并可读的页，成功项复用既有 `PageData` 投影；无页行、未解析、缺产物、坏产物分别返回 `missing`／`not_parsed`／`artifact_missing`／`invalid_artifact` 与 `data=null`，不拿根视图补缺、不改写 DB。既有单页端点不增加 DB 状态门，校验与响应不变 | 批量入口消除整章逐页 HTTP 往返，同时保留 PP-22 的 partial／failed 可读边界与 ADR 0015 的「DB 状态＋文件核验」分工；页级失败不伪装成整批 HTTP 失败，也不把坏产物静默变成空白页 | `api/main.py:_read_scope()`、批量端点与共用页投影；`schemas.py:PageBatchRequest/PageBatchResult/PageBatchOut` → `tests/contract/test_api_v1_contract.py:TestPageBatchEndpoint` |
 
 ## 失败与质量语义
 

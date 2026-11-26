@@ -178,11 +178,11 @@ DSH 的技能扫描根按 rank 升序（rank 小者胜同名冲突），**项目
 
 | rank | 扫描根 | 本机 Axiom-Flow 会话下的实况 |
 | --- | --- | --- |
-| 100 | `<项目根>/.dsh/skills` | **本仓正本**：六枚治理技能（见下表） |
+| 100 | `<项目根>/.dsh/skills` | **本仓正本**：七枚技能（见下表，含 2026-11-25 新增 `qed-verification`） |
 | 200 | `<项目根>/.agents/skills` | 不存在 |
-| 400 | `~/.dsh/skills` | 不存在 |
+| 400 | `~/.dsh/skills` | 一枚机器级正本 `dsh-tooling-conventions`（2026-11-25 起存在；本项目同名技能 rank 100 覆盖它） |
 | 500 | `~/.agents/skills` | 不存在 |
-| 600 | 打包内置 | 内置技能（`dsh-doc`、`office` 等） |
+| 600 | 打包内置 | 内置技能（`dsh-doc`、`office`、`browser-cdp`、`diagnose-windows-sandbox-acl` 等） |
 
 **关键事实**：Axiom-Flow 是独立 git 仓库，其最近 `.git` 祖先就是它自己，因此**项目根
 ＝ `D:\coding\QED-Engine\Axiom-Flow`**——根仓库 `D:\coding\QED-Engine\.dsh\skills\` 里的九枚
@@ -190,14 +190,16 @@ QED 技能**不会**在 Axiom-Flow 会话中被扫描到（它不是本会话的
 本仓库 `.qoder/skills/` 四件套只服务 Qoder 端，**不是** DSH 的扫描根。
 
 本仓库 `.dsh/skills/` 是 **DSH 端技能正本**，随版本控制入库（`.gitignore` 用 `/.dsh/*` +
-`!.dsh/skills/` 的内容模式白名单）。六枚技能与上游根仓库同名技能保持「同骨架、受控差异」：
+`!.dsh/skills/` 的内容模式白名单）。七枚技能中六枚与上游根仓库同名技能保持「同骨架、受控差异」，
+`qed-verification` 为本仓新增（根仓库无同名技能，三条通用纪律在本仓就地承载，不复制通用技能正文）：
 
 | 技能 | 作用 | 受控差异 |
 | --- | --- | --- |
 | `qed-intake` | 任务进场：读必读 → 定级 → 立项 | 作用域只指本仓；ADR 编号改本仓同义编号（0006/0011/0013/0018）；台账列名按本仓七列 |
 | `qed-plan` | 计划壳编写与 todo 镜像登记 | 同上；新增「ADR 编号只在本仓库内解释」条 |
-| `qed-implement` | code-map 定位 + TDD + 隔离铁律 | 同上；隔离铁律补 `QED_TEST_MYSQL` 例外与工作区边界；工具选择改指针不复制 |
-| `qed-closeout` | 门禁 → 关闭 → 同步 | 门禁命令改本仓两条；补六步收口顺序与 `develop` 分支纪律（ADR 0014） |
+| `qed-implement` | code-map 定位 + TDD + 隔离铁律 | 同上；隔离铁律补 `QED_TEST_MYSQL` 例外与工作区边界；工具选择改指针不复制；先红／根因两处裸调用改指 `qed-verification` |
+| `qed-closeout` | 门禁 → 关闭 → 同步 | 门禁命令改本仓两条；补六步收口顺序与 `develop` 分支纪律（ADR 0014）；完成前验证的裸调用改指 `qed-verification` |
+| `qed-verification` | 先红 → 根因 → 完成前证据（2026-11-25 新增） | 本仓新增，非受控差异项：三条纪律按本仓 `testing.md`／`development.md` 指针就地成文；供 `qed-implement`／`qed-closeout` 引用 |
 | `dsh-tooling-conventions` | 本机工具选择与环境摩擦 | 全部实测事实按本仓重写（完整性边界、缓存目录、扫描根、脚本位置） |
 | `cjk-safe-edit-and-verify` | 中文检索/编辑的安全流水线 | 探针示例锚改本仓实体（`KA-22`、`/kp-jobs`）；补 DSH 缓存目录回避 |
 

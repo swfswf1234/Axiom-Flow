@@ -15,7 +15,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -63,7 +63,7 @@ from axiom_flow.engines.factory import build_text_engine
 from axiom_flow.engines.kp_gateway import KP_SLOT_NAME
 from axiom_flow.ingest import version_dir_for
 from axiom_flow.orchestrator.knowledge import norm_key_for
-from axiom_flow.schemas import KP_REVIEW_NOTE_MAX_CHARS, NARRATIVE_MAX_CHARS, BlockType
+from axiom_flow.schemas import KP_REVIEW_NOTE_MAX_CHARS, NARRATIVE_MAX_CHARS, BlocksPage, BlockType
 from tests.support.llm_ledger_schema import create_ledger_table, read_ledger_rows
 
 #: 梳理调用账的身份三列：契约层只关心「有没有接线」，取值本身给桩值。
@@ -230,7 +230,8 @@ def _build(
     max_regions_per_page: int | None = None,
     admin_enabled: bool = False,
     admin_token: str | None = "",
-    kp_engine: str = "",
+    kp_engine: str | None = "",
+    curation_from_env: bool = False,
     knowledge_engine_factory=None,
     kp_call_identity=_TEST_LLM_IDENTITY,
     background_jobs: bool = False,
@@ -258,7 +259,7 @@ def _build(
         max_regions_per_page=max_regions_per_page,
         admin_enabled=admin_enabled,
         admin_token=admin_token,
-        kp_engine=kp_engine,
+        kp_engine=None if curation_from_env else kp_engine,
     )
     db_engine = create_engine(
         "sqlite+pysqlite://",
@@ -1645,6 +1646,335 @@ class TestParseJobListEndpoint:
         assert single.status_code == 200, "历史作业仍可查，删书不抹掉任务事实"
 
 
+class TestPageBatchEndpoint:
+    """`POST /api/v1/books/{id}/pages/batch`：同书一次多页，逐页结果可归因。"""
+
+    URL = "/api/v1/books/mathanalysis-b05/pages/batch"
+
+    def _book_dir(self, tmp_path) -> Path:
+        return tmp_path / "data" / "parsed" / "math-advanced" / "math_analysis" / "mathanalysis-b05"
+
+    def test_pages_keep_request_order_and_match_the_single_page_projection(self, client):
+        _parsed_book(client)
+        edited = client.put(
+            "/api/v1/books/mathanalysis-b05/pages/1/blocks/0/edit",
+            json={"verdict": "ok", "corrected_type": "header"},
+        )
+        assert edited.status_code == 200, edited.text
+
+        response = client.post(self.URL, json={"page_nos": [2, 1]})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        listed = client.get("/api/v1/books/mathanalysis-b05/pages").json()
+        assert (body["book_id"], body["job_id"], body["scope"]) == (
+            listed["book_id"],
+            listed["job_id"],
+            listed["scope"],
+        )
+        assert (body["requested"], body["ok"], body["failed"]) == (2, 2, 0)
+        assert [row["page_no"] for row in body["pages"]] == [2, 1]
+        for row in body["pages"]:
+            assert row["status"] == "ok"
+            assert row["parse_status"] == "parsed"
+            assert row["error"] == ""
+            single = client.get(f"/api/v1/books/mathanalysis-b05/pages/{row['page_no']}")
+            assert single.status_code == 200, single.text
+            assert row["data"] == single.json()
+
+    def test_partial_version_is_resolved_once_and_failed_pages_are_attributed(
+        self, tmp_path, monkeypatch
+    ):
+        from axiom_flow.api import main as api_main
+
+        fake = _WindowedEngine(fail_spans={(3, 4)})
+        test_client, _ = _build(
+            tmp_path,
+            monkeypatch,
+            engine_factory=lambda name: fake,
+            book_pages=6,
+            parse_window_size=2,
+        )
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            partial = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}
+            ).json()
+            assert partial["status"] == "partial"
+
+            original = api_main.resolve_visible_version
+            calls = []
+
+            def counted(*args, **kwargs):
+                calls.append(1)
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(api_main, "resolve_visible_version", counted)
+            response = client.post(self.URL, json={"page_nos": [2, 1, 3]})
+
+        assert response.status_code == 200, response.text
+        assert len(calls) == 1, "一次批量请求只能选一次可见版本"
+        body = response.json()
+        assert (body["job_id"], body["scope"]) == (partial["id"], "active")
+        assert (body["requested"], body["ok"], body["failed"]) == (3, 2, 1)
+        assert [(row["page_no"], row["status"]) for row in body["pages"]] == [
+            (2, "ok"),
+            (1, "ok"),
+            (3, "not_parsed"),
+        ]
+        assert body["pages"][2]["data"] is None
+        assert body["pages"][2]["parse_status"] == "failed"
+        assert "窗口 3-4" in body["pages"][2]["error"]
+        assert "deadline" in body["pages"][2]["error"]
+
+    def test_mixed_page_failures_are_attributed_without_changing_single_reads(
+        self, tmp_path, monkeypatch
+    ):
+        test_client, session_factory = _build(
+            tmp_path,
+            monkeypatch,
+            engine_factory=lambda name: _WindowedEngine(),
+            book_pages=6,
+        )
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            job_id = client.post(
+                "/api/v1/parse-jobs", json={"book_id": "mathanalysis-b05"}
+            ).json()["id"]
+            with session_factory() as session:
+                missing = session.scalars(
+                    select(AfPage).where(
+                        AfPage.book_id == "mathanalysis-b05",
+                        AfPage.job_id == job_id,
+                        AfPage.page_no == 2,
+                    )
+                ).one()
+                session.delete(missing)
+                session.execute(
+                    update(AfPage)
+                    .where(
+                        AfPage.book_id == "mathanalysis-b05",
+                        AfPage.job_id == job_id,
+                        AfPage.page_no == 3,
+                    )
+                    .values(status="failed", error="引擎超时")
+                )
+                session.commit()
+
+            pages_dir = self._book_dir(tmp_path) / "versions" / job_id / "pages"
+            (pages_dir / "p0004.blocks.json").unlink()
+            (pages_dir / "p0005.blocks.json").write_text("{broken", encoding="utf-8")
+            (pages_dir / "p0006.md").unlink()
+            root_pages = self._book_dir(tmp_path) / "pages"
+            for suffix in ("blocks.json", "md"):
+                shutil.copy(pages_dir / f"p0002.{suffix}", root_pages / f"p0002.{suffix}")
+
+            response = client.post(self.URL, json={"page_nos": [6, 5, 4, 3, 2, 1]})
+            single_without_row = client.get("/api/v1/books/mathanalysis-b05/pages/2")
+            single_without_markdown = client.get("/api/v1/books/mathanalysis-b05/pages/6")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["requested"], body["ok"], body["failed"]) == (6, 1, 5)
+        assert [(row["page_no"], row["status"], row["parse_status"]) for row in body["pages"]] == [
+            (6, "artifact_missing", "parsed"),
+            (5, "invalid_artifact", "parsed"),
+            (4, "artifact_missing", "parsed"),
+            (3, "not_parsed", "failed"),
+            (2, "missing", "pending"),
+            (1, "ok", "parsed"),
+        ]
+        assert all(row["data"] is None and row["error"] for row in body["pages"][:-1])
+        assert body["pages"][4]["error"]
+        assert single_without_row.status_code == 200, "既有单页读面不新增 DB 状态门"
+        assert single_without_markdown.status_code == 200, "既有单页读面仍允许 Markdown 缺席"
+        assert single_without_markdown.json()["markdown"] == ""
+
+    def test_unreadable_furniture_scan_page_does_not_break_batch_or_poison_cache(
+        self, tmp_path, monkeypatch
+    ):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _parsed_book(client)
+            edited = client.put(
+                "/api/v1/books/mathanalysis-b05/pages/1/blocks/0/edit",
+                json={"verdict": "ok", "corrected_type": "header"},
+            )
+            assert edited.status_code == 200, edited.text
+            original_read_text = Path.read_text
+            unreadable: list[str] = []
+
+            def read_with_unreadable_page(path, *args, **kwargs):
+                if path.name == "p0001.blocks.json":
+                    unreadable.append(path.name)
+                    raise PermissionError("simulated unreadable blocks")
+                return original_read_text(path, *args, **kwargs)
+
+            monkeypatch.setattr(Path, "read_text", read_with_unreadable_page)
+            response = client.post(self.URL, json={"page_nos": [2, 1]})
+            monkeypatch.setattr(Path, "read_text", original_read_text)
+            single_after_recovery = client.get("/api/v1/books/mathanalysis-b05/pages/1")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["requested"], body["ok"], body["failed"]) == (2, 1, 1)
+        assert [(row["page_no"], row["status"]) for row in body["pages"]] == [
+            (2, "ok"),
+            (1, "invalid_artifact"),
+        ]
+        assert body["pages"][0]["data"] is not None
+        assert body["pages"][1]["data"] is None
+        assert unreadable, "家具扫描必须实际遇到不可读的整本块产物"
+        assert single_after_recovery.status_code == 200, single_after_recovery.text
+        assert single_after_recovery.json()["furniture_blocks"] == [0], "降级扫描不得污染共享缓存"
+
+    def test_single_page_keeps_existing_furniture_scan_error_behavior(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _parsed_book(client)
+            original_read_text = Path.read_text
+
+            def read_with_unreadable_page(path, *args, **kwargs):
+                if path.name == "p0002.blocks.json":
+                    raise PermissionError("simulated unreadable blocks")
+                return original_read_text(path, *args, **kwargs)
+
+            monkeypatch.setattr(Path, "read_text", read_with_unreadable_page)
+            with pytest.raises(PermissionError, match="simulated unreadable blocks"):
+                client.get("/api/v1/books/mathanalysis-b05/pages/1")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"page_nos": []},
+            {"page_nos": [1, 1]},
+            {"page_nos": [0]},
+            {"page_nos": [-1]},
+            {"page_nos": ["1"]},
+            {"page_nos": [1.5]},
+            {"page_nos": [1.0]},
+            {"page_nos": [True]},
+            {"page_nos": [3]},
+            {"page_nos": [1], "unknown": True},
+        ],
+    )
+    def test_invalid_page_sets_are_rejected_as_a_whole(self, client, payload):
+        _parsed_book(client)
+
+        response = client.post(self.URL, json=payload)
+
+        assert response.status_code == 422, response.text
+        assert "pages" not in response.json()
+
+    def test_more_than_32_pages_is_rejected_before_reading(self, tmp_path, monkeypatch):
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _parsed_book(client)
+            with session_factory() as session:
+                book = BookRepository(session).get("mathanalysis-b05")
+                book.page_count = 100
+                session.commit()
+
+            response = client.post(self.URL, json={"page_nos": list(range(1, 34))})
+
+        assert response.status_code == 422, response.text
+        assert "pages" not in response.json()
+
+    def test_exactly_32_pages_are_accepted(self, tmp_path, monkeypatch):
+        test_client, _ = _build(
+            tmp_path,
+            monkeypatch,
+            engine_factory=lambda name: _WindowedEngine(),
+            book_pages=32,
+            parse_window_size=32,
+        )
+        with test_client as client:
+            _parsed_book(client)
+
+            response = client.post(self.URL, json={"page_nos": list(range(1, 33))})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["requested"], body["ok"], body["failed"]) == (32, 32, 0)
+        assert [row["page_no"] for row in body["pages"]] == list(range(1, 33))
+
+    def test_legacy_scope_is_echoed_and_missing_rows_are_not_artifacts(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+
+            response = client.post(self.URL, json={"page_nos": [2, 1]})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["job_id"], body["scope"]) == ("legacy", "legacy")
+        assert (body["requested"], body["ok"], body["failed"]) == (2, 0, 2)
+        assert [(row["status"], row["data"]) for row in body["pages"]] == [
+            ("missing", None),
+            ("missing", None),
+        ]
+
+    def test_legacy_scope_reads_its_own_rows_and_artifacts(self, tmp_path, monkeypatch):
+        test_client, session_factory = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            _sync_book(client)
+            _ingest(client)
+            root_pages = self._book_dir(tmp_path) / "pages"
+            for page_no in (1, 2):
+                (root_pages / f"p{page_no:04d}.blocks.json").write_text(
+                    BlocksPage(
+                        page=page_no, source="mineru", image_size=(595, 842), blocks=[]
+                    ).model_dump_json(),
+                    encoding="utf-8",
+                )
+                (root_pages / f"p{page_no:04d}.md").write_text(
+                    f"legacy page {page_no}", encoding="utf-8"
+                )
+            with session_factory() as session:
+                pages = PageRepository(session)
+                for page_no in (1, 2):
+                    pages.upsert(
+                        "mathanalysis-b05", LEGACY_JOB_ID, page_no, status="parsed", source="mineru"
+                    )
+                session.commit()
+
+            response = client.post(self.URL, json={"page_nos": [2, 1]})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["job_id"], body["scope"]) == ("legacy", "legacy")
+        assert (body["requested"], body["ok"], body["failed"]) == (2, 2, 0)
+        assert [row["data"]["markdown"] for row in body["pages"]] == [
+            "legacy page 2",
+            "legacy page 1",
+        ]
+
+    def test_missing_book_and_missing_active_directory_keep_scope_errors(self, tmp_path, monkeypatch):
+        test_client, _ = _build(tmp_path, monkeypatch)
+        with test_client as client:
+            missing_book = client.post(
+                "/api/v1/books/never-synced/pages/batch", json={"page_nos": [1]}
+            )
+            _parsed_book(client)
+            job_id = client.get("/api/v1/books/mathanalysis-b05").json()["active_job_id"]
+            shutil.rmtree(self._book_dir(tmp_path) / "versions" / job_id)
+            missing_active = client.post(self.URL, json={"page_nos": [1]})
+
+        assert missing_book.status_code == 404
+        assert missing_active.status_code == 404
+        assert "生效版本产物缺失" in missing_active.json()["detail"]
+
+    def test_manual_single_node_creation_is_not_registered(self, client):
+        response = client.post("/api/v1/kp/nodes", json={"title": "人工点"})
+        paths = client.get("/openapi.json").json()["paths"]
+
+        assert response.status_code == 404
+        assert "/api/v1/kp/nodes" not in paths
+
+
 class TestPageListEndpoint:
     """`GET /api/v1/books/{id}/pages`（PLAN-008 W4）：逐页状态清单一次给全集。
 
@@ -2723,6 +3053,34 @@ class TestKpCurationEndpoints:
         assert self._ledger_count(session_factory) == 0
         assert stub.outline_calls == []
 
+    @pytest.mark.parametrize(
+        "empty_key",
+        ("AXIOM_KP_ENGINE", "QED_ENGINE_GATEWAY_URL", "AXIOM_KP_TIMEOUT"),
+    )
+    def test_explicit_empty_curation_config_is_503_before_engine_construction(
+        self, tmp_path, monkeypatch, empty_key
+    ):
+        for key in ("AXIOM_KP_ENGINE", "QED_ENGINE_GATEWAY_URL", "AXIOM_KP_TIMEOUT"):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv(empty_key, "")
+
+        def forbidden_factory(_name):
+            raise AssertionError("显式空配置必须在构造文本引擎之前拒绝")
+
+        client, session_factory, stub = self._live(
+            tmp_path,
+            monkeypatch,
+            curation_from_env=True,
+            knowledge_engine_factory=forbidden_factory,
+        )
+        response = client.post("/api/v1/kp-jobs", json={"book_id": self.BOOK})
+
+        assert response.status_code == 503, response.text
+        assert "未接入" in response.text
+        assert self._kp_count(session_factory) == 0
+        assert self._ledger_count(session_factory) == 0
+        assert stub.outline_calls == [] and stub.section_calls == []
+
     def test_an_unknown_slot_name_is_503_as_well_and_creates_no_batch(self, tmp_path, monkeypatch):
         """闭集收在 `engines/factory.py`，端点不另写一份名字表：拿**真工厂**接线才证得到那条门。
 
@@ -2947,6 +3305,33 @@ class TestKpCurationEndpoints:
         )
         assert response.status_code == 409, response.text
         assert client.get(f"/api/v1/books/{self.BOOK}/kp").json()["nodes"]
+
+    def test_patch_race_conflict_returns_the_latest_rev(self, tmp_path, monkeypatch):
+        """确定性覆盖预检通过后的条件 UPDATE 竞态；不冒充真实双会话取证。"""
+        client, _, _ = self._live(tmp_path, monkeypatch)
+        self._submit(client)
+        node = self._node(client)
+        original_update = KpRepository.update
+
+        def race_update(self, node_id, fields, *, if_rev=None):
+            self.session.execute(
+                update(AfKp)
+                .where(AfKp.node_id == node_id)
+                .values(summary="并发写入的新结论", rev=AfKp.rev + 1),
+                execution_options={"synchronize_session": False},
+            )
+            self.session.flush()
+            return original_update(self, node_id, fields, if_rev=if_rev)
+
+        monkeypatch.setattr(KpRepository, "update", race_update)
+        response = client.patch(
+            f"/api/v1/kp/nodes/{node['node_id']}",
+            json={"summary": "旧表单", "if_rev": node["rev"]},
+        )
+
+        assert response.status_code == 409, response.text
+        assert f"当前 rev={node['rev'] + 1}" in response.json()["detail"]
+        assert f"请求 if_rev={node['rev']}" in response.json()["detail"]
 
     def test_patch_rejects_unknown_node_and_foreign_book_fields(self, tmp_path, monkeypatch):
         client, _, _ = self._live(tmp_path, monkeypatch)
@@ -3222,6 +3607,220 @@ class TestKpCurationEndpoints:
         assert {node["confirmed"] for node in both["nodes"]} == {1}
         assert client.get("/api/v1/books/nope-not-here/kp/export").status_code == 404
 
+
+    def test_outline_rejudge_moves_a_row_and_rejects_its_children_atomically(self, tmp_path, monkeypatch):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        for node_id, name, depth, parent in (
+            ("afkp-ch1", "第 1 章", 1, None),
+            ("afkp-ch2", "第 2 章", 1, None),
+            ("afkp-s11", "1.1 节", 2, "afkp-ch1"),
+            ("afkp-s12", "1.2 节", 2, "afkp-s11"),
+        ):
+            self._seed(session_factory, node_id=node_id, name=name, node_kind="outline", depth=depth,
+                       parent_id=parent, order_hint=depth, anchors=[{"page": depth, "block_indexes": [0]}])
+
+        response = client.patch("/api/v1/kp/nodes/afkp-s11", json={
+            "depth": 1, "parent_id": None, "toc_role": "reference", "toc_kind": "appendix", "if_rev": 0,
+        })
+        assert response.status_code == 200, response.text
+        assert (response.json()["depth"], response.json()["node_type"]) == (1, "other")
+        visible = {node["node_id"] for node in self._workspace(client)["nodes"] if node["gen_status"] != "rejected"}
+        assert "afkp-s11" in visible and "afkp-s12" not in visible
+        with session_factory() as session:
+            child = KpRepository(session).get("afkp-s12")
+            assert child is not None and child.gen_status == "rejected"
+        assert client.patch("/api/v1/kp/nodes/afkp-ch2", json={"parent_id": "afkp-s11"}).status_code == 200
+        assert client.patch("/api/v1/kp/nodes/afkp-s11", json={"parent_id": "afkp-s12"}).status_code == 422
+
+    def test_outline_rejudge_enforces_confirmation_parent_and_outline_scope(self, tmp_path, monkeypatch):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._seed(session_factory, node_id="afkp-confirmed", name="第 1 章", node_kind="outline", depth=1)
+        self._seed(session_factory, node_id="afkp-depth2", name="1.1 节", node_kind="outline", depth=2)
+        self._seed(session_factory, node_id="afkp-point", name="知识点", node_kind="point", depth=2)
+        assert client.post("/api/v1/kp/nodes/afkp-confirmed/confirm", json={"confirmed": True}).status_code == 422
+        with session_factory() as session:
+            KpRepository(session).set_confirmed("afkp-confirmed", confirmed=True)
+            session.commit()
+        cases = (
+            ("afkp-confirmed", {"depth": 2, "parent_id": "afkp-depth2"}),
+            ("afkp-depth2", {"depth": 2, "parent_id": "afkp-depth2"}),
+            ("afkp-depth2", {"depth": 2, "parent_id": "afkp-missing"}),
+            ("afkp-point", {"depth": 1}),
+        )
+        for node_id, payload in cases:
+            response = client.patch(f"/api/v1/kp/nodes/{node_id}", json=payload)
+            assert response.status_code == 422, response.text
+
+    @pytest.mark.parametrize(
+        "parent_id",
+        [None, "afkp-missing", "afkp-point", "afkp-depth2", "afkp-otherbook", "afkp-section"],
+    )
+    def test_patch_existing_second_level_parent_uses_effective_depth(
+        self, tmp_path, monkeypatch, parent_id
+    ):
+        """只改父也要按旧行 `depth=2` 校验，不能绕到悬父、跨书、点行、二级父或自指。"""
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        for node_id, name, depth, parent, kind in (
+            ("afkp-ch1", "第 1 章", 1, None, "outline"),
+            ("afkp-ch2", "第 2 章", 1, None, "outline"),
+            ("afkp-depth2", "1.1 节", 2, "afkp-ch1", "outline"),
+            ("afkp-point", "知识点", 2, "afkp-ch1", "point"),
+            ("afkp-section", "1.2 节", 2, "afkp-ch1", "outline"),
+        ):
+            self._seed(
+                session_factory, node_id=node_id, name=name, node_kind=kind, depth=depth,
+                parent_id=parent,
+            )
+        with session_factory() as session:
+            KpRepository(session).create(KpNodeRow(
+                node_id="afkp-otherbook", book_id="other-book", name="别书章",
+                norm_key=norm_key_for("别书章"), node_kind="outline", depth=1,
+            ))
+            session.commit()
+            before = KpRepository(session).get("afkp-section")
+            assert before is not None
+
+        response = client.patch(
+            "/api/v1/kp/nodes/afkp-section", json={"parent_id": parent_id}
+        )
+
+        assert response.status_code == 422, response.text
+        with session_factory() as session:
+            after = KpRepository(session).get("afkp-section")
+            assert after is not None
+            assert (after.parent_id, after.depth, after.rev) == (
+                before.parent_id, before.depth, before.rev
+            )
+
+    def test_patch_summary_does_not_revalidate_an_unchanged_legacy_parent(self, tmp_path, monkeypatch):
+        """父约束只守结构改判；历史坏父不能顺带挡住人工改摘要。"""
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory, node_id="afkp-legacy", name="1.1 节", node_kind="outline", depth=2,
+            parent_id="afkp-missing",
+        )
+
+        response = client.patch("/api/v1/kp/nodes/afkp-legacy", json={"summary": "人工补的摘要"})
+
+        assert response.status_code == 200, response.text
+        assert response.json()["parent_id"] == "afkp-missing"
+        assert response.json()["summary"] == "人工补的摘要"
+
+    def test_patch_existing_second_level_parent_accepts_a_same_book_chapter(self, tmp_path, monkeypatch):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._seed(session_factory, node_id="afkp-ch1", name="第 1 章", node_kind="outline", depth=1)
+        self._seed(session_factory, node_id="afkp-ch2", name="第 2 章", node_kind="outline", depth=1)
+        self._seed(
+            session_factory, node_id="afkp-section", name="1.1 节", node_kind="outline", depth=2,
+            parent_id="afkp-ch1",
+        )
+
+        response = client.patch(
+            "/api/v1/kp/nodes/afkp-section", json={"parent_id": "afkp-ch2"}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["parent_id"] == "afkp-ch2"
+
+    @pytest.mark.parametrize(
+        ("meta", "payload"),
+        [
+            ({"toc_role": "reference", "toc_kind": "appendix"}, {"toc_role": "knowledge"}),
+            ({"toc_role": "knowledge"}, {"toc_kind": "appendix"}),
+            ({"toc_role": "knowledge"}, {"toc_role": "knowledge", "toc_kind": "appendix"}),
+        ],
+    )
+    def test_patch_outline_identity_validates_the_merged_effective_state(
+        self, tmp_path, monkeypatch, meta, payload
+    ):
+        """`role=knowledge` 与旧／新 `kind` 必须作为同一有效状态合判，不能分字段漏检。"""
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory, node_id="afkp-identity", name="目录行", node_kind="outline", depth=1,
+            meta=meta,
+        )
+        with session_factory() as session:
+            before = KpRepository(session).get("afkp-identity")
+            assert before is not None
+
+        response = client.patch("/api/v1/kp/nodes/afkp-identity", json=payload)
+
+        assert response.status_code == 422, response.text
+        with session_factory() as session:
+            after = KpRepository(session).get("afkp-identity")
+            assert after is not None
+            assert (after.meta, after.rev) == (before.meta, before.rev)
+
+    def test_patch_outline_identity_can_clear_the_kind_when_becoming_knowledge(
+        self, tmp_path, monkeypatch
+    ):
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory, node_id="afkp-identity", name="目录行", node_kind="outline", depth=1,
+            meta={"toc_role": "reference", "toc_kind": "appendix"},
+        )
+
+        response = client.patch(
+            "/api/v1/kp/nodes/afkp-identity",
+            json={"toc_role": "knowledge", "toc_kind": ""},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["toc_role"] == "knowledge"
+        assert response.json()["toc_kind"] == ""
+
+    def test_patch_rejects_explicit_null_depth_without_writing(self, tmp_path, monkeypatch):
+        """`depth:null` 不是「不改」：模型层拒绝，避免数据库 NULL 被读侧静默当成章。"""
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory, node_id="afkp-depth", name="1.1 节", node_kind="outline", depth=2,
+            parent_id="afkp-chapter",
+        )
+        self._seed(session_factory, node_id="afkp-chapter", name="第 1 章", node_kind="outline", depth=1)
+
+        response = client.patch("/api/v1/kp/nodes/afkp-depth", json={"depth": None})
+
+        assert response.status_code == 422, response.text
+        with session_factory() as session:
+            row = KpRepository(session).get("afkp-depth")
+            assert row is not None and row.depth == 2 and row.rev == 0
+
+    @pytest.mark.parametrize(
+        ("column", "value"),
+        [("confirmed", 1), ("node_kind", "point")],
+    )
+    def test_outline_rejudge_guard_race_returns_422_not_rev_conflict(
+        self, tmp_path, monkeypatch, column, value
+    ):
+        """预检后确认位／种类被并发改写：这是改判保护失败，不是旧表单的 rev 冲突。"""
+        client, session_factory, _ = self._live(tmp_path, monkeypatch)
+        self._seed(
+            session_factory, node_id="afkp-race", name="目录行", node_kind="outline", depth=1,
+        )
+        original = KpRepository.rejudge_outline
+
+        def race_rejudge(self, node_id, fields, *, if_rev=None):
+            self.session.execute(
+                update(AfKp)
+                .where(AfKp.node_id == node_id)
+                .values(**{column: value}, rev=AfKp.rev + 1),
+                execution_options={"synchronize_session": False},
+            )
+            self.session.commit()
+            return original(self, node_id, fields, if_rev=if_rev)
+
+        monkeypatch.setattr(KpRepository, "rejudge_outline", race_rejudge)
+
+        response = client.patch(
+            "/api/v1/kp/nodes/afkp-race",
+            json={"toc_role": "reference", "toc_kind": "appendix", "if_rev": 0},
+        )
+
+        assert response.status_code == 422, response.text
+        with session_factory() as session:
+            row = KpRepository(session).get("afkp-race")
+            assert row is not None and getattr(row, column) == value
+            assert row.meta is None and row.rev == 1
 
     # ---------------------------------------------------------------- 单点重生成
 

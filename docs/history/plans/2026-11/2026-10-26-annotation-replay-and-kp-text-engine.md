@@ -1,21 +1,21 @@
 # 块类型改判回放、页域识别与梳理文本引擎接入（annotation-replay-and-kp-text-engine）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-11-07
-关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、梳理调用只经适配层，且无静默兜底），
-[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（`qed_test` 白名单＝自有 `af_*`＋`alembic_version`；本案只写共享 `qed_llm_calls` 的行、不改结构），
-[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)（页级人工意图跨版本存活的先例，`corrected_type` 的绑定形状沿用），
-[ADR 0013](../adr/0013-ledger-row-three-elements.md)／[ADR 0018](../adr/0018-task-column-bound-and-progress-ban.md)（台账行列界），
-[ADR 0015](../adr/0015-db-single-source-for-readiness.md)（就绪唯一源＝DB，页域判据不得反过来改判页状态），
-[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（四表形状已封闭：本案**零 ALTER、零新列、零新域值**）
-关联设计：[knowledge-analysis.md](../design/knowledge-analysis.md)（`KA-2`／`KA-5`／`KA-20`／`KA-22`／`KA-29` 的取材、目录阶段输入、长文与槽位、取材剔除判据＝本案条文正本），
-[parsing-pipeline.md](../design/parsing-pipeline.md)（`PP-4` 产物通路、`PP-13` 就绪口径），
-[parsing-management.md](../design/parsing-management.md)（`PM-*` 人工意图行语义与 `PM-13` 单实例串行），
-[api.md](../architecture/api.md) ③/④（实核＝块编辑与页数据属 **③ 解析结果与 PDF 对照**、七条 `kp` 属 **④ 知识点梳理**，分类表正本在 `api.md:86`／`:87`；扩载荷动 ③ 的 `PUT …/blocks/{index}/edit`，长文端点若落地动 ④——原写 ② 是本会话笔误，② 是 af_* 数据查询类），
-[database-design.md](../architecture/database-design.md)（`af_pages.section_kind` 列语义与闭集），
-[code-map.md](../architecture/code-map.md)（分析模块与适配层登记面）
-关联 Tracker：docs/trackers/todo.md（PLAN-026 镜像行；并承载根侧入站请求 REQ-142／REQ-143／REQ-146 三行的本仓侧通路）
+最后更新：2026-11-25
+关联 ADR：[ADR 0004](../../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900、梳理调用只经适配层，且无静默兜底），
+[ADR 0005](../../adr/0005-mysql-integration-test-isolation.md)（`qed_test` 白名单＝自有 `af_*`＋`alembic_version`；本案只写共享 `qed_llm_calls` 的行、不改结构），
+[ADR 0010](../../adr/0010-page-regions-are-parse-inputs.md)（页级人工意图跨版本存活的先例，`corrected_type` 的绑定形状沿用），
+[ADR 0013](../../adr/0013-ledger-row-three-elements.md)／[ADR 0018](../../adr/0018-task-column-bound-and-progress-ban.md)（台账行列界），
+[ADR 0015](../../adr/0015-db-single-source-for-readiness.md)（就绪唯一源＝DB，页域判据不得反过来改判页状态），
+[ADR 0016](../../adr/0016-af-family-rebuild-into-four-tables.md)（四表形状已封闭：本案**零 ALTER、零新列、零新域值**）
+关联设计：[knowledge-analysis.md](../../design/knowledge-analysis.md)（`KA-2`／`KA-5`／`KA-20`／`KA-22`／`KA-29` 的取材、目录阶段输入、长文与槽位、取材剔除判据＝本案条文正本），
+[parsing-pipeline.md](../../design/parsing-pipeline.md)（`PP-4` 产物通路、`PP-13` 就绪口径），
+[parsing-management.md](../../design/parsing-management.md)（`PM-*` 人工意图行语义与 `PM-13` 单实例串行），
+[api.md](../../architecture/api.md) ③/④（实核＝块编辑与页数据属 **③ 解析结果与 PDF 对照**、七条 `kp` 属 **④ 知识点梳理**，分类表正本在 `api.md:86`／`:87`；扩载荷动 ③ 的 `PUT …/blocks/{index}/edit`，长文端点若落地动 ④——原写 ② 是本会话笔误，② 是 af_* 数据查询类），
+[database-design.md](../../architecture/database-design.md)（`af_pages.section_kind` 列语义与闭集），
+[code-map.md](../../architecture/code-map.md)（分析模块与适配层登记面）
+关联 Tracker：docs/trackers/completed.md（PLAN-026 关闭行；并承载根侧入站请求 REQ-142／REQ-143／REQ-146 三行的本仓侧通路）
 归档判定：Retain（「人工改判进取材视野」这一改动的两侧对账读数、页域判据在真书页面上的标定证据、
 以及梳理文本适配器的首轮调用账形状属不可再生证据；条文本体在 `design/knowledge-analysis.md` 与 `architecture/api.md`）
 
@@ -48,8 +48,8 @@
    **但这两条的落点各撞一枚在册条文**（适配器出站走哪＝R8；长文端点与 `narrative_ref` 写列＝R9），
    2026-10-26 对账后改判为「等裁不动」，本壳先只交付第 1／2 条与判据纯函数。
 
-判据正文在根侧 [REQ-142 壳](../../../docs/history/plans/2026-11/2026-10-26-block-label-and-furniture-identification.md)
-与 [REQ-143 壳](../../../docs/history/plans/2026-11/2026-10-26-kp-generation-leg-and-one-click-summary.md) 的台账行，本案不复制条目、只落本仓侧通路。
+判据正文在根侧 [REQ-142 壳](../../../../docs/history/plans/2026-11/2026-10-26-block-label-and-furniture-identification.md)
+与 [REQ-143 壳](../../../../docs/history/plans/2026-11/2026-10-26-kp-generation-leg-and-one-click-summary.md) 的台账行，本案不复制条目、只落本仓侧通路。
 
 ## 范围与非目标
 
@@ -62,7 +62,7 @@
    的取材，都按「同 `job_id` 同页同块」的 edit 行以 `corrected_type` 覆盖产物 `type`；
    换版不自动套用（与既有 edit 绑 `job_id` 的语义一致）。
 3. **页域跨页重复线纯函数**：只读整本已生效版本的页块序列，判「同一文本在多数页的同一纵向位置出现」，
-   产出 `furniture_hint`；**读时计算、零写库、零重解析**，与根侧 [REQ-140 壳](../../../docs/history/plans/2026-11/2026-10-24-parsing-layout-geometry-replica.md)
+   产出 `furniture_hint`；**读时计算、零写库、零重解析**，与根侧 [REQ-140 壳](../../../../docs/history/plans/2026-11/2026-10-24-parsing-layout-geometry-replica.md)
    R3 的三条件合取分层＝本案只供给 ① 的类型维，页边带几何与短文本条件留给根侧渲染腿。
 4. **`af_pages.section_kind` 写手**（**等裁不动＝R10**）：拟取与 ③ 同源的判据，八值闭集
    （`cover/preface/ack/toc/chapter/appendix/back/other`，`db/models.py:246`）可核，`PageHeadings.section_kind`
@@ -123,7 +123,7 @@
 
 **R8｜梳理文本调用的出站点与记账归属**（本案立项时把「经 8900 网关」当成已裁，2026-10-26 三路对账发现撞两处在册条文；本案不动码，等裁）。
 
-- 在册条文：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md) 决定 2「解析直连模型服务，**不再经 8900 网关**；模型服务地址可配置（部署形态需要时**可指向 8900 代理，契约不变**）」、
+- 在册条文：[ADR 0004](../../adr/0004-model-boundary-and-pipeline-ownership.md) 决定 2「解析直连模型服务，**不再经 8900 网关**；模型服务地址可配置（部署形态需要时**可指向 8900 代理，契约不变**）」、
   决定 6「`qed_llm_calls` 调用记录由本仓库在直连成功路径**自写**（`service=axiom_flow`）」；
   PLAN-025 R6 甲案的落码形状明写「`mode` 由注入方给（**本组件出站恒直连**，按注释取 `local`）」；
   `api.md:21-23` 与根侧 `api-contracts.md:738` 各自重申同一句。
@@ -233,6 +233,22 @@
 - 本案立场：R11 批文到达前**不动 AF 码**，`knowledge-analysis.md:99` 的 `KA-5` 正文维持原样；批文到达后按
   「先改判 `KA-5` 与 `_OUTLINE_PROMPT` 两处条文 → 再落 `orchestrator/knowledge.py` 的取材与回定位 → 同批补 malformed 判据的守护用例」顺序执行。
 
+**R7 出裁与交付（2026-11-25）**：用户裁定＝**显式空优先并停用**，本轮已实现并验证：
+
+- `.env.example` 补 `AXIOM_KP_ENGINE`／`QED_ENGINE_GATEWAY_URL`／`AXIOM_KP_TIMEOUT` 三键及默认口径；
+- 仅三键按“键存在即取值”读取：真实环境变量显式空覆盖自身／父目录 `.env`，自身 `.env` 显式空覆盖父目录与内置默认；
+  普通键仍跳过空值。空引擎名、空网关地址、空超时均保留为无效槽位，API 受理期 503 且零写入，不回落默认值；
+- 空超时保留 `None`，非空但非数字仍回落 600 秒；引擎工厂在 `float()` 前拒绝空超时，配置与 API 零写入由单测和契约守护。
+
+**R18｜`if_rev` 竞态响应缺口已交付**（2026-11-25 用户批准本轮实施）。
+
+- `api/main.py:patch_kp_node` 的预检 409 与条件 UPDATE 失败后的 409 均回带最新 `rev` 和请求 `if_rev`；
+- `KpRepository.update()` 在条件 UPDATE 失败后以 `populate_existing=True` 强刷数据库行，不信任 identity map 中的旧对象；
+- 确定性 API 契约覆盖“预检通过后、UPDATE 前被他人改写”的分支，仓储既有冲突与最新行守护继续有效；
+- 零 DDL。显式 MySQL 层未跑，确定性竞态用例**不冒充真实双会话取证**，该边界继续记入固定设计文档的已知欠账。
+
+W12② 已于 2026-11-25 用户改判取消，不再是实现或证明对象；原 PLAN-027 的整本窗口不再执行，不以真机窗口作为 R7／R18 的证明前置。
+
 ## 裁决回填（2026-10-26，需求方直接出裁并批准本案动码）
 
 令文（需求方原话摘录）＝「后端内容由8902服务提供，8900只是中转，**选甲，我批准你动手**；AXIOM_KP_ENGINE不做配置，.env的配置已足够，
@@ -305,17 +321,19 @@
 | --- | --- | --- |
 | AF-T5 备注载体与用途 | **甲**（出裁标签「映射页区间＋备注入 prompt」） | `KpJobCreate` 加可选 `review_note`（进 `extra="forbid"` 闭集与其契约测试）→ 随 `op_kind='kp'` 批次流水 payload 存档 → 该轮 prompt 注入为上下文段（`KA-22` 适配层内）；`api.md` ④ 的 `POST /kp-jobs` 行同步。范围半边＝零变更（`page_start`／`page_end` 已在册已校）。 |
 | AF-T6 家具剔除作用层 | **甲＋乙合取**（出裁标签「判据归 AF：只作用取材＋读侧标记」） | 判据与剔除**都归本仓**：① 取材两处（`build_outline`／`extract_points`）按 `furniture_hints` ∧ `corrected_type` 剔块或切段，产物文件与 `PageBody.markdown` 一字不改；② 页数据读投影加一记家具标记供根侧渲染腿一键隐藏（「美化」的稳定依赖，不落根侧自算几何）。丙（改写 `.md` 产物）不取。 |
-| AF-T7 「删除」「标粗」两枚意图键 | **甲**（出裁标签「意图闭集扩两枚，**归本轮 REQ-143**」） | `EDIT_PAYLOAD_KEYS` 扩 `removed`／`emphasis`，仍走同一条 `PUT …/blocks/{index}/edit`、同一 `job_id` 绑定、**只隐不删**、由 W3 回放腿消费，零 DDL；归属半条已裁＝消费与实施口径归根侧 REQ-143 本行（不挪 REQ-142），本仓侧实施落本壳 W12。 |
+| AF-T7 「删除」「标粗」两枚意图键 | **2026-11-25 用户改判：取消**（后端不承担展示层隐藏／强调） | 后端目标只要求完整、正确解析并标注正文、标题、页眉页脚等块类型；`removed`／`emphasis` 不进入 `EDIT_PAYLOAD_KEYS`、不扩端点、不建 DDL、不实现回放。展示层如另有需要，由根侧自行承担，不改变解析事实。 |
 | AF-T8 导读成文位 | **甲**（出裁标签「导读＝详解长文的成文规格」；**同日第二批问答补裁**＝「导读和详解就是一回事，帮助学习者理解该部分做什么，以易读、方便人理解为核心」） | 导读不是新列、不是新端点、**也不是与详解并列的第二枚物件**：只有 W7 长文腿这一枚正文，其 prompt 以「易读、帮助理解这部分做什么」为纲，「学什么／为什么要学／有什么作用」是**取材取向而非强制段式**（章态与点态各一档），prompt 正体在本仓（AF-T3 甲）；`meta` 加发半条（乙案）不取。 |
 
 > **与既有工作项的关系**＝AF-T5／T6／T7／T8 都不解除 W6／W7 的既有裁值，而是给它们各加一枚延长件；
 > W5（梳理阶段默认剔除）与 AF-T6 是同一件事的两个层次（W5 已裁「做」，T6 裁的是「作用在哪一层」＝取材层＋读侧标记，产物不动）。
 
+> **2026-11-25 用户最终裁决（AF-T7）**：这两个功能没有意义；它们属于展示层，不属于后台解析。后台要么不解析，要么完整、正确地解析，并标注正文、标题、页眉页脚等。原「扩 `removed`／`emphasis`」甲案自此取消，不扩载荷、不做回放、不建 DDL。
+
 ## 工作项
 
 | ID | 工作项 | 落点 | 依赖 | 状态 |
 | --- | --- | --- | --- | --- |
-| W1 | demo 门（真机最小闭环，判据与根侧 REQ-142 W1 同一条）：把 b05 某页页眉人工改判 `header` → 8902 读回可指认 → `GET /pages` 与梳理取材两处都不再把它当正文 →（后半条等裁）一次真实批次产出的目录不含该行 | `api/main.py`／`orchestrator/knowledge.py` 现场 | W2~W4（前半条即达成；后半条依赖 R8 落地，本案先按前半条验收） | 前半条已达成（2026-10-26：同一枚改判行让页数据块序列与取证标题序列两处读数同变，8 枚用例两侧同钉；W5 后再加半条＝改判成家具的那行**从送模型的正文副本里也消失**，`TestCurationStripsFurniture` 五枚守）；后半条（一次真实批次产出的目录不含该行）需 W10 窗口 |
+| W1 | demo 门（真机最小闭环，判据与根侧 REQ-142 W1 同一条）：把 b05 某页页眉人工改判 `header` → 8902 读回可指认 → `GET /pages` 与梳理取材两处都不再把它当正文 →（后半条等裁）一次真实批次产出的目录不含该行 | `api/main.py`／`orchestrator/knowledge.py` 现场 | W2~W4 | 前半条已达成（2026-10-26：同一枚改判行让页数据块序列与取证标题序列两处读数同变，8 枚用例两侧同钉）；W5 已补家具行从送模型正文副本消失的守护。后半条原依赖 W10 整本窗口，该窗口已于 2026-11-25 取消；目录生成由 PLAN-028 分项验收覆盖，本案不再以整本窗口作关闭前置 |
 | W2 | 扩载荷 `corrected_type`：闭集校验、载荷落库、回显；先红后绿 | `schemas.py`、`db/repositories.py`、`api/main.py` | —（用户 2026-10-26 已裁甲・AF 侧扩载荷，不挂 AF-T1~T4） | 已执行（2026-10-26：十枚闭集外 422、`EDIT_PAYLOAD_KEYS` 加同名键、`EditRecord` 回显；零新列由表族守护复验） |
 | W3 | 读侧回放两处（页数据端点＋梳理取材），含「改判后换版不套用」「无改判行时读数不变」两条反向断言 | `api/main.py`、`orchestrator/knowledge.py` | W2 | 已执行（2026-10-26：回放正体新建 `normalize/intents.py`；两处各一次仓储查询；四条判据形状见「过程与证据」） |
 | W4 | 跨页重复线页域判据纯函数（读时、零写库），含「正文里重复出现的定义句不被误判」反例 | `normalize/furniture.py` | — | 已执行（2026-10-26：`furniture_hints` 三条件合取只供给跨页重复线那一维；6 枚用例含两条反例；本轮无消费方已写进 `PM-19` 边界列） |
@@ -324,9 +342,9 @@
 | W7 | 长文两条腿＋`narrative_ref` 写列 —— **2026-10-26 出裁＝R9 甲（＝PLAN-025 R5 乙案）**：`PUT /api/v1/kp/nodes/{node_id}/narrative` 消费在册 `write_narrative`、列由第四条系统腿 `set_narrative_ref` 写；**同路径 `GET` 读腿同批**（根壳实核已把净缺定成两枚＝写端点＋正文读端点，屏侧详解框无读面即无正文）；jail 不放宽、正文超限判 422 不截断、零 DDL | `api/main.py`、`orchestrator/knowledge.py`、`db/repositories.py`、`schemas.py` | AF-T4、R9、PLAN-025 R5（均已裁） | 已执行（2026-10-26：两条腿成对开在节点路径上；`narrative_ref` 在 UPDATE 通路上只有 `set_narrative_ref` 一枚写者，由整表逐列对账守着；jail 与产物通路同一条、不放宽（`ensure_safe_segment`＋`ensure_within`，调用方给不了文件名也给不了路径）；判定序＝422（形状闸在请求模型里，**先于查行**）→404→409（**先于任何磁盘写入**）→先落盘再落列→200 回显正文；缺文件读回 `exists=false` 且两腿都不改列；上限 `NARRATIVE_MAX_CHARS=512_000`，超限判 422 不截断（与 `summary` 的入库截断故意相反）。判据已晋升 `KA-30`，`KA-11` 的写者分域随步改判为四条腿；`api.md` ④ 两条小节与总表两行已落。定向 14 枚契约＋7 枚仓储用例；TDD 红证、判定序对账改判与两处文档门自纠见「过程与证据」） |
 | W8 | 文档随步：`api.md` ③/④、`knowledge-analysis.md`、`parsing-management.md`、`database-design.md`、`code-map.md` 五元组 | `docs/` | W2~W4（本轮净集）；R8~R10 落地件随其后 | 逐轮随步已执行（2026-10-26：净集五处 ＋ W6 三处 ＋ W5 三处 ＋ W7 四处 ＋ W11 四处＝`knowledge-analysis.md` 新增 `KA-31` 与 `KA-27` 的 `payload` 四键闭集、`api.md` ④ 的请求体段与门槛表首行与进度面示例／一条新bullet、`database-design.md` 的 `payload` 行加 kp 形状＋当前范围段两处更正（适配器已接入、九条端点）、`overview.md` 能力矩阵一行。`database-design.md` 的 `section_kind` 披露随 R10 改判**维持「本轮只建列」不动**，该案已由 W5 的「不造写手」承载） |
 | W9 | 三门禁：定向用例、全量 `pytest tests -q`、`ruff check src tests scripts` | — | W1~W8 | 逐轮随步已执行（2026-10-26：净集 953 → W6 985 → W5 1001 → W7 收口 1026 → **W11 收口 1030 passed／18 skipped** → W17 收口 1072 → **W18 收口 1127 passed／18 skipped** → **W19 收口 1136 passed／18 skipped（49.48s）** → W20~W22 收口 1176 → **W23~W25 收口 1210 passed／18 skipped（51.94s）**，逐轮 `ruff check src tests scripts` 均 All checks passed；读数逐条见「过程与证据」） |
-| W10 | 真机梳理窗口（D 类，人工发令）：一本书真实生成一轮目录并在根侧读回 | — | W9 | **前半条已达成**（2026-10-27 丙案轮＝零改码、用在册 `corrected_type` 人工改标五枚行跑一次小页区间真实批次，「受理 → outline → `af_kp` 行 → 调用账 → 根侧屏上读回」五段全绿，收口读数与两枚新事实见「过程与证据」同日期行）；**后半条＝整本目录排在两枚裁点之后**＝根侧 `DEFECT-026`（`_drafts` 缺非法转义容错腿，实测已吃掉一整节知识点）与本壳 `R11`（KA-5 目录阶段取材是否扩到书自身目录页条目行，四案未裁）；**后半条的窗口规程与批准面移交 [PLAN-027](2026-11-01-kp-real-machine-window-closeout.md)**（该壳 W3 对齐 R11 条文、W6~W9 跑轮次，本壳关闭判定与 todo 行迁移排在它的 W10） |
+| W10 | 真机梳理窗口（D 类，人工发令）：一本书真实生成一轮目录并在根侧读回 | — | W9 | **前半条已达成**（2026-10-27 丙案轮＝零改码、用在册 `corrected_type` 人工改标五枚行跑一次小页区间真实批次，「受理 → outline → `af_kp` 行 → 调用账 → 根侧屏上读回」五段全绿）；**后半条整本窗口不再执行**（2026-11-25 用户裁决主链已分开验收）。R11 已由 W14~W18 落地，根侧 `DEFECT-026` 归其负责面；原窗口规程与取消结论见 [PLAN-027](2026-11-01-kp-real-machine-window-closeout.md)，本案关闭不再依赖该壳 W6~W9 |
 | W11 | **备注通道**（需求方第三令）＝`KpJobCreate` 加可选 `review_note`＋批次流水可指认＋注入该轮 prompt，受理门与契约测试同批 | `schemas.py`、`api/main.py`、`orchestrator/knowledge.py`、`db/repositories.py`、`engines/kp_gateway.py` | AF-T5（**已裁甲**，在 W6 已裁的形状之内） | 已执行（2026-10-26：TDD 先红后绿，红证＝`KpBatchRow.__init__() got an unexpected keyword argument 'review_note'` 与网关 `bind_batch` 的 `TypeError`，五枚用例 5 failed／124 passed 落定后再动码；落点比原表多两件＝`db/repositories.py`（`KP_PAYLOAD_KEYS` 三键→四键、`KpBatchRow.review_note`）与 `engines/kp_gateway.py`（`bind_batch` 认这枚关键字参数、两阶段 prompt 各追加「人工评审意见」上下文段）；上限 `KP_REVIEW_NOTE_MAX_CHARS=2000`，超限判 422 **不截断**（与 `KA-30` 同一条口径）；备注落 `payload` 而非 `note` 实体列（它是批次输入，不是「读这行的人留下的话」），读侧 `ledger.review_note` 恒发、缺省空串；**不进归因 `meta`**，请求体闭集一字未加；空备注时上下文段整段不出现。判据晋升 `KA-31`，`KA-27` 的 `payload` 闭集与 `database-design.md` 的载荷行、`api.md` ④ 的请求体／门槛表／进度面示例随步） |
-| W12 | **家具剔除的作用层＋读侧家具标记＋两枚新意图键**（第三令「美化」与「删除／标粗」的本仓半边）＝取材两处（`build_outline`／`extract_points`）按家具线剔块或切段（W5 的层次细化，产物文件与 `markdown` 一字不改）＋页数据读投影加一记家具标记供根侧渲染腿一键隐藏＋`EDIT_PAYLOAD_KEYS` 扩两枚＋回放腿消费，零 DDL、零写库、不改产物文件 | `orchestrator/knowledge.py`、`normalize/furniture.py`、`db/repositories.py`、`api/main.py` | W5、AF-T6（**已裁＝甲＋乙合取**）、AF-T7（**已裁甲・归根侧 REQ-143 本行**） | **三半拆分**：① 取材剔除半边**已随 W5 落地**（两处出口＝`_heading_evidence` 与 `_page_bodies`，判据入 `KA-29`）；② 两枚意图键 `removed`／`emphasis` **未开始**（AF-T7 已裁甲，动码等需求方「开始执行」）；③ 读侧家具标记半边**已落地（2026-11-01，取三案之甲）**——`PageData.furniture_blocks`＝类型维∪线维的块下标（纯函数 `furniture_blocks`），进程内缓存按 `(book_id, job_id)`、块编辑后作废本书本版键；产物与 `markdown` 一字不改，见「过程与证据」末行与 `api.md` ③ |
+| W12 | **家具剔除的作用层＋读侧家具标记**（第三令「美化」的本仓半边）＝取材两处（`build_outline`／`extract_points`）按家具线剔块或切段（W5 的层次细化，产物文件与 `markdown` 一字不改）＋页数据读投影加一记家具标记供根侧渲染腿一键隐藏；原 W12②「删除／标粗」两枚意图键已于 2026-11-25 用户改判取消，不进入后台解析契约 | `orchestrator/knowledge.py`、`normalize/furniture.py`、`db/repositories.py`、`api/main.py` | W5、AF-T6（**已裁＝甲＋乙合取**）、AF-T7（**2026-11-25 用户改判取消**） | **交付两半、取消一半**：① 取材剔除半边**已随 W5 落地**（两处出口＝`_heading_evidence` 与 `_page_bodies`，判据入 `KA-29`）；③ 读侧家具标记半边**已落地（2026-11-01，取三案之甲）**——`PageData.furniture_blocks`＝类型维∪线维的块下标（纯函数 `furniture_blocks`），进程内缓存按 `(book_id, job_id)`、块编辑后作废本书本版键；产物与 `markdown` 一字不改，见「过程与证据」末行与 `api.md` ③；② `removed`／`emphasis` **取消且不实现**，不扩载荷、不做回放、不进入关闭判据 |
 | W13 | **导读的成文规格**（第三令「知识点详情只负责总结与导读」的本仓半边）＝W7 长文腿的 prompt 按「学什么／为什么要学／有什么作用」三段成文，章态与点态各一档；prompt 正体在本仓（AF-T3 甲） | `engines/kp_gateway.py`、`orchestrator/knowledge.py` | W6、W7、AF-T8（**已裁甲**＝导读是详解长文的成文规格，零新列零新端点） | 已实现（2026-11-05 随 W27 提示词重写落地）：`_CHAPTER_PROMPT` 的 `chapter_summary` 段点明「学什么／解决什么问题／结论链在整门课里接到哪里」，`chapter_narrative` 段明文「分三段」——总问题与难点／按材料的推进关系（相邻两节写「上一步留下了什么，下一步要做什么」）／学完能做什么与后续章节；点态由 `_POINTS_PROMPT` 的节总结与导读两段承接。零新列零新端点，W27 的 `TestRevisionContextGoesIntoThePrompt` 与冻结件读数见「过程与证据」2026-11-05 行 |
 | W14 | **R11 甲-B 落地件・目录页条目腿**＝`normalize/toc.py` 三条纯函数（`toc_entries` 拆条目只剥行末引导点与印刷页码／`estimate_print_offset` 取 (命中页−印刷页) 众数／`locate_entries` 只认 `印刷页＋偏移±1` 窗口内命中）＋ `orchestrator/knowledge.py` 取证第三趟把定位结果并成合成 heading 读数（真实页＋块序＋由条目行形状给的层级）＋ 窗口外条目仍成行、条目名进 `result.unlocated_outline_entries`（`KP_RESULT_KEYS` 第十六键）。判据正文＝`KA-33`，`KA-5` 同批改述 | `normalize/toc.py`（新建）、`orchestrator/knowledge.py`、`db/repositories.py`、`docs/design/knowledge-analysis.md`、`docs/architecture/api.md` | 需求方 2026-10-27 批文（R11＝甲-B 全案、子一保留点名、子二正本归本仓） | 判据已成文（`KA-33` 与 `KA-5` 已落）；已实施（2026-10-27） |
 | W15 | **R11 批文的随步件・只目录 `stage`**＝`KpJobCreate.stage∈{full,outline}`（缺省 `full`、域外 422 先于六道受理门）→ `KpAcceptance.stage` → `run_knowledge_job` 的 points 腿条件发起（收尾与流水照跑）→ `KP_PAYLOAD_KEYS` 四键扩五键并在进度面回显。判据正文＝`KA-34` | `schemas.py`、`orchestrator/knowledge.py`、`db/repositories.py`、`api/main.py`、两份 docs | 需求方 2026-10-27 第五令（「这次只梳理目录」的载体＝加一枚只目录入参，不按页区间划窄） | 判据已成文（`KA-34` 与 `KA-27` 键数已改）；已实施（2026-10-27） |
@@ -370,7 +388,7 @@
 | `tests/unit/test_knowledge_pipeline.py` | **两方混合** | 对方未跟踪新件 ＋ 本案 `TestHumanRelabelIsReplayed` 四枚与 `_relabel` 辅助 ＋ W6 的 `_GatewayShapedEngine` 与三枚分流用例 ＋ W5 的 `TestCurationStripsFurniture` 五枚与四枚场景辅助（`_write_furniture_page`／`_furniture_scene`／`_captured_bodies`／`_FURNITURE_HEAD`）＋ W7 的两处 docstring 改判（`TestNarrativePlacement` 头与 `test_the_narrative_path_does_not_write_the_narrative_ref_column` 正文：原写「R5 未裁故该列无写者」，现改「文件腿的越域判据＝写文件不顺手改列，写列一侧由 `TestNarrativeRefSystemLeg` 守」）——**断言一条未改、仍绿** ＋ W11 两处＝`_GatewayShapedEngine` 的 `bind_batch` 认 `review_note` 关键字参数并记进 `notes`（形状桩与真适配器同形），`TestCallLedger` 新增一枚两半用例（备注既到绑定面也进流水 `payload`）——**该用例首版把断言写在 `run_knowledge_job` 上，跑绿了绑定半边却查不到流水行**：批次流水的发出点在 `JobRunner._record_kp_batch` 的单独会话里，执行体本身不写它，故改走 `runner.submit_knowledge` 一途，见「过程与证据」 ＋ W18 的三枚新类与一枚夹具＝`TestModelLedOutline` 11（模型条目为正本含条目序／父链／`steps` 读数、单页故障只回落那页且 `model_ref` 两值并存、回落页进账面 `outline_fallback_pages`、判页空集整本回落且整理腿零调用、判页 `EngineError` 同形、`level=3` 计 `dropped_depth`、无前置章不造父、调用上界、判页样本＝首尾各 `TOC_PAGE_SCAN_LIMIT` 页、短书逐页一次不重复）、`TestPrintPageAnchorAndVerify` 6（查得中零调用、坏行一批一次、候选面逐条给行、域外页号 99 整条不认、判「不存在」走未定位、偏移标定不出则核对腿零调用）、`TestFrontMatterRows` 5（附件页成顶级行标 `reference`、`kind` 空值折名字判、取证集外页不成行、**回落腿按名字判**、零 ALTER）；同批新增模块级夹具 `_two_toc_page_scene`（两枚目录页＋五枚正文页，绝对页＝印刷页＋2），并把 `TestDeterministicOutline` 的 docstring 随 `KA-35` 改判改述为**回落面**（原写「条目腿为正本」）——该件断言一条未改、仍绿 |
 | `tests/unit/test_db_knowledge.py` | **两方混合（W7 起）** | 原列在下方「本案零行」清单：W7 打破该口径——追加 `TestNarrativeRefSystemLeg` 七枚（整表逐列对账只动指针与两枚序号／时刻列、不改判确认位与来源列、背书域白名单不含这列且 `update()` 抛、非法指针参数化含空串、陈旧 `if_rev` 不落列、不存在的行指不过去、其余三条腿仍把这列留空），模块 docstring「三个写者 → 四个写者」与 DesignRef 加 `KA-30`；同批删掉一处本会话自己误留的重复 `WATCH` 元组 |
 | `docs/architecture/api.md`、`docs/architecture/database-design.md`、`docs/architecture/code-map.md`、`docs/architecture/overview.md`、`docs/design/parsing-management.md`、`docs/design/knowledge-analysis.md`、`docs/design/model-integration.md`、`docs/adr/0004-…md`、`docs/trackers/todo.md` | **两方混合** | 对方在途 ＋ 本案 W8 净集随步段（`api.md` ③ 段、`database-design.md` 的 edit 载荷行、`code-map.md` 的 normalize 行、`parsing-management.md` 的 PM-5 改判与新增 PM-19、`knowledge-analysis.md` 的 KA-2 末列、todo 的 PLAN-026 镜像行状态）＋ W6 随步段（`api.md` ④ 的槽位与探活两行、`code-map.md` 的 engines／config 两行、`knowledge-analysis.md` 的 KA-22／KA-23 两行与「实现批／已知欠账」两处、`model-integration.md` 配置键表三行、ADR 0004 决定 6 的修订括注）＋ W5 随步段（`knowledge-analysis.md` 新增 `KA-29` 与 `KA-2` 末列改指、`parsing-management.md` 的 PM-19 落点列两枚新函数、`code-map.md` 的 normalize 行与 `orchestrator/knowledge.py` 行两处条文区间）＋ W7 随步段（`knowledge-analysis.md` 新增 `KA-30` 与 `KA-11` 的写者分域改判为四条腿、`api.md` ④ 的 `PUT`／`GET …/narrative` 两条小节与端点总表两行、`code-map.md` 的 `api/main.py` 行「④ 梳理与复核九条，长文两条腿成对开在节点路径上」与条文列表加 `KA-30`、`orchestrator/knowledge.py` 行的「长文两条腿」措辞与条文区间 `KA-29~KA-30` ＋ W11 随步段（`knowledge-analysis.md` 新增 `KA-31` 与 `KA-27` 的 `payload` 四键闭集／落点格补 `KP_PAYLOAD_KEYS`、`api.md` ④ 的请求体段与门槛表首行与进度面示例及一条新 bullet、`database-design.md` 的 `payload` 行加 kp 形状；`code-map.md` 本轮**无行需改**（模块行不涉新增的函数级键））；**另有四处为前轮漏随的事实更正**＝`database-design.md` 的「仍缺两段」按 W6 落地改判为一段（文本引擎适配器已接入）、`database-design.md` 当前范围段与 `knowledge-analysis.md`「实现批」行、`overview.md` 能力矩阵一行的端点数按 W7 落地由七条改为**九条**（运行时实测九条路由，`overview.md` 由此从下方「本案零行」清单移出，本案在它就一行）；＋ W18 随步段（`knowledge-analysis.md`＝`KA-5` 的「目录行确定性成行、不再调模型」随 `KA-35` 改判改述为三档成行、`KA-37` 落点格点名 `page_sample_text` 的预算内截字、`KA-5`／`KA-37`／`KA-39` 三处守护列补上新类名；`api.md` ④＝`stage` 段两行改判（`outline` 不再是零调用批次，目录步上界＝1＋目录页数＋核对 1 次）、进度面示例 `result` 加四键与四条 bullet；`code-map.md`＝`orchestrator/knowledge.py` 行的两阶段描述与条文区间 `KA-29~KA-39`、`engines/` 行的目录三条腿描述与 `KA-35／KA-37／KA-38`、`normalize/` 行的 `toc.py` 描述与 `KA-36／KA-37／KA-39`）。**本轮清一处前轮漏随**＝W14~W17 的目录轮当时只随到 `knowledge-analysis.md`，`code-map.md` 里 `KA-36~KA-39` 零读数、`api.md` ④ 的 `result` 示例止于十八键且 `stage` 段仍写「目录阶段确定性成行」——三处按现状补齐后复跑文档门；提交归对方或人工，本案不碰 git |
-| `docs/plans/2026-10-26-annotation-replay-and-kp-text-engine.md` | **本案新建** | 本壳 |
+| `docs/history/plans/2026-11/2026-10-26-annotation-replay-and-kp-text-engine.md` | **本案新建** | 本壳；2026-11-25 关闭后 Retain 归档至该路径 |
 
 **本案零行、纯对方在途的文件**（回退与提交都别看错）：
 `engines/__init__.py`、`orchestrator/__init__.py`、`db/llm_ledger.py`、
@@ -395,7 +413,7 @@
 | 2026-10-26 | 三条决定性事实取证（本轮立项前核查） | ① `EDIT_PAYLOAD_KEYS = ("block_type","verdict","corrected_text","corrected_bbox")`（`db/repositories.py:63`）无类型改判键，且 `block_type` 是产物快照的只读回声（`api/main.py:574`）——**人工改块类型今天无路**；② `orchestrator/knowledge.py:244` 直接 `BlocksPage.model_validate_json` 读产物、`:253` 取 `row.section_kind or ""`，取材腿**零编辑回放**，故改判不改目录；③ `engines/factory.py:25-26` 两元组皆空、`build_text_engine`（`:76`）恒抛，`api/main.py:873` 因 `knowledge_engine_factory is None` 或空名判 503——**梳理生成腿恒不可用**。 |
 | 2026-10-26 | 本仓工作树基线指纹 | HEAD `46f5f3f`；`git diff --stat`＝21 文件 +2622/-185；未跟踪 7 文件 4831 行（`wc -l` 读数见「授权前提」）。七条 `kp` 路由已在在册（`api/main.py:886/919/946/972/1017/1055/1094`），`write_narrative`（`orchestrator/knowledge.py:1258`）有测试无 HTTP 面。 |
 | 2026-10-26 | 根侧八枚四裁的落点核对 | 标注集＝`BlockType` 十枚全集（`schemas.py:46-58`）／扩载荷落 AF 侧／两腿同轮／总结入根侧 `summary`、详解入本仓 narrative 写腿——均与本壳范围一一对应，无第五处需要本仓改表。 |
-| 2026-10-26 | 开工前对账（本仓代码进度／三份契约正本／根侧消费面三路）出三处冲突 ⇒ R8~R10 | ① **适配器出站与记账**：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md) 决定 2「不再经 8900 网关」＋ PLAN-025 R6 甲案「本组件出站恒直连，按注释取 `local`」＋ `api.md:21-23` 与根侧 `api-contracts.md:738` 各自重申，vs 根 REQ-143 行 S1「生成调用全经 8900 网关、密钥不下发」；且若走网关，8900 自记一行＋本仓 `KA-23` 包装器（`orchestrator/knowledge.py:854`）＝一次调用两行账 ⇒ 登 **R8**，W6 停手。② **长文写腿**：PLAN-025 W6「本案不新增端点，加端点属契约变更须先改设计」＋ 其 R5 三案未裁＋ 守护用例现断言 `write_narrative` **不写** `narrative_ref` ⇒ 登 **R9**，W7 停手。③ **`section_kind` 写手**：`database-design.md`「本轮只建列」＋ `knowledge-analysis.md` 无授予写手的 `KA-*` 条文位＋ 根侧 REQ-139 的 A3 仍「待判」 ⇒ 登 **R10**，W5 停手。**净集 W2~W4 零冲突**，按用户「你判断梳理没问题就开始执行」放令先开工。 |
+| 2026-10-26 | 开工前对账（本仓代码进度／三份契约正本／根侧消费面三路）出三处冲突 ⇒ R8~R10 | ① **适配器出站与记账**：[ADR 0004](../../adr/0004-model-boundary-and-pipeline-ownership.md) 决定 2「不再经 8900 网关」＋ PLAN-025 R6 甲案「本组件出站恒直连，按注释取 `local`」＋ `api.md:21-23` 与根侧 `api-contracts.md:738` 各自重申，vs 根 REQ-143 行 S1「生成调用全经 8900 网关、密钥不下发」；且若走网关，8900 自记一行＋本仓 `KA-23` 包装器（`orchestrator/knowledge.py:854`）＝一次调用两行账 ⇒ 登 **R8**，W6 停手。② **长文写腿**：PLAN-025 W6「本案不新增端点，加端点属契约变更须先改设计」＋ 其 R5 三案未裁＋ 守护用例现断言 `write_narrative` **不写** `narrative_ref` ⇒ 登 **R9**，W7 停手。③ **`section_kind` 写手**：`database-design.md`「本轮只建列」＋ `knowledge-analysis.md` 无授予写手的 `KA-*` 条文位＋ 根侧 REQ-139 的 A3 仍「待判」 ⇒ 登 **R10**，W5 停手。**净集 W2~W4 零冲突**，按用户「你判断梳理没问题就开始执行」放令先开工。 |
 | 2026-10-26 | 两处分类纠错（本壳原稿之错，非对方条文） | ① 「`api.md` ②」错＝块编辑与页数据按 `api.md:86` 属 **③ 解析结果与 PDF 对照**，② 是 af_* 数据查询（`:85`）——已改「关联设计」与 W8 行。② 根侧透传面的落点是 `api-contracts.md` **§④**（`:730`「④ 数据透传·Axiom-Flow」；`:761` 的「规划契约（8902 已实现、8900 透传待实施）」表现列 4 枚，`kp` 七条应入此表），**不是 §⑥**（`:987` §⑥＝8900 自有学习域）；对方 `api.md:47` 自己也指向 ④。根侧 REQ-141 行 S1 里的「§⑥」按根侧 G2 冻结不改，落点以 §④ 为准并在根壳登记。 |
 | 2026-10-26 | W2 扩载荷落地（先红后绿） | 红＝`EditRequest` 无 `corrected_type` 字段、`EDIT_PAYLOAD_KEYS` 四键不含它 ⇒ 提交类型改判被当未知键拒；绿＝`schemas.py` 加可空字段并由 `BlockType` 十枚闭集校验（闭集外 422、`null` 合法＝「只记别的维」）、`db/repositories.py` 键入载荷、`EditRecord` 回显。零新列由 `tests/unit/test_db.py` 的表族形状守护复验。定向门禁后全量＝939 passed／18 skipped。 |
 | 2026-10-26 | W3 读侧回放两处落地（含一处框架事实取证） | 红＝同一条改判行下 4 枚用例分别读出 `'header'` 未被覆盖、取证 headings 未变；绿＝新建 `normalize/intents.py`（`relabels_by_block` 只收闭集内取值、`apply_relabels` 用 `model_copy` 只换 `type`），`api/main.py:get_page` 复用**一次** `list_edits_for_page`、`knowledge.py:build_evidence_set` 用**一次** `list_edits_for_book` 按页分桶（逐页查询会打出 N 条 SELECT）。**框架事实（决定判据形状）**＝pydantic v2 `model_copy(update=…)` 不重跑 `model_validator`，且 FastAPI `response_model` 对同型实例 `revalidate_instances='never'` 直通 ⇒「判成 `formula` 而产物无 `latex`」返回 **200**、`latex` 为 `null`，不炸 500；该形状由 `test_relabel_does_not_backfill_a_field_the_artifact_lacks` 钉死（回放只叠加判别维，绝不补内容字段）。匹配键＝`Block.index` 而非数组位置。定向＝`TestPagesAndManifest` ＋ `TestHumanRelabelIsReplayed` 30 passed；全量 947 passed／18 skipped。 |
@@ -442,6 +460,7 @@
 | 2026-11-06 | **W28 落地：目录腿容错回定位与「名以正文为准」（`KA-49`／`KA-50`；根侧入站请求 REQ-153，需求方裁丙并逐轮授权本仓改码）** | **先红**＝`normalize/toc.py` 尚无 `BodyNameIndex` 时 `tests/unit/test_normalize.py::TestTolerantBodyMatch` 13 枚整场 `ImportError`（收集期即炸，故两份红证分开跑各取一次），`tests/unit/test_knowledge_pipeline.py` 的 `TestTolerantRelocate`＋`TestBodyNameWins` 首跑 **6 failed／4 passed**（4 枚本就应绿的反向断言＝救不回者锚回目录页、前缀命中不改名、两趟名字逐字相同、页级复核不被容错救活）。**后绿**＝定向 **10 passed**；`BodyNameIndex` 近似桶缺键时 `list + ()` 抛 `TypeError`——定向用例两把桶都非空遮不住这一形，全量首跑由两枚旧例 `test_no_page_is_dropped_when_the_offset_cannot_be_calibrated`／`test_the_verify_leg_is_skipped_when_the_offset_cannot_be_calibrated` 撞出 ⇒ 默认值改 `[]`；AF 全量 **1268 passed／18 skipped（52.46s）**、`ruff check src tests scripts`＝All checks passed。**两处实现口径随步入条文**＝① 近似腿只在**单块首行**上判（拼接候选只喂整行同串，否则 `第 6 章 RIEMANN-STIELTJES 积分 正文。` 这类「标题＋一句正文」以 ratio 0.957 混进候选，最早一枚落在目录页自己，`KA-50` 的净名换不出来）；② 容错装配只在一处（`_anchor_from_body` 同时给「锚」与「名」，两趟共用），这是 `KA-40` 身份位不漂移的前提。**未做**＝真机一轮（8902 重启与发批归需求方发令）。**条文随步后复跑**＝本仓三处文档改动（`knowledge-analysis.md` 的 `KA-49`／`KA-50`、`code-map.md` 两行、本壳 W28）之后 `pytest tests -q` **1268 passed／18 skipped（52.87s）**、`ruff check src tests scripts`＝All checks passed，文档守护未因条文改动转红。**裁决② 的另半不在本件内**＝习题集角色入参与目录腿分流已由需求方登为待办行（其台账 REQ-154），本壳与 W28 均零改 `af_books` 与批次入参形状，待发令另开工作项 |
 | 2026-11-06 | **附件页前／后归组的尾巴判据缺陷（b05 真机回归，`KA-39` 边界补句）** | 现象＝b05 全本工作区按库序展示时，前言（p4）／重要符号表（p5）／习题（p311）／习题（p312）／参考书目（p313）五枚附件行排在第 1 章（p9）之前，书尾三枚被当成「正文前」。根因＝`build_outline` 的 `tail_from = max(knowledge_pages)` 取自**全部** `readings` 的页号，而第六令的附件页同样进 `readings`，且目录页里自带的「参考书目／习题」条目也成行——它们指向书尾页，`max` 因此取到 313 而不是正文末页 305，`front` 判据（`page_no <= tail_from`）把三枚书尾附件行整批收进章序之前。修复＝`knowledge_pages` 只按 `role == TOC_ROLE_KNOWLEDGE` 的行定尾巴（b05 尾巴回落到 305：前言／符号表留前，第 11 章习题页与参考书目归后），`KA-39` 边界格补一句「定尾巴只认 `toc_role=knowledge`」。守护＝`tests/unit/test_knowledge_pipeline.py::TestFrontMatterRows::test_a_toc_reference_entry_does_not_pull_back_matter_to_the_front`（七页场景＝目录页自带「习题 …… 5」、正文两章、p6 习题、p7 参考书目；先红后绿，红读数即前两行变成「习题／参考书目」）。门禁＝`pytest tests -q` 1317 passed／18 skipped、`ruff check src tests` All checks passed。根侧屏的展示序口径（展示态按书页序回正、编辑态仍库序）归根侧 BUGFIX-044 承载，不在本仓 |
 | 2026-11-09 | **W29 落地（`KA-68`／`KA-69`）＋b18 内容批验收读数：类型判「其他」与点腿止于习题段** | **令文**＝「预备知识、附录等不应该被判断为章节，为其他，改掉；…3不需要习题段」（根侧 REQ-143 W29）。**码四处**＝① `normalize/toc.py:1025` `node_types_of` 第二趟（`:1060-1075`）：先按行算基础四值，再把「无装东西子行」的章改 `other`——装东西＝派生 `point` 或 `node_kind='point'`，习题段行不算，故附录 A 的唯一子行（一枚 `toc_kind='exercise'` 目录行）不能把它撑成章；② `orchestrator/knowledge.py:2707` `_exercise_cut_anchors`＋`:2729` `_clamp_span_at_exercise`＋`:2776-2794` 在 `_extract_content_points` 取材前截尾；③ `KindReviewBuild.nodes`（`:2562` 返回、`:5847-5848` 并入 `section_nodes`）让本批刚拆出的习题段 draft 行当切点——`_registered_outline_rows` 只读在册行，看不见本批 draft；④ `api/main.py:1542/1567` 目录声明回显与导出的类型改在整书行集上派生（此前在子集上算，同书会漏判）。**一处边界**＝`section_spans_of` 与 `display_spans_of` 不改：章区间必须仍覆盖章末习题段，否则重跑 `kind_review` 时那些行不再被拆；截尾只发生在点腿自己的取材副本。**测试**＝四枚新用例（`test_knowledge_pipeline.py:3299/3328/6526/7386`）；实现后六枚旧夹具红（单枚无子行的一级行被改判 ⇒ stage rows 0 与 content 受理 422），补知识点子行与 `parent_id` 后全绿。**门禁**＝`pytest tests -q` **1604 passed／18 skipped（64.41s）**、`ruff check src tests` All checks passed；一次全量跑出现 3 枚瞬时红（同树并发编辑期），逐枚与整文件复跑全绿、稳定树复跑全量亦绿。**b18 读面**＝候选行 202 行＝点 84／习题 84／章 20／其他 14，depth1 34 行中 20 章 14 其他（预备知识、集合与函数、实数的域公理、实数的正性公理、附录 A、附录 B 六枚由章改判）；b12 13→8 章（「附录 函数扩充的问题」改判）、b05 17→11 章（其余 6 枚原即 reference）。**b18 内容批 `afkp-fc337c1304fc`**＝`status=ok`：`outline_summary_rows 84`／`chapter_summary_rows 20`／`chapter_narrative_rows 20`／`split_exercise_rows 83`／`failed_sections 0`／`failed_chapters 0`。**存量披露**＝改判前产出的点腿材料里，84 个习题切点中有 83 枚点行的 `material_ranges` 命中切点——本批不重跑（写库归人工），下一次内容批自然刷新。**遗留**＝83 枚拆分习题行逐行上树交根侧 ③ 习题集梳理轮合并处理。零 DDL、零库内写、零 git。 |
+| 2026-11-25 | **W12② 取消＋R7／R18 交付＋Retain 收口准备** | 用户明确取消 `removed`／`emphasis`：后端只承担完整正确解析与块类型标注，不承担展示层隐藏或人工强调；两键未进入生产码、载荷常量、API schema、测试或固定设计正文。R7 先红后绿＝新契约与配置用例 **6 failed／4.77s**，工厂边界另复现 `float(None)` 的 `TypeError` 后在转换前拒绝空超时；定向 **7 passed／1.58s**，受影响套件 **169 passed／17.71s**，文档契约 **61 passed／0.86s**。R18 以确定性 API 用例覆盖预检通过后的条件 UPDATE 失败，409 同时回带最新与请求 `rev`，仓储强刷数据库行；显式 MySQL 层未跑，该用例不冒充真实双会话取证。实现轮完整门禁＝`pytest tests -q` **1741 passed、18 skipped（156.82s）**，`ruff check src tests` **All checks passed!**；收口全量门禁另跑并登记于 `completed.md`。零 DDL、零 `removed`／`emphasis` 实现。 |
 
 ## 验证与验收
 
@@ -458,20 +477,21 @@
 - 代码：本案新增行按「逐文件归属」表分列撤回；本案新建的五件（`normalize/intents.py`＋`normalize/furniture.py`＋
   `engines/kp_gateway.py`＋`tests/unit/test_engine_kp_gateway.py`＋本壳）可整文件撤，
   混合文件逐 hunk 选择，**不整树回退**对方在途工作。
-- 行为：`AXIOM_KP_ENGINE` 保持空 ⇒ `POST /kp-jobs` 回到恒 503 形态；不写 `corrected_type` ⇒ 回放两处读数与改前一致。
-- 数据：本案零 DDL；`section_kind` 写手一旦生效属页行的值变化，回滚只停写手、不批量改判历史行（历史行回填属 D 类，另议）。
+- 行为：文本槽位名称为空或闭集外名 ⇒ `POST /kp-jobs` 恒 503；三枚梳理出站键的环境变量／`.env` 显式空值均保留为停用标记，
+  不回落默认，API 在构造引擎前拒绝且零写入。撤回显式空配置即恢复既有优先级；不写 `corrected_type` ⇒ 回放两处读数与改前一致。
+- 数据：本案零 DDL；`section_kind` 是在册既有列，但本案未创建写者，无写者需要撤回，也不批量改判历史行。
 
 ## 关闭与归档
 
-- 关闭判据＝W1 真机读数齐备且 W2~W9 逐条达成；根侧 REQ-142／REQ-143 的本仓侧通路回执写在本壳，
-  两行由根侧自读登记关闭（本仓不代摘根行）。
+- 关闭判据＝W1 的改判／家具侧与既有分项读数齐备，W2~W9 已交付项逐条达成；R7 显式空停用与 R18 竞态 409 最新 `rev`
+  已于 2026-11-25 同批交付。原 W10 后半条整本窗口与 W12② 均已取消，不再充当前置。根侧 REQ-142／REQ-143 的本仓侧
+  通路回执写在本壳，两行由根侧自读登记关闭。
 - 归档判定 `Retain`：页域判据的真书标定证据与两侧对账读数不可再生；运行时事实源以晋升后的
   `api.md` ③/④、`knowledge-analysis.md`、`parsing-management.md`、`database-design.md`、`code-map.md` 为准。
-- 状态推进节拍：`Accepted` →（放令后）`In Progress` → 关闭时翻 `completed.md`，todo 镜像行随壳状态同步。
-- 首条判据的工作项口径＝本壳「工作项」表实际在册行（`W1`～`W25`；「W2~W9」是立案时只列到 W9 的旧口径，
-  后续追加行同受约束）。其中 `W10` 后半条＝整本真机窗口，其闸门分档、轮次序与批准面移交
-  [PLAN-027](2026-11-01-kp-real-machine-window-closeout.md)；该壳跑出的轮次读数写回本壳「过程与证据」，
-  本壳关闭判定与 todo 行迁移排在 PLAN-027 的 W10。
+- 状态推进节拍：`Accepted` →（放令后）`In Progress` → `Completed`，关闭结果迁入 `completed.md`，todo 镜像行随壳移除。
+- 首条判据的工作项口径＝本壳「工作项」表实际在册行（后续追加行同受约束）。`W10` 前半条已由小页区间
+  真机批次达成；后半条整本窗口已取消，取消与欠账处置唯一承载在
+  [PLAN-027](2026-11-01-kp-real-machine-window-closeout.md)。本案于 2026-11-25 关闭并 Retain，W12② 取消；显式 MySQL 层与真实双会话竞态仍未独立复验，不随关闭改写为已证明。
 
 ## 承载 REQ-142／REQ-143（根侧入站请求）
 
@@ -480,7 +500,7 @@
 **成功标准（本仓侧的分项，条目正本在根侧台账行）**＝① `corrected_type` 可写可读且改判进目录取材；
 ② 页域判据成读时纯函数**并被梳理取材消费**（`section_kind` 写手经需求方 2026-10-26 改判取消，该列维持在册无写者）、零 ALTER；
 ③ 非 503 的梳理批次可受理并产出章级目录、每笔调用有账；④ 详解长文有 HTTP 写腿且 jail 不放宽；
-⑤（第三令补）重新解析可带范围与人工评审备注（W11／W22 已落）；块编辑可表达「隐藏」与「强调」两形且只隐不删＝W12②，**仍在本壳在册、未动码**，不在 REQ-142／REQ-143 两行的关闭判据内；
+⑤（第三令补）重新解析可带范围与人工评审备注（W11／W22 已落）；原 W12②「隐藏／强调」两枚意图键已于 2026-11-25 用户改判取消，不进入本仓后台解析契约，也不在 REQ-142／REQ-143 两行的关闭判据内；
 ⑥（第九令补）目录行名不带行末引导点与页码、锚指正文页（`KA-41`）；整册工作区逐行给出「本节从 X 页到 Y 页」的派生两键，
 且与知识点腿实际取材的区间同源（`KA-42`）；`stage=content` 在有目录后可受理、只补知识点与节级总结、目录行逐列不变（`KA-43`）。
 
@@ -489,7 +509,7 @@
 
 **状态**＝`Achieved`（2026-11-07 关闭回执；两行由根侧自读登记关闭，本仓不代摘根行）。
 **REQ-142（①②＋W1 改判半条）**：`corrected_type` 十枚闭集可写可读（W2）、页数据端点与梳理取证两处回放（W3）、页域判据读时纯函数并被取材消费（W4／W5，`KA-29`）、`section_kind` 维持无写者——三条判据全达成，承载不回退。
-**REQ-143（③④⑥）**：③ 非 503 批次可受理并产出章级目录、每笔调用有账（W6／W14~W19，`KA-22`／`KA-23`）；④ 详解长文 HTTP 两条腿成对在册、jail 不放宽（W7，`KA-30`）；⑥ 行清洗、派生区间、`stage=content`（W20~W22，`KA-41`／`KA-42`／`KA-43`）。W11／W12①③／W13 亦已落；W12② 的两枚意图键按上文⑤留本壳另批。真跑窗口（W10）仍归 [PLAN-027](2026-11-01-kp-real-machine-window-closeout.md)，不改变本回执。
+**REQ-143（③④⑥）**：③ 非 503 批次可受理并产出章级目录、每笔调用有账（W6／W14~W19，`KA-22`／`KA-23`）；④ 详解长文 HTTP 两条腿成对在册、jail 不放宽（W7，`KA-30`）；⑥ 行清洗、派生区间、`stage=content`（W20~W22，`KA-41`／`KA-42`／`KA-43`）。W11／W12①③／W13 亦已落；W12② 已由用户于 2026-11-25 取消，不进入本仓后台解析契约。W10 小页区间真机前半条已达成，整本窗口已取消，不改变本回执。
 **回归读数**＝2026-11-07 全量 `pytest tests -q` 1417 passed／18 skipped、`ruff check src tests scripts` 全绿（含 `TestHumanRelabelIsReplayed`、`TestCurationStripsFurniture`、`TestKpNarrativeLegs`、`TestNarrativeRefSystemLeg`、`TestContentOnlyStage`、`TestModelLedOutline`、`TestToleranceRelocate` 等本壳各腿守护）。
 
 ## 承载 REQ-146（根侧入站请求）

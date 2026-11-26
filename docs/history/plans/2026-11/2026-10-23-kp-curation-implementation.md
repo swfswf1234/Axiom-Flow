@@ -1,20 +1,20 @@
 # 知识点梳理消费通路实现批（kp-curation-implementation）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-11-01
-关联 ADR：[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（四表形状与 `links` 越闸例外——本案是它的消费批，不动形状）、
-[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900，梳理调用只经适配层）、
-[ADR 0005](../adr/0005-mysql-integration-test-isolation.md)（`qed_test` 白名单＝自有 `af_*`＋`alembic_version`，本案调用账写共享 `qed_llm_calls` 只写行不改结构）、
-[ADR 0015](../adr/0015-db-single-source-for-readiness.md)（就绪唯一源＝DB，取证页集据此构造）、
-[ADR 0010](../adr/0010-page-regions-are-parse-inputs.md)（页级意图跨版本存活的先例，锚点越界的判读同形）、
-[ADR 0006](../adr/0006-ledger-plan-carrier-contract.md)／[ADR 0011](../adr/0011-ledger-one-row-per-task.md)／[ADR 0013](../adr/0013-ledger-row-three-elements.md)（承载与台账行契约）
-关联设计：[knowledge-analysis.md](../design/knowledge-analysis.md)（`KA-1~KA-45` 与「验收判据」17 条＝本案判据正本，本案一处不复制；立案时为 `KA-1~KA-28`／13 条，`KA-29~KA-45` 与判据 14~17 由 PLAN-026 追加）、
-[database-design.md](../architecture/database-design.md)（`af_kp`／`af_operations` 列清单与四节不变式）、
-[api.md](../architecture/api.md)（新端点的参数与响应形状归它）、[parsing-pipeline.md](../design/parsing-pipeline.md)（`PP-4`/`PP-13`/`PP-19`）、
-[parsing-management.md](../design/parsing-management.md)（`PM-13` 单实例串行前提）、[code-map.md](../architecture/code-map.md)（分析模块登记面）
-关联 Tracker：docs/trackers/todo.md（PLAN-025 镜像行；本案承接 PLAN-024 的 W10，并自 PLAN-024 收口起承载入站请求 REQ-139 的「承载 REQ-139」节）
-归档判定：Retain（17 条判据的逐条取证、批次状态机的变异复验与真机梳理窗口读数属不可再生证据；判据本体在 `docs/design/knowledge-analysis.md`）
+最后更新：2026-11-25
+关联 ADR：[ADR 0016](../../../adr/0016-af-family-rebuild-into-four-tables.md)（四表形状与 `links` 越闸例外——本案是它的消费批，不动形状）、
+[ADR 0004](../../../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900，梳理调用只经适配层）、
+[ADR 0005](../../../adr/0005-mysql-integration-test-isolation.md)（`qed_test` 白名单＝自有 `af_*`＋`alembic_version`，本案调用账写共享 `qed_llm_calls` 只写行不改结构）、
+[ADR 0015](../../../adr/0015-db-single-source-for-readiness.md)（就绪唯一源＝DB，取证页集据此构造）、
+[ADR 0010](../../../adr/0010-page-regions-are-parse-inputs.md)（页级意图跨版本存活的先例，锚点越界的判读同形）、
+[ADR 0006](../../../adr/0006-ledger-plan-carrier-contract.md)／[ADR 0011](../../../adr/0011-ledger-one-row-per-task.md)／[ADR 0013](../../../adr/0013-ledger-row-three-elements.md)（承载与台账行契约）
+关联设计：[knowledge-analysis.md](../../../design/knowledge-analysis.md)（`KA-1~KA-73`；本批「验收判据」1~17 的覆盖映射见下方，判据正文仍在设计篇）、
+[database-design.md](../../../architecture/database-design.md)（`af_kp`／`af_operations` 列清单与四节不变式）、
+[api.md](../../../architecture/api.md)（新端点的参数与响应形状归它）、[parsing-pipeline.md](../../../design/parsing-pipeline.md)（`PP-4`/`PP-13`/`PP-19`）、
+[parsing-management.md](../../../design/parsing-management.md)（`PM-13` 单实例串行前提）、[code-map.md](../../../architecture/code-map.md)（分析模块登记面）
+关联 Tracker：docs/trackers/completed.md（PLAN-025 关闭行；REQ-139 的未实施 C7／N3 已移交 PLAN-046）
+归档判定：Retain（17 条判据覆盖映射、状态机变异复验与尚未提交的分项真机证据不可替代；判据本体在 `docs/design/knowledge-analysis.md`）
 
 > **本案的性质**：PLAN-024 交付了 `af_kp` 的**形状与判据**并明文「建值不建写者」，本案就是那个「写者批」。
 > 因此本案的两条硬边界是派生的而非自选的：**零 ALTER、零新列、零新域值**（形状已由 PLAN-024 封闭），
@@ -26,7 +26,7 @@
 **目标**：让分析模块从「有表有判据、零实现」变成一条可跑的通路——人工发起一次梳理，机器按生效版本
 产出目录与知识点草稿，人逐条背书，根侧从只读导出面拉走已确认结论。
 
-**成功标准（终态形状，逐条判据正文见 [knowledge-analysis.md](../design/knowledge-analysis.md)「验收判据」）**：
+**成功标准（终态形状，逐条判据正文见 [knowledge-analysis.md](../../../design/knowledge-analysis.md)「验收判据」）**：
 
 - `af_kp` 有写者：受理门三形可判（422／409／建批回批次号），批次三态由 `gen_status` 自身表达，
   机器写来源域、人工写背书域与 `confirmed`，重启残留 `draft` 整批归 `rejected`。
@@ -83,7 +83,7 @@
 只读探针：连 `information_schema` 取表与列面、逐表 `COUNT(*)`，未执行任何 DDL 与 DML；配置目标库实读为
 `qed_test`（凭据取自根仓库 `.env` 的 `QED_DB_*`，留档不含口令值）。探针脚本与原始输出留档
 `tmp/_plan025_w0_probe.py`／`tmp/_plan025_w0_probe.txt`，按
-[ADR 0012](../adr/0012-workspace-directory-hygiene.md) 该目录**不是事实源**，读数以下表为准。
+[ADR 0012](../../../adr/0012-workspace-directory-hygiene.md) 该目录**不是事实源**，读数以下表为准。
 
 | 取证项 | `qed` | `qed_test` | 判定 |
 | --- | --- | --- | --- |
@@ -94,7 +94,7 @@
 
 两处随步登记（只定本批做法，不改判据）：
 
-- **调用账的行级清理**：`qed_llm_calls` 是共享表，而 [ADR 0005](../adr/0005-mysql-integration-test-isolation.md)
+- **调用账的行级清理**：`qed_llm_calls` 是共享表，而 [ADR 0005](../../../adr/0005-mysql-integration-test-isolation.md)
   白名单只允许 DROP 自有 `af_*`＋`alembic_version` ⇒ W7 的 `tests/integration/` 用例必须删掉自己刚插入的那几行
   （按插入返回的自增 `id`），不得把清理寄托在夹具 teardown 上。
 - **共享 `qed_*`／`qt_*` 表的接触面**：本案只在 `KA-16`（只读导出面，提升作业归根侧）与 `KA-23`（追加调用账）
@@ -113,7 +113,37 @@
 | W6 | 长文与删除通路：临时文件→校验→原子替换、`narrative_ref` 恒为单段文件名、删节点与清引用边同事务且文件在提交后清、孤儿只读清单 | `KA-20`/`KA-21` | 已执行（2026-10-24：**本项只立库面通路、不新增端点**——`KA-20`/`KA-21` 的落点是 `orchestrator/knowledge.py` 的新节（`NARRATIVE_DIRNAME`／`narrative_file_name`／`_narrative_path`／`write_narrative`／`remove_node`／`list_narrative_orphans`）与 `KpRepository.delete_node`；`api.md` ④ 仍是七条，加端点属契约变更须先改设计，本案禁止新增判据。**派生路径唯一算式**＝`_narrative_path` 按**行所属书**的 `domain_id/course_id` 现算 `<book_dir>/kp/<node_id>.md`、**不读 `narrative_ref`**（文件名即节点身份），宿主书目缺席判 404；两道闸＝`ensure_safe_segment`（单段名）＋`ensure_within`（根内），故越根的 `node_id`（`afkp-../outside`）拒在拼路径之前、一个字节都不落盘。「**长文写在行提交之后**」做成构造性事实而非调用方自觉＝`write_narrative` 先 `KpRepository.get`，读不到行就 404 ⇒ 一条从未提交的行没有可写的路径；落盘走 `atomic_write_text`（`PP-4` 同目录 `.<name>.tmp-<hex8>` → `os.replace`），原地替换且不留瞬态残留。**R5 的形状（零改判、不等裁）**＝`write_narrative` 返回单段名但**不碰这一列**，读侧只用派生式，两种读法都不新增；列的形状闸落在机器腿 `create` 的发出前校验，段规则与产物路径共用 `schemas.SAFE_SEGMENT_PATTERN` 一处正则（`repositories.py` 不引 `ingest`，免得把 `pymupdf` 拖进 db 层——`ingest/__init__` 会拉起 `importer`）。**删除通路**＝`delete_node` 在 `lock_book` 的 `af_books` 行锁内「删行＋清引用边」同一事务完成，逐持边行**整列覆写** `links` 并 `rev+1`、前移 `updated_at`，其余列零动（`confirmed` 仍是 1）；处置面**只点名 `links`**，`parent_id` 不在 `KA-21` 范围（删父留下的悬子已由 `KA-14` 确认门与导出面尾置各自取证）；属系统「裁剪」一路，故不复用人工腿 `update`（域白名单只放背书域），也**不写** `op_kind='purge'` 流水（该值仍「建值不建写者」，`test_db.py` 三条恒 0 断言不动）。清边按 `book_id` 逐行扫、在 Python 里判空，不用 SQL `links IS NOT NULL`：JSON 列把 Python `None` 存成序列化 `null`，SQL 的空判据筛不掉它——该非显然约束已写进 docstring。**文件只在提交之后清**＝`remove_node` 先事务后 `commit`，`unlink` 失败只 `logger.warning`、不回滚也不抛（行已提交，把「文件删不掉」升级成「删除失败」只会让人对着一个仍在表里的正文反复重试）；留下的残件正是 `list_narrative_orphans` 该点名的东西。**孤儿只读清单**＝只点名、一个都不删；回指判据用派生 stem 而非列，**任何 `gen_status` 都算活**（作废行也留在表里读批次账面，`KA-9`/`KA-13`）；`.tmp-`／`.old-` 瞬态残留不混入，交 `PP-6` 的识别式与告警面；书目不在库里、`kp/` 目录不存在都按空表算，故裁剪流程能逐书空跑一遍再拿清单去要批准。**零改形状自证**＝`models.py` 与迁移零动（零 ALTER／零新列／零新域值），`narrative_ref` 在梳理通路上本轮无写者。守护＝`tests/unit/test_db_knowledge.py` 新增 `TestNarrativeRefShape` 7 例（五形越根值拒在插入前／单段名收／空值仍表「无」）与 `TestNodeDeletion` 7 例（清边、同其余边逐条不动、行与边同事务可回滚、缺行零写、只有 `links`＋记账两列动、`parent_id` 在清除范围外、不造流水行），`tests/unit/test_knowledge_pipeline.py` 新增 `TestNarrativePlacement` 5 例、`TestNodeDeletionPath` 5 例、`TestNarrativeOrphanList` 5 例，本轮合计 29 例；R5 末句所指的守护名＝`TestNarrativePlacement::test_the_narrative_path_does_not_write_the_narrative_ref_column`（同形改判时它随裁定翻成正向断言）。**变异复验十二处**：撤清边 ⇒ 3 例转红；清成全列覆写 ⇒ 1 红；清边语句带上 `confirmed=0` ⇒ 1 红；在仓储里替调用方 `commit` ⇒ 1 红；撤 `create` 的列闸 ⇒ 5 红；撤单段名闸 ⇒ 1 红（读成 `FileNotFoundError`）；`write_narrative` 代写该列 ⇒ 1 红（`'afkp-a1.md' != ''`）；把清文件提到提交之前 ⇒ 1 红；清理失败改抛错 ⇒ 1 红；孤儿清单改读 `narrative_ref` 而非派生 stem ⇒ 4 红；撤 `is_transient_name` 过滤 ⇒ 1 红；让清单动手删文件 ⇒ 1 红。逐处还原（两个被改文件按 sha256 与变异前备份 `d0006f10…`／`984d68ab…` 逐字节比对一致）后门禁 874 passed／14 skipped + ruff clean（MySQL 层按用户裁决仍禁跑）。**未随本项交付的一半**＝`engines/factory.py` 槽位与 `qed_llm_calls` 调用账（W7）、`database-design.md` 的 `narrative_ref`「相对路径」措辞改判为单段文件名与设计篇「实现落点」晋升（W8）、真机梳理窗口（W9）。） |
 | W7 | 适配层槽位与调用账：`engines/factory.py` 文本引擎槽位（未接入判 503、闭集外拒绝）、`qed_llm_calls` 追加行（`service='axiom_flow'`，只写行不改结构） | `KA-22`/`KA-23` | 已执行（2026-10-24：**槽位面（`KA-22`）先立登记形状**——`engines/factory.py` 新增 `TEXT_ENGINE_NAMES`／`IMPLEMENTED_TEXT_ENGINES` 两个元组（当前皆空：梳理引擎名须与 8900 的槽位身份一致，不在实现批凭空立名），`resolve_text_engine_name` 三形各判（空名／未登记／登记未接入）一律 `TextSlotError` 且**不回落**，`build_text_engine` 先过 resolve 再抛＝接适配器时唯一改动点，登记面与实现面都在它前面把关（只加适配器不登记、或反之，当场报错而不是静默返回一个没人认得的引擎）；`config.py` 新增 `kp_engine: str = ""` 与 `AXIOM_KP_ENGINE` 映射，缺名不回落成任何具体引擎（与 `ocr_engine` 同一条纪律，ADR 0004 无静默兜底）。**账位面（`KA-23`）＝新模块 `db/llm_ledger.py` 对共享表只有一条 `INSERT`**：12 列写入面＝常量三列（`service='axiom_flow'`／`endpoint='text'`／`task='kp-curation'`）＋身份三列（`mode`/`provider`/`model`，只能由装配点注入）＋`step`（两阶段名）＋`duration_ms`/`status`/`error`/`created_at`/`meta`；**不建 ORM、不进 `Base.metadata`**（`af_` 表族守护扫的就是元数据，挂上去等于认领这张共享表），`prompt`/`response`/`prompt_template` 留 NULL（完整文本只在适配器手里，账层拿摘要冒充就是往共享表写假事实），审核两列一列不写（`unreviewed`／`''` 由库侧默认给），归因（哪本书、哪个批次）进 `meta` 扩展槽（根侧定义＝只读不筛、不进 WHERE／索引）。**R6 甲案落地**＝身份由装配点注入 `LlmCallIdentity`，「有引擎无账」与「有账无身份」都在**受理期当场拒跑**（`KpLedgerWiringError` → API 503、零写入；宁可 503 也不跑一批查无此账的调用，那正是把账推成永久欠账的形状）。**发出前的形状闸抛、不发**＝`step`/`status` 闭集、`mode` 落在根侧两形、三枚身份列非空、`duration_ms` 非负——身份给空值会让整条 INSERT 被 MySQL 拒掉、账反而更少，那种错必须当场抛给调用方；其余失败只 `logger.warning` 降级为不落账（调用账是审计线索，不能反过来把模型调用打挂）。`error` 由写入器截到 500（VARCHAR(500) 超长整条拒收）；`created_at` 由写入器自盖且**不接受调用方给值**（DATETIME 秒精度，绑 `strftime` 字符串而不是 `datetime`，避开 Python 3.12 已弃用的 sqlite3 默认适配器）；`lastrowid` 回传自增 id 供行级精确清理（共享表不做整表清理）。**包装器 `LedgeredKnowledgeEngine`**（`orchestrator/knowledge.py`，挂在 `JobRunner._run_knowledge` 这个梳理通路唯一引擎入口之外，管线与判据一条不改）＝一调用一行；失败带原因后**原样抛出**（`extract_points` 的节失败域靠的就是同一个 `EngineError`，包装器不能把它吞成「这节没产物」）；`name` 与协议之外的能力一律透传（`_run_knowledge` 的 `finally` 用 `getattr(engine, "close", None)` 收尾，不转发就漏掉适配器自己的资源）；`duration_ms` 由包装器两侧 `time.perf_counter` 实测（是「调用耗时」，不是适配器自报的数字）；账走 `LlmCallLedger` 自己的会话 ⇒ 批次回滚带不走已经发生过的调用。**真机取证**（`tmp/w7_ledger_probe.txt`，只读 SHOW／SELECT）＝`qed_test` 里该表在位、18 列、116 行、`AUTO_INCREMENT=117` 且全部 `service='qed_engine'` ⇒ 追加面与根侧不冲突。**随步订正**＝真机 DDL 注释写明 `provider` 在 `api` 渠道是厂商名、在 `local` 模式是 **runtime 名**（lmstudio/llamacpp/mineru），`LlmCallIdentity` 的 docstring 与三处测试取值随之改成本层不校验也不反着写的口径。**随步登记（零 ALTER、零新列、零新域值）**＝`models.py` 与迁移链本轮零动；共享表 18 列由 `tests/support/llm_ledger_schema.py` 一处 SQLite 镜像供单测与集成层共用，本仓不认领其结构。**未随本项交付的一半**＝`knowledge-analysis.md` 的 `KA-22`/`KA-23`「实现落点」晋升、`database-design.md` 共享表节改判、`code-map.md` 新模块行、`operations.md` 的 `AXIOM_KP_ENGINE` 口径（W8），真表实跑与「结构未被 ALTER」取证（W9，`tests/integration/test_llm_call_ledger.py` 4 例现默认 skip）。守护＝新增 `tests/unit/test_db_llm_ledger.py` 27 例（追加面／发出前闸／降级／不碰结构四族），`tests/unit/test_knowledge_pipeline.py` 新增 `TestCallLedger` 11 例，`tests/unit/test_engine_factory.py` 文本槽位 6 例，`tests/contract/test_api_v1_contract.py` 新增 2 例（未接线 503 零写入、一批次一调用一行与逐列账面）。**变异复验 15 处**：撤 `error` 截断／写死 `created_at`／放开 `step` 域／放开身份空值闸／放开负 `duration_ms`／降级改抛／写入器多认领 `prompt` 列／成功不记行／`duration_ms` 写死 0／包装器吞异常／包装器改名／`__getattr__` 改抛 `AttributeError`／`meta` 丢 `gen_batch`／撤受理期拒跑闸／503 映射改捕 `OSError`——逐条转红。两处**首轮 SURVIVED 如实补测**＝`created_at` 原断言只验真值（改为 `utc_now()` 前后夹逼），`__getattr__` 原用例只验协议三件（补 `test_the_wrapper_forwards_an_out_of_protocol_capability` 经 `close` 收尾点取证）；另复验脚本自身首跑漏了替换动作导致 15 条全「SURVIVED」，已加**空操作自证**（写盘字节与原文件相同即报 `NO-OP-MUTATION`）后复跑。逐处还原（四个被改文件与变异前备份 `tmp/_w7pre/` 逐字节 `cmp` 一致）后门禁 921 passed／18 skipped + ruff clean（MySQL 层按用户裁决仍禁跑）。 |
 | W8 | 文档晋升随步：`knowledge-analysis.md` 的 `实现状态` 与「实现落点」列、`database-design.md` 的 `af_kp`「本轮范围」段与不变式行按写者到齐改判（`op_kind='kp'` 由计数恒 0 转为正向断言，另三条不动）、`api.md` 新端点条目、`code-map.md` 分析模块行与 `overview.md` 能力矩阵、`operations.md` 梳理窗口口径 | `KA-28` 与「验证与验收」的晋升对账 | 已执行（2026-10-24：**本项零代码改动**——门禁读数与 W7 收尾时一致（921 passed／18 skipped + ruff clean），故晋升只动文档面、不影响实现判据。五个文件的改判＝**设计篇 `knowledge-analysis.md`**：`实现状态` 由 Not Started 转 In Progress（51 字，守 ≤60 字行限）、28 条 `KA-n` 的「实现落点 → 守护测试」列全部去掉「（待实现）」写实名、元数据补齐 `engines/`＋`api/` 与七个测试文件、验收判据与「已知欠账」段按交付面改写、`KA-27` 的 `target_id` 措辞落「批次号（整批一行：失败节计数没有节点可挂）」；**`database-design.md`**：元数据三行（`确认状态`／`实现状态` 52 字／`最后更新`）与前言「`af_kp` 的现状」条按写者到齐改判、表总览 `af_kp` 行的「本轮无写者」改「本侧写者已就位」、`op_kind` 写者面由三值扩到四值并把 `kp` 的守护写明为**正向断言**（有行、`result` 为闭集键、且不越界替别的种类造行）、`kp` 行语义的 `target_id` 落批次号、「当前范围」段由四条恒 0 重写为三条恒 0 ＋ `kp` 正向断言 ＋ 未交付两段（8900 侧拉取式提升作业、「保留最新 2 批」裁剪腿），承载力审计的恒零段同批改判；**`overview.md`**：能力矩阵的梳理条目转态；**`code-map.md`**：api/main.py、orchestrator/、jobs.py、engines/、db/ 五行职责与事实源随步，按锚点插入 `orchestrator/knowledge.py` 与 `db/llm_ledger.py` 两条模块行（列形 6 竖线与既有模块行同形）；**`project-status.md`**：`最后更新` 转当日、能力矩阵端点计数 18→**26**、新增「知识点梳理与复核通路（本侧）」能力行、当前主线增 PLAN-025 W1~W8 条目。**晋升对账（`KA-28` 与「验证与验收」）**＝`tmp/_w8_ka_audit2.py` 把「实现落点」列的每个反引号 token 拿去代码与测试做存在性对账：28 行 4 列齐，`文件:符号` 22／路径 35／端点串 6／测试节点 id 3／裸标识符 43 全 OK，1 个根侧名（`qed_knowledge_point`）不计本仓存在性，2 个 MISS 是格式名 `.md`／`.blocks.json` 被误判成路径（对账器的分类缺陷，非文档缺陷），另以 `grep -lw` 逐条复核 26 个关键符号（`accept_kp_job`…`build_text_engine`）在 `src/axiom_flow` 全部命中；「待实现」残留 0，「未实现」残留 1＝`KA-25` 的裁剪清单（写者未交付，如实保留）。`api.md` ④ 对账＝运行时七条路由 ↔ 端点总表七行 ↔ 七个 `####` 小节逐字一致（守护逐行比对，234 passed）。**本轮不落笔的一项**＝`operations.md` 的梳理窗口口径：`AXIOM_KP_ENGINE` 是本案新增配置键而 MI-13 要求新键走 ADR，R7 未裁 ⇒ 按 R7 末句「裁定前不得把它当既有配置面写进 `operations.md`」执行，本项的运维口径随 R7 裁定另步。改判手法＝两条脚本（`tmp/_w8_promote_arch.py`／`tmp/_w8_promote_arch2.py`）每条锚点断言 `count==1`、失配即整文件不动并 ABORT；备份 `tmp/_w8pre/`（轮前一）与 `tmp/_w8pre2/`（轮二前＋project-status 改前），报告 `tmp/w8_docs_report.txt`、`tmp/w8_docs2_report.txt`、`tmp/w8_ps_report.txt`、`tmp/w8_ka_audit2.txt`。**体裁自证**＝正文去日期化守护（`_contract_body` 起于首个 H2、止于追溯段）与八章骨架守护、设计篇 60 字行限均绿：`database-design.md` 正文任务编号与绝对日期命中 0。**未随本项交付的一半**＝`operations.md` 梳理窗口口径（待 R7）与真机梳理窗口（W9）。） |
-| W9 | 真机梳理窗口（D 类，逐次批准）：b05 单本整本书梳理跑通＋17 条判据逐条取证＋备份与回滚指纹 | 「验证与验收」全清单 | 待开始（本案不自开窗口：窗口的闸门分档、轮次序与批准面已移交 [PLAN-027](2026-11-01-kp-real-machine-window-closeout.md)，本项随该壳 W6~W9 的轮次读数收口） |
+| W9 | 原真机梳理窗口（D 类，逐次批准）：b05 单本整本书梳理跑通＋17 条判据逐条取证＋备份与回滚指纹 | 「验证与验收」全清单 | **由分项验收覆盖（2026-11-25 用户裁决）**：原整本窗口不再执行，PLAN-027 已正式取消；W1~W8 的代码／单测／契约与 PLAN-028／036／037／045 的分项真机证据按下方 17 条映射承接。映射只证明对应面，不把本地守护或抽检写成整本真机通过；第 13 条裁剪未交付等缺口逐条披露 |
+
+## 17 条判据覆盖映射（W9 分项承接）
+
+**口径**＝`【本地】`表示可重复的单测／契约／SQLite 守护；`【分项】`表示既有真机或跨书分项读数；
+`【未跑】`表示原窗口或显式 MySQL 层未执行；`【未交付】`表示没有实现，不得计为通过。W9 由这些证据
+分面承接，不等于 17 条都做过 b05 整本真机。代码符号与测试节点均以当前工作树为准；历史门禁数不作为本轮读数。
+
+| # | 判据面 | 代码与守护落点 | 覆盖等级 | 既有分项证据／明确缺口 |
+| --- | --- | --- | --- | --- |
+| 1 | 受理三形 | `knowledge.py:accept_kp_job`；`test_knowledge_pipeline.py::TestAcceptanceGate` | 【本地】＋【分项】 | PLAN-028 记非法组合 422 零写、b05 正常 202；在飞 409 的端到端真机不单独声称 |
+| 2 | 收尾翻面与残留归一 | `knowledge.py:finalize_batch`；`repositories.py:reconcile_draft_on_startup`；对应状态机用例 | 【本地】＋【分项】 | PLAN-028 记旧 118 candidate 被作废；启动／翻面时点由本地守护 |
+| 3 | 机器不改 `confirmed` | `repositories.py:KpRepository.create`；`finalize_batch`；自动批次计数断言 | 【本地】 | 无独立真机计数，按反向守护覆盖 |
+| 4 | 同身份让位 | `finalize_batch`；`TestLetAway` | 【本地】 | 已确认行不动由快照断言覆盖；原整本让位读数未跑 |
+| 5 | `if_rev` 双会话 | `repositories.py:KpRepository.update`；`api/main.py:patch_kp_node`；仓储／契约／`test_concurrency_criteria.py` | 【本地】；MySQL【未跑】；**响应缺口** | 预检 409 带当前 rev；条件 UPDATE 竞态 409 未带最新 rev，移交 PLAN-026 R18；集成层未跑 |
+| 6 | 缺席目录退池 | `repositories.py:replace_outline`；`test_db_knowledge.py`／API 契约 | 【本地】 | 行数不变、无悬空边由仓储与契约守护 |
+| 7 | 确认导出 | `api/main.py:export_kp_book`；`order_for_export`；导出契约 | 【本地】＋【分项】 | PLAN-036 记导出 191 行全 `confirmed`；父序／rev 由本地守护 |
+| 8 | 跨版锚点稳定 | `repositories.py:list_by_evidence_version`；`anchor_review_flags`；对应契约 | 【本地】 | 换 active 不动 anchors、越界只标记由守护覆盖 |
+| 9 | 长文与删除 | `write_narrative`／`remove_node`／`list_narrative_orphans`；文件与删除用例 | 【本地】＋【分项】 | PLAN-036 记 194 题包；原子替换／孤儿只读清单本身由本地守护 |
+| 10 | 调用账追加与零 ALTER | `db/llm_ledger.py:LlmCallLedger`；账本单测／集成用例 | 【本地】＋【分项】；MySQL【未跑】 | PLAN-028 四次 success 仅为外部账旁证；共享表追加与结构不变的独立真库读数未跑 |
+| 11 | 域值与 kp 流水正向 | `models.py:GEN_STATUSES`；`OperationRepository.create_kp_batch`；`test_db.py` | 【本地】＋【分项】 | PLAN-028 记 116 candidate＋352 rejected、kp 流水 7→8；未交付种类应为四种，设计旧“其余三个”随步纠正 |
+| 12 | 版本激活不排批 | `repositories.py:set_active_job`；`orchestrator/pipeline.py`；激活不变断言 | 【本地】 | 无独立真机行数差，按反向守护覆盖 |
+| 13 | 单章按书计数与保留两批 | `KA-25` 口径；`TestInFlightJudge` 只守在飞唯一性 | **【未交付】裁剪**；parent【本地】 | 最近两批裁剪无写者、无测试、无真机；按原“残余移交”保留，不阻本实现批关闭，不得写成达成 |
+| 14 | 目录逐页落行与在途可读 | `build_outline` 的 `sink`；`repoint_draft_outline`；`get_kp_job`；逐页与端点用例 | 【本地】；端到端【未跑】 | 逐页落行与 draft／in_flight 分别有守护；没有“首页刚落即 HTTP 200”的单条端到端证据 |
+| 15 | 名称清洗与 `norm_key` | `normalize/toc.py:clean_entry_rows`；`_squash`；`norm_key_for`；清洗用例 | 【本地】；存量读面【未跑】 | 两腿同形、`2.10≠210`、optional 卸标有守护；存量行读面没有独立回归读数 |
+| 16 | 显示段与取证区间分家 | `section_spans_of`；`_kp_page_spans`；工作区／单行／导出契约 | 【本地】 | 三面同值、树序与 reference 边界由守护覆盖 |
+| 17 | `content` 只补内容 | `_extract_content_points`；`set_outline_summary`；`TestContentOnlyStage` | 【本地】＋【分项】；content 全链【未跑】 | PLAN-033 的 b05 第 3 章总结重生成是单腿分项，不是 content 全链；旧“新点父在册目录”与 KA-43／实现不符，设计随步改为“不建点行” |
+
+**关闭解释**＝第 1～12、14～17 条以对应本地守护和／或分项证据承接 W9；第 5、10、14、15、17 条的
+未跑面与第 13 条的未交付面明确保留。用户“主链已实现并分开验收”的裁决关闭的是本实现批，不是把上述
+缺口改写成通过。第 5 条响应缺口归 PLAN-026 R18；第 13 条裁剪仍按本壳「残余移交」③另批。
 
 ## 结构请求登记（R4 起，接续 PLAN-024 的 R1~R3）
 
@@ -180,7 +210,7 @@
 
 - 现象：`KA-22` 定「引擎名缺配即受理报错，不静默回落」，落地需要一个承载「缺配」的键，于是本案交付了
   `Settings.kp_engine`（默认 `""`）与 `AXIOM_KP_ENGINE` 映射，`api.md` ④ 的两处 503 读法（提交端点面与错误面汇总）已按此键写。
-  但 [MI-13](../design/model-integration.md) 的启用路径明写「需要新配置键时按 ADR 流程新增」（`AXIOM_PADDLEOCR_URL` 退役即为此例），
+  但 [MI-13](../../../design/model-integration.md) 的启用路径明写「需要新配置键时按 ADR 流程新增」（`AXIOM_PADDLEOCR_URL` 退役即为此例），
   而 `docs/adr/` 现在没有任何条目授权这个键。
 - 与 R6 前提的冲突：R6 把「本案不新增配置键」当成三案选择的约束，实际交付推翻了这句——键已经在装配点上，删掉它就没有「缺配」
   可读的形状，`KA-22` 的 503 判据会退化成「槽位名恒未知」，而闭集拒绝与未接入拒绝也分不开。
@@ -195,9 +225,13 @@
   文本解析永不返回解析引擎名、`build_text_engine` 对任何给定名字都拒）与 `config.py` 的 `AXIOM_KP_ENGINE` 映射一行；
   `docs/architecture/api.md` 三处把该键写成对外读法。裁定为甲案前，本键的真实身份是「设计未授权的实现键」，
   收尾时不得把它当成既有配置面写进 `operations.md`（W8 的梳理窗口口径按裁定落笔）。
+- **后续裁定与残余（2026-11-25）**＝PLAN-026 W6 已按 R8 甲＋AF-T2 甲交付三键、`qed-gateway` 内置默认与
+  8900 唯一出站，`model-integration.md` 已登记键名，不另立 ADR；空名／闭集外名在解析层可判 503。但
+  `.env.example` 仍缺三键，环境显式空值仍被加载器跳过，故“清空环境即停用”未成立。两件尾项随 PLAN-027
+  取消移交 PLAN-026 的 R7 移交节，本壳不宣称 R7 全部了结。
 
 **R12~R16｜2026-11-01 合流树审理登记的五处欠账**（PLAN-025 W1~W8 与 PLAN-026 W1~W25 同树后的整体审理产出；
-**本壳一处不改码、一处不改判据**，逐条等裁。落点全在 PLAN-026 那一批的件里，动码归该案，编号接续 PLAN-026 的 R8~R11）：
+**本壳一处不改码、一处不改判据**。落点在 PLAN-026；2026-11-25 原窗口取消后，R12／R13 转该壳常规缺陷，R14／R15 转根侧界面同批，R16 待具体样本分叉，R17 由本轮门禁重复定位，不再以整本窗口取证）：
 
 - **R12｜`full` 批次里被容错腿抢回总结的节，读成「本节没有知识点」且零计数**。`engines/kp_gateway.py:685-688`
   的 #129 容错腿在整段 JSON 不可解析时返回 `SectionPoints([], salvaged_summary)`；`orchestrator/knowledge.py:1363-1369`
@@ -215,7 +249,7 @@
 - **R14｜人工改名不重算 `norm_key`，且服务端查重在 PATCH 通路上没有调用方**。`db/repositories.py:1328` 的背书域
   含 `name`，而 `norm_key` 只在 `create`（`repositories.py:1424`）写过一次；`find_norm_conflict`
   （`repositories.py:1702`）的调用方只有测试。后果＝`KA-13` 的让位身份 `(node_kind, parent_id, norm_key)` 与
-  `ix_af_kp_norm` 的查重都读旧键，[database-design.md](../architecture/database-design.md) 的「同父唯一由
+  `ix_af_kp_norm` 的查重都读旧键，[database-design.md](../../../architecture/database-design.md) 的「同父唯一由
   **服务端校验**、不建唯一键」（该文件 `norm_key` 行）在人工改名这条腿上不落。等裁二案：甲＝背书域写 `name`
   时同权重算 `norm_key` 并按 `find_norm_conflict` 判 422；乙＝`norm_key` 改读时派生、列降为缓存并加一致性守护。
 - **R15｜`PATCH /api/v1/kp/nodes/{node_id}` 的 `parent_id` 不过任何服务端判据**。`schemas.py:810` 收任意 ≤64 字符串，
@@ -242,17 +276,22 @@
 > 三枚都仍无 ADR、也没进 `operations.md` 与 `.env.example`。另查出 `config.py` 的空值跳过（`os.environ.get(...) or ...`
 > 与 `.env` 的 `if not value: continue`）使「`AXIOM_KP_ENGINE=` 清空」这条 kill switch 在两条配置路上都不可达，
 > 503 分支只剩测试注入可达——R7 的三案裁定时一并了结。
+>
+> **2026-11-25 当前处置**＝上述“三枚都无文档”已部分过期：`model-integration.md` 已列三键；空名拒绝分支已由
+> `TestTextSlot` 守护。仍欠 `.env.example` 与显式空值优先级，归 PLAN-026 R7 移交。R12~R16 不借取消的窗口
+> 伪造取证，R17 的最终重复定位读数为 `pytest：1734 passed、18 skipped；ruff：All checks passed（QED_TEST_MYSQL=0）`；门禁未绿前不宣称本轮关闭完成。
 
 ## 验证与验收
 
-- **判据对账**＝`knowledge-analysis.md`「验收判据」17 条逐条有会红用例，且用例名或注释可指回 `KA-n`；
-  本案不新增判据、不改写判据（新增者视为设计变更，回到设计篇先改判再实现）。
+- **判据对账**＝`knowledge-analysis.md`「验收判据」1～17 逐条有代码、测试与覆盖等级映射；本地守护、
+  分项真机、未跑与未交付分开记。原“17 条逐条有会红用例”只对已交付且可单测的面成立，第 13 条裁剪与
+  第 5 条竞态响应缺口不得算作已守护；判据正文的既有笔误随步纠正，不新增业务判据。
 - **TDD**＝W1~W7 每腿先取真红灯（`af_kp` 无写者 ⇒ 先红形态明确）再实现；W5 的端点用例落契约层。
 - **守护改判复验**＝对四条「计数恒 0」断言逐条给读数：`op_kind='kp'` 那条改判前后各跑一次，
   并做变异复验（撤掉让位分支 ⇒ `KA-13` 用例转红；把人工写入口放开 `confirmed` 由机器写 ⇒ `KA-11` 用例转红；
   撤掉 `if_rev` 比对 ⇒ 双会话用例转红），复验后按 sha256 逐字节还原。
-- **零改形状自证**＝`af_kp`／`af_operations` 列数与索引名在窗口前后逐名相等（真库 `SHOW CREATE TABLE` 双份留档），
-  `qed_llm_calls` 结构未被 ALTER。
+- **零改形状自证**＝本实现批零 DDL／迁移，`af_kp`／`af_operations`／`qed_llm_calls` 的结构守护随门禁执行；
+  原 W9 计划的真库窗口前后 `SHOW CREATE TABLE` 双份留档随窗口取消而不执行，不冒充已有证据。
 - **门禁**＝`pytest tests -q` + `ruff check src tests`；固定文档七道守护同批复跑；
   MySQL 层只在用户批准的窗口内跑 `QED_TEST_MYSQL=1`，收尾复跑不含它（夹具 teardown 清 `qed_test`）。
 - **人工核对**＝把设计篇任一条 `KA-n` 的「实现落点」文件名改掉，确认对应测试转红（防判据空转）。
@@ -260,32 +299,36 @@
 ## 回滚
 
 - 代码批可整批 `git revert`；本案零 DDL、零迁移，故回滚不涉及库面动作。
-- 真机窗口前按 `operations.md` runbook 取 `mysqldump` ＋逐表 DDL 双份备份并留 sha256；
-  回滚形态＝按备份重放 `af_kp`／`af_operations` 两表，产物目录内 `kp/` 长文按只读清单人工处置。
+- 原 W9 真机窗口不再执行，因而不取窗口备份或重放两表；本轮收口零数据操作。若未来另开 D 类窗口，
+  必须重新按 `operations.md` runbook 冻结备份、回滚与逐次批准，不得继承本结论。
 - 调用账写入通路的回滚＝停用该腿（不删行），共享表数据不做反向清理（`KA-17` 同轴）。
 
 ## 关闭与归档
 
-- 关闭条件＝「验证与验收」逐条达成且 17 条判据全部有读数；W9 未完时不得关闭。
-  W9 的闸门分档、轮次序与批准面由 [PLAN-027](2026-11-01-kp-real-machine-window-closeout.md) 承载，本壳的关闭判定与
-  todo 行迁移排在该壳 W10（读数写回本壳「过程与证据」，本壳不自立窗口规程）。
-- 归档判定 **Retain**：17 条判据的逐条取证表、批次状态机与让位分支的变异复验、真机窗口读数与备份指纹
-  属不可再生证据；关闭后壳移入 `docs/history/plans/`，`plans/index.md` 与月度索引登记去处。
-- 六步收口（ADR 0006）：结论入本壳 → todo 行压缩关闭 → `completed.md` → `plans/index.md` → `project-status.md` → 全量门禁。
-- 残余移交：① 8903 界面与 8900 提升作业的实现与联调归根仓库；② 梳理质量配方另批（C 类）；
-  ③ 「保留最新 2 批」的裁剪执行与触发阈值另批（`database-design.md`「保留与裁剪」只给口径）。
+- **关闭结论（2026-11-25）**＝W1～W8 实现与本地守护已交付；W9 按用户裁决改由分项验收覆盖，原 b05
+  整本窗口不再执行。17 条判据已有逐条映射，其中第 13 条“最近两批裁剪”明确未交付，第 5 条竞态响应缺最新
+  `rev`，第 10／14／15／17 条各有未跑面；这些缺口不因关闭而消失，也不写成“全部真机通过”。
+- **关闭判据**＝实现批成功标准已达成；17 条映射可指认；所有缺口有唯一去向；REQ-139 C7／N3 已移交
+  PLAN-046；PLAN-027 已记录窗口取消；台账、两索引、项目状态与适用设计同步；全量门禁通过。
+- **归档判定 Retain**：17 条覆盖映射、状态机与让位分支的变异复验、分项真机证据及缺口判定不可替代；
+  关闭后壳移入 `docs/history/plans/2026-11/`，`plans/index.md` 与月度索引登记去处。
+- **六步收口（ADR 0006）**＝结论入本壳 → todo 删除 PLAN-025 → `completed.md` → `plans/index.md` 与月度索引 →
+  `project-status.md` 及适用固定文档 → 全量门禁。
+- **残余移交**＝① 8903 界面与 8900 提升作业归根仓库；② 梳理质量配方另批（C 类）；③「保留最新 2 批」
+  裁剪执行与触发阈值另批，本批只保留口径；④ `if_rev` 竞态 409 的最新 rev 归 PLAN-026 R18；⑤ R7 尾项归
+  PLAN-026；⑥ REQ-139 C7／N3 归 PLAN-046，REQ-163 归 PLAN-034。
 
 ## 承载 REQ-139
 
 **请求接收（QED-Engine 根仓库 REQ-139「知识点梳理模块 Axiom-Flow 承接请求」，挂其 ARCH-025 轮线 2）**——由需求方按其
 `docs/standards/cross-project-collaboration.md` 允许的「创建或修改其文档」动作代登本仓 todo 的 `REQ-139` 行与本节
-（根仓库请求稿＝其 `docs/plans/2026-10-23-kp-review-af-request.md`，判据来源＝其 REQ-138 核查壳的梳理稿三段）。本行的
-类别＝支线、状态取 `Open`（与其 REQ-123／REQ-126 入站行同口径，不占支线并发位）、承载指针指向本壳。**本仓未因此改动任何
-`src`／`tests`／迁移**；下表「本仓判定」列在判定前一律为待判，逐条判定与排期归本仓会话。
+（根仓库请求稿＝其 `docs/plans/2026-10-23-kp-review-af-request.md`，判据来源＝其 REQ-138 核查壳的梳理稿三段）。
+原 REQ-139 承载在本壳；**2026-11-25 起 C7／N3 的承载移交 [PLAN-046](2026-11-25-req139-kp-page-batch-and-node-create.md)**，
+2026-11-26 C7 已完成、N3 已取消并同批归档。本壳只保留已完成／裁撤项的判定史，不再作为活跃承载。下表「本仓判定」列记录移交当时状态与去处。
 **2026-11-06 账实回写**（随知识梳理轮 PLAN-028 的条文面核对）：A1 已判（多阶段由 `KA-34`／`KA-43`／`KA-45` 承接）、
 A2 与 A3 裁撤、N1 已判（`qed-gateway` 槽位在册）。
 **2026-11-07 第二轮判定**（随知识梳理轮的台账肃清）：A4／A5／A6／N2 已判（判据分别落在 `KA-20`、`KA-45`、`KA-3` 与运行时路由表）；
-C7／N3 两项仍待需求方裁（均为新增端点＝契约变更，本仓不擅自承接也不擅自撤；见本表「本仓判定」列的建议与去处）。
+C7／N3 两项已由需求方裁为应做，但具体形状未定；2026-11-25 移交 PLAN-046，本轮只建承载、不实现。
 
 **载体沿革**：本节原载于 PLAN-024 壳，2026-10-23 随 PLAN-024 收口改由本壳承载；四表形状与判据已由 PLAN-024 封闭，本次搬载不把任一「待判」改成已判。
 
@@ -297,18 +340,19 @@ C7／N3 两项仍待需求方裁（均为新增端点＝契约变更，本仓不
 | A4 | `narrative_ref` 取值归一：DB 文档写「数据根下的相对路径」，`KA-20` 写「只存单段文件名」 | 本壳 W6 已自陈**单段文件名**，而根侧共享主表存**数据根相对路径全串**，两处相左 | 已判（2026-11-07）＝本仓列值＝**单段文件名**（`set_narrative_ref` 的单段名闸与 `KA-20` 的派生式是唯一口径）；`database-design.md` 的 ER 属性与列清单两处措辞已按此归一。**根侧自拼规则**＝`数据根 + parsed/<domain>/<course>/<book>/kp/<narrative_ref>`（三枚目录段根侧自有，无须向 8902 询问）；根侧共享主表若仍存全串，属根侧内部形状，不改本列取值 |
 | A5 | 确认后再总结条：`confirmed=1` 之后的二次总结写哪一列、由谁触发、覆写属机器写域还是人工写域 | 无条文 | 已判（2026-11-07）＝写 `summary` 一列；入口＝`POST /api/v1/kp/nodes/{node_id}/summary`（`KA-45`，人工显式触发、覆盖旧值并 `rev+1`），**不碰 `confirmed` 与 `narrative_ref`**；批次腿只在「原值为空 ∧ 未确认」时补（`KA-43` 的 `set_outline_summary`）。即「机器写列、人工发起」，不另立条文 |
 | A6 | 页确认门（PLAN-018 的 W8）与梳理取证集的接线：`confirm_state` 写者及其与 `KA-3` 的关系成文 | `confirm_state` 只建列；`KA-3` 预留未启用 | 已判（2026-11-07）＝门未启用是显式常量 `PAGE_CONFIRM_GATE_ENABLED = False`（`repositories.py`），`KA-3` 本轮只按生效版本判；写者与启用时机归 PLAN-018 W8，本仓梳理通路不接线、不加分支。启用时只需翻常量并补写者，无本仓预埋件 |
-| C7 | 批量取页端点（单次多页、限 `parsed` 页集）＝根侧拼章与逐页渲染的前提 | 现只有逐页端点，整章＝N 次 HTTP | **待裁（2026-11-07 建议＝另批承接）**：新增端点属 ③ 类契约变更，须先改 `api.md` 与设计再落码，本壳「零新增判据」口径不承接；若裁为承接，建议另立请求行并写清「页集上限、缺页与未解析页的返回形状」两条判据。本行判据不依赖它 |
+| C7 | 批量取页端点（单次多页、限 `parsed` 页集）＝根侧拼章与逐页渲染的前提 | 现只有逐页端点，整章＝N 次 HTTP | **已裁应做、形状待定；移交 PLAN-046**（2026-11-25）。新增端点属 ③ 类契约变更，先设计页集上限、缺页与未解析页返回，再动码；本壳不实现 |
 | B1~B4、C1~C6 | 写者三条、四条恒 0 守护的插入腿与断言同批改、批次归一用例、文本引擎槽位与调用账；梳理提交／进度／复核确认／整批声明／导出端点 | **已由本壳承接**（W1／W2／W4／W5／W6／W7／W8） | 根侧已降为形状核对，本节不重复索求；**须核对的四件＝四条恒 0 断言是否全在本壳 W8 改判清单内** |
 | X1 | 原条件项：给 `af_kp` 的 outline 行加 `page_start`／`page_end` | 未涉 | **已作废**＝根侧 Q4 裁为甲案（由该节全部 point 行 `anchors[].page` 取 min/max 读时派生，零改表）⇒ 本仓无需承接、无需回执，`af_kp` 列面保持 23 列不动 |
-| N1 | 文本引擎适配器接入与槽位登记（＝B4／`KA-22` 的核对未闭合件）：`TEXT_ENGINE_NAMES` 与 `IMPLEMENTED_TEXT_ENGINES` 登记一枚可用名字并交出与之对应的适配器，使 `POST /api/v1/kp-jobs` 不再恒判 503；`AXIOM_KP_ENGINE` 新键按 R7 走 ADR 后再进 `operations.md` | 已交付＝`engines/factory.py` 两元组各登记一枚 `qed-gateway`（`engines/kp_gateway.py`），`config.py` 的 `kp_engine` 默认值即该实名 ⇒ 起服即接通 | 已判（2026-11-06 回写）＝`KA-22` 的登记面到齐、受理不再恒判 503；出站三枚配置键的 ADR 与运维口径仍归 PLAN-027 W2 |
-| N2 | 梳理面在网生效：本壳 W1~W8 的七条 kp 路由现只在工作树且 8902 在跑的进程早于该改动，实测 `openapi.json` 的 16 条路径里 kp 命中 0、`POST /api/v1/kp-jobs` 得 404；根侧 8900 亦无 kp 透传（后端检索零命中）⇒ 8903 此刻无任何合法通路读或写 `af_kp` | 本仓 `api.md` ④ 的七条与 `api/main.py` 的实码在册，本请求不改其形状；归因读数见本节末「根侧代登的形状核对」 | 已判（2026-11-07）＝**形状面已闭**：④ 类端点总表与运行时路由表双向对账由契约门守着（公共端点 30 条）；「重启后 `openapi.json` 命中 kp」是运行态取证，随真机窗口的起服步骤一次性读取（归 PLAN-027 W4 的窗口前体检），不再列为形状待判项 |
-| N3 | 人工直登记知识点的端点：现七条无创建入口（`POST …/kp/nodes` 不存在，`PATCH` 只改既有行），而 `KA-11` 的人工背书域与 `job_id=''` 的人工直填行形状已在册——缺的正是把「人直接填一条点」落库的那一条通路 | 本壳 W5／W6 两处叙述了人工直填行的**读法**与置位时报文案，创建面无处；根侧阶段一以其自有写面顶上，阶段二须归本仓 | **待裁（2026-11-07 建议＝另批承接）**：新增端点＝契约变更，按本壳「加端点须先改设计」的口径执行；裁为承接时需同时定「必填四件（`name`／`anchors`／`type`／`role`）、同父重名 422、`job_id=''` 的来源位」三条形状 |
+| N1 | 文本引擎适配器接入与槽位登记（＝B4／`KA-22` 的核对未闭合件）：`TEXT_ENGINE_NAMES` 与 `IMPLEMENTED_TEXT_ENGINES` 登记一枚可用名字并交出与之对应的适配器，使 `POST /api/v1/kp-jobs` 不再恒判 503；`AXIOM_KP_ENGINE` 新键按 R7 走 ADR 后再进 `operations.md` | 已交付＝`engines/factory.py` 两元组各登记一枚 `qed-gateway`（`engines/kp_gateway.py`），`config.py` 的 `kp_engine` 默认值即该实名 ⇒ 起服即接通 | 已判（2026-11-06 回写）＝登记面到齐、受理不再恒判 503；三键已进 `model-integration.md`，`.env.example` 与显式空值尾项归 PLAN-026 R7 移交 |
+| N2 | 梳理面在网生效：本壳 W1~W8 的七条 kp 路由现只在工作树且 8902 在跑的进程早于该改动，实测 `openapi.json` 的 16 条路径里 kp 命中 0、`POST /api/v1/kp-jobs` 得 404；根侧 8900 亦无 kp 透传（后端检索零命中）⇒ 8903 此刻无任何合法通路读或写 `af_kp` | 本仓 `api.md` ④ 与 `api/main.py` 的实码在册；后续分项验收已有根侧屏上回读 | 已判（2026-11-07 形状面；2026-11-25 分项证据）＝路由表双向对账由契约门守，PLAN-045 记 8903 五本书可见；原 PLAN-027 的窗口前重启取证随窗口取消不执行 |
+| N3 | 人工直登记知识点的端点：现无创建入口（`POST …/kp/nodes` 不存在，`PATCH` 只改既有行），而 `KA-11` 的人工背书域与 `job_id=''` 的人工直填行形状已在册——缺的是把「人直接填一条点」落库的通路 | 本壳只交付既有行写读形状，创建面未实现 | **已裁应做、形状待定；移交 PLAN-046**（2026-11-25）。先定必填字段、同父重名 422、`job_id=''` 来源位与确认保护，再改契约和实现；本壳不实现 |
 
 **并案关系**：本壳实现的是「已有条文的通路」，本请求要的是「条文本身的增补与归一」，两者不互为替代。若本仓判定
 A 面若干条属扩判据（本壳明文「零新增判据」），须另批承接或改判该行范围——由本仓决定并回填本节。
 
-**回执口径**：按本仓 `docs/standards/cross-project-collaboration.md` 与根仓库同名规范，本仓不写根仓库文件；判定与落地
-以本仓 todo 的 `REQ-139` 行＋本节为证据，由根侧自行读取登记。
+**回执口径**：按本仓 `docs/standards/cross-project-collaboration.md` 与根仓库同名规范，本仓不写根仓库文件。
+已交付／裁撤项以本节为证据；C7／N3 的关闭承载是 [completed.md](../../../trackers/completed.md) 的 PLAN-046 行＋
+[PLAN-046 归档壳](2026-11-25-req139-kp-page-batch-and-node-create.md)，由根侧自行读取登记。
 
 ### 根侧代登的形状核对（2026-10-24，需求方现场取证；本仓 `src`／`tests`／迁移零改动）
 

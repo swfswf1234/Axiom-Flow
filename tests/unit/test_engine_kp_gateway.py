@@ -19,7 +19,11 @@ import httpx
 import pytest
 
 from axiom_flow.engines.base import (
+    CHAPTER_TEXT_PROMPT_VERSION,
     ChapterInput,
+    ChapterTextInput,
+    ChapterTextPoint,
+    ChapterTextSource,
     EngineError,
     ExerciseClassifyInput,
     ExerciseInput,
@@ -1020,6 +1024,250 @@ class TestChapterLegOutbound:
         assert "后面哪一章会直接用到它" not in prompt
         assert "只谈本章" in prompt
         assert "页区间：" not in prompt
+
+
+class TestCourseChapterOutbound:
+    def _material(self) -> ChapterTextInput:
+        return ChapterTextInput(
+            course_id="math_analysis",
+            chapter_kp_id="kp-course-ch3",
+            chapter_name="第 3 章 极限",
+            chapter_summary="课程级旧总结",
+            chapter_narrative="课程级旧导读",
+            sources=(
+                ChapterTextSource(
+                    book_id="mathanalysis-b18",
+                    title="数学分析",
+                    chapter_name="第三章 极限",
+                    summary="b18 章总结",
+                    points=(
+                        ChapterTextPoint(name="数列极限", summary="ε-N 定义"),
+                        ChapterTextPoint(name="函数极限", summary="邻域定义"),
+                    ),
+                ),
+                ChapterTextSource(
+                    book_id="mathanalysis-b05",
+                    title="数学分析原理",
+                    chapter_name="第 3 章 极限",
+                    summary="b05 章总结",
+                    points=(ChapterTextPoint(name="极限的性质", summary="唯一性与保号性"),),
+                ),
+            ),
+        )
+
+    def test_hash_binds_the_exact_external_accounting_identity(self):
+        sent: list[dict] = []
+        digest = "0123456789abcdef" * 4
+        engine = KpGatewayEngine(
+            GW,
+            client=_client(_capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}')),
+            timeout=5.0,
+        ).bind_chapter_text(
+            course_id="math_analysis",
+            chapter_kp_id="kp-course-ch3",
+            evidence_sha256=digest,
+        )
+
+        reply = engine.chapter_text(self._material())
+
+        body = sent[0]
+        assert (reply.summary, reply.narrative) == ("章总结", "章导读")
+        assert body["service"] == "axiom_flow"
+        assert body["task"] == "kp-merge-chapter-0123456789ab"
+        assert body["step"] == "chapter"
+        assert body["prompt_template"] == f"kp-merge-chapter/{digest}@{CHAPTER_TEXT_PROMPT_VERSION}"
+        assert body["meta"] == {
+            "course_id": "math_analysis",
+            "chapter_kp_id": "kp-course-ch3",
+            "evidence_sha256": digest,
+            "source_count": 2,
+            "point_count": 3,
+            "engine": "qed-gateway",
+        }
+        assert not {"api_key", "key", "model"} & set(body)
+        assert engine.accounts_externally is True
+
+    def test_prompt_uses_all_sources_without_page_or_block_provenance(self):
+        sent: list[dict] = []
+        KpGatewayEngine(
+            GW,
+            client=_client(_capturing(sent, reply='{"chapter_summary": "章总结", "chapter_narrative": "章导读"}')),
+            timeout=5.0,
+        ).bind_chapter_text(
+            course_id="math_analysis",
+            chapter_kp_id="kp-course-ch3",
+            evidence_sha256="a" * 64,
+        ).chapter_text(self._material())
+
+        prompt = sent[0]["prompt"]
+        assert "课程级旧总结" in prompt and "课程级旧导读" in prompt
+        assert "b18 章总结" in prompt and "b05 章总结" in prompt
+        assert "数列极限：ε-N 定义" in prompt and "函数极限：邻域定义" in prompt
+        assert "极限的性质：唯一性与保号性" in prompt
+        assert "章前正文" not in prompt
+        assert "p页·b" not in prompt and "[页 " not in prompt
+
+    def test_unbound_course_identity_refuses_the_call(self):
+        engine = KpGatewayEngine(GW, client=_client(_capturing([])), timeout=5.0)
+        with pytest.raises(EngineError, match="chapter_text"):
+            engine.chapter_text(self._material())
+
+
+class TestCourseChapterLedgerRecovery:
+    digest = "0123456789abcdef" * 4
+    recovered = '{"chapter_summary": "恢复总结", "chapter_narrative": "恢复导读"}'
+
+    @staticmethod
+    def _material() -> ChapterTextInput:
+        return ChapterTextInput(
+            course_id="math_analysis",
+            chapter_kp_id="kp-course-ch3",
+            chapter_name="第 3 章 极限",
+            sources=(
+                ChapterTextSource(
+                    book_id="mathanalysis-b18",
+                    title="数学分析",
+                    chapter_name="第三章 极限",
+                    points=(ChapterTextPoint(name="数列极限", summary="ε-N 定义"),),
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _row(payload: dict, **changes) -> dict:
+        row = {
+            "service": payload["service"],
+            "task": payload["task"],
+            "step": payload["step"],
+            "status": "success",
+            "prompt_template": payload["prompt_template"],
+            "prompt": payload["prompt"],
+            "response": TestCourseChapterLedgerRecovery.recovered,
+        }
+        row.update(changes)
+        return row
+
+    def _case(
+        self,
+        *,
+        matching: int = 1,
+        distractors=None,
+        ledger_status: int = 200,
+        ledger_payload=None,
+        post_status: int | None = None,
+    ):
+        posts: list[dict] = []
+        queries: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/v1/llm/text":
+                body = json.loads(request.content.decode("utf-8"))
+                posts.append(body)
+                if post_status is not None:
+                    return httpx.Response(post_status, text="gateway failed")
+                raise httpx.ReadTimeout("read timeout", request=request)
+            assert request.url.path == "/api/v1/llm/calls"
+            queries.append(dict(request.url.params))
+            if ledger_status != 200:
+                return httpx.Response(ledger_status, text="ledger unavailable")
+            if ledger_payload is not None:
+                return httpx.Response(200, json=ledger_payload)
+            extra = distractors(posts[0]) if distractors is not None else []
+            rows = [*extra, *[self._row(posts[0]) for _ in range(matching)]]
+            return httpx.Response(200, json={"items": rows, "total": len(rows), "page": 1, "size": 200})
+
+        engine = KpGatewayEngine(GW, client=_client(handler), timeout=5.0).bind_chapter_text(
+            course_id="math_analysis",
+            chapter_kp_id="kp-course-ch3",
+            evidence_sha256=self.digest,
+        )
+        return engine, posts, queries
+
+    def test_unique_exact_success_recovers_without_resending(self):
+        def distractors(payload):
+            return [
+                self._row(payload, service="qed_engine"),
+                self._row(payload, task="kp-curation"),
+                self._row(payload, step="points"),
+                self._row(payload, status="error"),
+                self._row(payload, prompt_template=payload["prompt_template"] + "-other"),
+                self._row(payload, prompt=payload["prompt"] + "不同"),
+                self._row(payload, response=None),
+            ]
+
+        engine, posts, queries = self._case(distractors=distractors)
+
+        reply = engine.chapter_text(self._material())
+
+        assert (reply.summary, reply.narrative) == ("恢复总结", "恢复导读")
+        assert len(posts) == 1
+        assert len(queries) == 1
+        assert queries[0] == {
+            "service": "axiom_flow",
+            "task": f"kp-merge-chapter-{self.digest[:12]}",
+            "step": "chapter",
+            "status": "success",
+            "prompt_template": f"kp-merge-chapter/{self.digest}@{CHAPTER_TEXT_PROMPT_VERSION}",
+            "size": "200",
+        }
+
+    @pytest.mark.parametrize("matching", [0, 2])
+    def test_zero_or_multiple_matches_refuse_automatic_resend(self, matching):
+        engine, posts, queries = self._case(matching=matching)
+
+        with pytest.raises(EngineError, match="不自动重发"):
+            engine.chapter_text(self._material())
+
+        assert len(posts) == 1
+        assert len(queries) == 1
+
+    def test_unreachable_ledger_refuses_automatic_resend(self):
+        engine, posts, queries = self._case(ledger_status=503)
+
+        with pytest.raises(EngineError, match="不自动重发"):
+            engine.chapter_text(self._material())
+
+        assert len(posts) == 1
+        assert len(queries) == 1
+
+    @pytest.mark.parametrize(
+        "ledger_payload",
+        [
+            [],
+            {"items": "bad", "total": 1},
+            {"items": [], "total": 201},
+        ],
+    )
+    def test_unverifiable_ledger_shape_refuses_automatic_resend(self, ledger_payload):
+        engine, posts, _ = self._case(ledger_payload=ledger_payload)
+
+        with pytest.raises(EngineError, match="不自动重发"):
+            engine.chapter_text(self._material())
+
+        assert len(posts) == 1
+
+    def test_non_200_course_response_also_checks_the_ledger(self):
+        engine, posts, queries = self._case(post_status=502)
+
+        reply = engine.chapter_text(self._material())
+
+        assert reply.summary == "恢复总结"
+        assert len(posts) == 1
+        assert len(queries) == 1
+
+    def test_normal_batch_failure_does_not_gain_a_ledger_query(self):
+        calls: list[str] = []
+
+        def handler(request):
+            calls.append(request.url.path)
+            raise httpx.ReadTimeout("read timeout", request=request)
+
+        engine = KpGatewayEngine(GW, client=_client(handler), timeout=5.0).bind_batch(
+            book_id="mathanalysis-b05", gen_batch="afkp-recovery"
+        )
+        with pytest.raises(EngineError, match="网关不可达"):
+            engine.points(_section())
+        assert calls == ["/api/v1/llm/text"]
 
 
 class TestTruncatedReplyTolerance:

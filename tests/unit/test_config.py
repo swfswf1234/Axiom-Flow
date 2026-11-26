@@ -20,6 +20,9 @@ _ENV_KEYS = (
     "QED_OCR_MODEL_URL",
     "AXIOM_OCR_TIMEOUT",
     "AXIOM_PARSE_WINDOW_SIZE",
+    "AXIOM_KP_ENGINE",
+    "QED_ENGINE_GATEWAY_URL",
+    "AXIOM_KP_TIMEOUT",
     "AXIOM_VISION_MODEL",
     "QED_DB_HOST",
     "QED_DB_PORT",
@@ -295,6 +298,43 @@ class TestEngineConfig:
         monkeypatch.setenv("AXIOM_KP_TIMEOUT", "notnum")
 
         assert load_settings().kp_timeout == 600
+
+    def test_explicit_empty_env_disables_all_curation_slots(self, isolated, monkeypatch):
+        (isolated / ".env").write_text(
+            "AXIOM_KP_ENGINE=qed-gateway\n"
+            "QED_ENGINE_GATEWAY_URL=http://127.0.0.1:9100\n"
+            "AXIOM_KP_TIMEOUT=120\n",
+            encoding="utf-8",
+        )
+        for key in ("AXIOM_KP_ENGINE", "QED_ENGINE_GATEWAY_URL", "AXIOM_KP_TIMEOUT"):
+            monkeypatch.setenv(key, "")
+
+        settings = load_settings()
+
+        assert settings.kp_engine == ""
+        assert settings.engine_gateway_url == ""
+        assert settings.kp_timeout is None
+
+    def test_explicit_empty_dotenv_disables_all_curation_slots(self, isolated, monkeypatch):
+        child = isolated / "child"
+        child.mkdir()
+        (isolated / ".env").write_text(
+            "AXIOM_KP_ENGINE=qed-gateway\n"
+            "QED_ENGINE_GATEWAY_URL=http://127.0.0.1:9100\n"
+            "AXIOM_KP_TIMEOUT=120\n",
+            encoding="utf-8",
+        )
+        (child / ".env").write_text(
+            "AXIOM_KP_ENGINE=\nQED_ENGINE_GATEWAY_URL=\nAXIOM_KP_TIMEOUT=\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(child)
+
+        settings = load_settings()
+
+        assert settings.kp_engine == ""
+        assert settings.engine_gateway_url == ""
+        assert settings.kp_timeout is None
 
 
 class TestOverrides:

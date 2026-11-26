@@ -120,6 +120,11 @@ class TestTextSlot:
         assert isinstance(engine, KpGatewayEngine)
         assert (engine.name, engine.base_url, engine.timeout) == (KP_SLOT_NAME, "http://127.0.0.1:9100", 120.0)
 
+    def test_build_text_engine_refuses_an_explicit_empty_timeout(self):
+        settings = Settings(data_dir=Path(), kp_timeout=None)
+        with pytest.raises(TextSlotError, match="等待预算为空"):
+            build_text_engine(KP_SLOT_NAME, settings)
+
     def test_build_text_engine_refuses_every_name_outside_the_registry(self):
         settings = Settings(data_dir=Path(), kp_engine="qwen-plus")
         with pytest.raises(TextSlotError):

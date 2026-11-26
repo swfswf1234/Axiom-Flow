@@ -1,7 +1,7 @@
 # 设计索引
 
 状态：Current
-最后更新：2026-10-22
+最后更新：2026-11-26
 
 本目录保存当前流程、接口、数据模型与验收契约（v2 纪元）。元数据规则见
 [文档治理规范](../standards/doc-governance.md)；历史设计一律在 `docs/history/`（v1 在
@@ -20,7 +20,7 @@
 | [PDF 解析与渲染管线](parsing-pipeline.md) | 一份 PDF 怎样变成可消费的产物，以及**什么算合格** | Accepted | Verified | `PP-1~PP-20` | 状态机与 af_* 列（→ [parsing-management](parsing-management.md)、[architecture/database-design](../architecture/database-design.md)）；端点契约（→ [architecture/api](../architecture/api.md)）；引擎配置与协议（→ [model-integration](model-integration.md)）；模块清单（→ [code-map](../architecture/code-map.md)） |
 | [解析管理闭环](parsing-management.md) | 一本书从「已验证书目」到「人工校验完成」，**状态如何流转、职责落在哪一段** | Accepted | Verified | `PM-1~PM-17` | 表结构 DDL（→ [architecture/database-design](../architecture/database-design.md)）；端点参数与响应（→ [architecture/api](../architecture/api.md)）；产物生成与质量判据（→ [parsing-pipeline](parsing-pipeline.md)） |
 | [模型与引擎对接](model-integration.md) | 本仓库**怎样与模型服务对话**（配置、适配器契约、失败语义） | Accepted | Verified | `MI-1~MI-15` | 模型生命周期与调参（→ 根仓库 8900）；归一化映射与坐标换算（→ [parsing-pipeline](parsing-pipeline.md)）；任务状态机（→ [parsing-management](parsing-management.md)） |
-| [知识点梳理与提升](knowledge-analysis.md) | 在一册书的**已生效解析版本**之上，章／节／知识点**怎样被梳理出来、由谁写、人怎么背书、背完给谁用** | Accepted | Not Started | `KA-1~KA-28` | 表结构与列语义（→ [architecture/database-design](../architecture/database-design.md)）；端点参数与响应（→ [architecture/api](../architecture/api.md)）；产物合格判据与页确认门（→ [parsing-pipeline](parsing-pipeline.md)）；任务与书目状态流转（→ [parsing-management](parsing-management.md)） |
+| [知识点梳理与提升](knowledge-analysis.md) | 在一册书的**已生效解析版本**之上，章／节／知识点**怎样被梳理出来、由谁写、人怎么背书、背完给谁用**；课程级多证据章总结与导读怎样端到端落共享表 | Accepted | Verified | `KA-1~KA-74` | 表结构与列语义（→ [architecture/database-design](../architecture/database-design.md)）；端点参数与响应（→ [architecture/api](../architecture/api.md)）；产物合格判据与页确认门（→ [parsing-pipeline](parsing-pipeline.md)）；任务与书目状态流转（→ [parsing-management](parsing-management.md)） |
 
 ## 术语（四篇共用，裸「块」禁用）
 

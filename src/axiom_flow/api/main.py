@@ -44,7 +44,7 @@ from axiom_flow.db.repositories import (
     public_progress,
     sanitize_material_ranges,
 )
-from axiom_flow.engines.base import KnowledgeEngine, ParseEngine
+from axiom_flow.engines.base import EngineError, KnowledgeEngine, ParseEngine
 from axiom_flow.engines.factory import (
     EngineSelectionError,
     TextSlotError,
@@ -70,6 +70,7 @@ from axiom_flow.orchestrator import (
     rebuild_chunks,
     resolve_visible_version,
 )
+from axiom_flow.orchestrator.chapter_text import ChapterTextError, merge_chapter_text
 from axiom_flow.orchestrator.jobs import KpLedgerWiringError
 from axiom_flow.orchestrator.knowledge import (
     ExerciseReading,
@@ -108,6 +109,8 @@ from axiom_flow.schemas import (
     BookOut,
     BookSyncItem,
     BookUpdate,
+    ChapterTextOut,
+    ChapterTextRequest,
     ChunkParams,
     ChunkSet,
     EditRecord,
@@ -136,6 +139,9 @@ from axiom_flow.schemas import (
     KpSummaryRegenIn,
     KpWorkspaceOut,
     ManifestEntry,
+    PageBatchOut,
+    PageBatchRequest,
+    PageBatchResult,
     PageData,
     PageListOut,
     PageState,
@@ -666,11 +672,22 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"页产物缺失：第 {page_no} 页")
         return BlocksPage.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def _load_pages(artifact_dir: Path) -> list[BlocksPage]:
+    def _load_pages(
+        artifact_dir: Path,
+        *,
+        skip_io_errors: bool = False,
+        io_errors: list[OSError] | None = None,
+    ) -> list[BlocksPage]:
         pages: list[BlocksPage] = []
         for path in sorted((artifact_dir / "pages").glob("p*.blocks.json")):
             try:
                 pages.append(BlocksPage.model_validate_json(path.read_text(encoding="utf-8")))
+            except OSError as exc:
+                if io_errors is not None:
+                    io_errors.append(exc)
+                if not skip_io_errors:
+                    raise
+                continue
             except ValueError:
                 continue
         return pages
@@ -682,13 +699,18 @@ def create_app(
     furniture_marks: dict[tuple[str, str], dict[int, tuple[int, ...]]] = {}
 
     def _furniture_marks_for(
-        session: Session, book_id: str, job_id: str, artifact_dir: Path
+        session: Session,
+        book_id: str,
+        job_id: str,
+        artifact_dir: Path,
+        *,
+        skip_io_errors: bool = False,
     ) -> dict[int, tuple[int, ...]]:
         """整本生效版本的家具块标记（类型维∪线维），按 `(book_id, job_id)` 缓存。
 
         常量级读路径上没有「产物在版本内被改写」这条通路（parse job 只写自己的版本目录），所以缓存
-        只需守住上面两条失效条件；整本读盘失败按缺页跳过（与三个读端点同一容错）——标记少一页好过
-        整页读不出来。
+        只需守住上面两条失效条件；批量取页允许整本扫描跳过 I/O 失败页且不缓存降级结果，其它读端点
+        保持既有容错面——标记少一页好过整页读不出来，也不能让后续单页读到缺页标记。
         """
         cached = furniture_marks.get((book_id, job_id))
         if cached is not None:
@@ -696,6 +718,7 @@ def create_app(
         edits_by_page: dict[int, list[EditRow]] = defaultdict(list)
         for edit in OperationRepository(session).list_edits_for_book(book_id, job_id):
             edits_by_page[edit.page_no].append(edit)
+        io_errors: list[OSError] = []
         replayed = [
             page.model_copy(
                 update={
@@ -704,10 +727,13 @@ def create_app(
                     )
                 }
             )
-            for page in _load_pages(artifact_dir)
+            for page in _load_pages(
+                artifact_dir, skip_io_errors=skip_io_errors, io_errors=io_errors
+            )
         ]
         marks = furniture_blocks(replayed, hints=furniture_hints(replayed))
-        furniture_marks[(book_id, job_id)] = marks
+        if not io_errors:
+            furniture_marks[(book_id, job_id)] = marks
         return marks
 
     @app.get("/api/v1/health")
@@ -907,6 +933,168 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"尚无生效版本：{book_id}")
         return write_manifest(artifact_dir)
 
+    def _page_data(
+        book_id: str,
+        page_no: int,
+        blocks: BlocksPage,
+        markdown: str,
+        edit_rows: Sequence[EditRow],
+        furniture: Sequence[int],
+    ) -> PageData:
+        return PageData(
+            blocks=blocks.model_copy(
+                update={"blocks": apply_relabels(blocks.blocks, relabels_by_block(edit_rows))}
+            ),
+            markdown=markdown,
+            image_url=f"/api/v1/books/{book_id}/pages/{page_no}/image",
+            edits=[_edit_record(edit) for edit in edit_rows],
+            furniture_blocks=list(furniture),
+        )
+
+    @app.post("/api/v1/books/{book_id}/pages/batch", response_model=PageBatchOut)
+    def get_pages_batch(
+        book_id: SafeBookId, payload: PageBatchRequest, session: SessionDep
+    ) -> PageBatchOut:
+        """同书多页只读批量入口：一次选版，逐页按 DB 状态与产物真实性归因。"""
+        artifact_dir, job_id = _read_scope(session, book_id)
+        total = _page_total(session, book_id)
+        out_of_range = [page_no for page_no in payload.page_nos if page_no > total]
+        if out_of_range:
+            raise HTTPException(
+                status_code=422,
+                detail=f"页码越界：共 {total} 页，请求包含 {out_of_range}",
+            )
+
+        states = {row.page_no: row for row in PageRepository(session).list_states(book_id, job_id)}
+        edits_by_page: dict[int, list[EditRow]] = defaultdict(list)
+        for edit in OperationRepository(session).list_edits_for_book(book_id, job_id):
+            edits_by_page[edit.page_no].append(edit)
+
+        results: list[PageBatchResult] = []
+        marks: dict[int, tuple[int, ...]] | None = None
+        for page_no in payload.page_nos:
+            state = states.get(page_no)
+            parse_status = state.status if state is not None else PageState.PENDING
+            if state is None:
+                results.append(
+                    PageBatchResult(
+                        page_no=page_no,
+                        status="missing",
+                        parse_status=parse_status,
+                        error=f"该版本没有第 {page_no} 页的页行",
+                    )
+                )
+                continue
+            if parse_status != PageState.PARSED:
+                results.append(
+                    PageBatchResult(
+                        page_no=page_no,
+                        status="not_parsed",
+                        parse_status=parse_status,
+                        error=state.error or f"第 {page_no} 页尚未解析",
+                    )
+                )
+                continue
+
+            pages_dir = artifact_dir / "pages"
+            blocks_path = pages_dir / f"p{page_no:04d}.blocks.json"
+            markdown_path = pages_dir / f"p{page_no:04d}.md"
+            if not blocks_path.is_file():
+                results.append(
+                    PageBatchResult(
+                        page_no=page_no,
+                        status="artifact_missing",
+                        parse_status=parse_status,
+                        error=f"页块产物缺失：第 {page_no} 页",
+                    )
+                )
+                continue
+            if not markdown_path.is_file():
+                results.append(
+                    PageBatchResult(
+                        page_no=page_no,
+                        status="artifact_missing",
+                        parse_status=parse_status,
+                        error=f"页 Markdown 产物缺失：第 {page_no} 页",
+                    )
+                )
+                continue
+            try:
+                blocks = _load_page(artifact_dir, page_no)
+            except HTTPException:
+                results.append(
+                    PageBatchResult(
+                        page_no=page_no,
+                        status="artifact_missing",
+                        parse_status=parse_status,
+                        error=f"页块产物缺失：第 {page_no} 页",
+                    )
+                )
+                continue
+            except (OSError, ValueError):
+                results.append(
+                    PageBatchResult(
+                        page_no=page_no,
+                        status="invalid_artifact",
+                        parse_status=parse_status,
+                        error=f"页块产物无法解析：第 {page_no} 页",
+                    )
+                )
+                continue
+            try:
+                markdown = markdown_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                results.append(
+                    PageBatchResult(
+                        page_no=page_no,
+                        status="artifact_missing",
+                        parse_status=parse_status,
+                        error=f"页 Markdown 产物缺失：第 {page_no} 页",
+                    )
+                )
+                continue
+            except (OSError, ValueError):
+                results.append(
+                    PageBatchResult(
+                        page_no=page_no,
+                        status="invalid_artifact",
+                        parse_status=parse_status,
+                        error=f"页 Markdown 产物无法读取：第 {page_no} 页",
+                    )
+                )
+                continue
+
+            if marks is None:
+                marks = _furniture_marks_for(
+                    session, book_id, job_id, artifact_dir, skip_io_errors=True
+                )
+            results.append(
+                PageBatchResult(
+                    page_no=page_no,
+                    status="ok",
+                    parse_status=parse_status,
+                    data=_page_data(
+                        book_id,
+                        page_no,
+                        blocks,
+                        markdown,
+                        edits_by_page.get(page_no, ()),
+                        marks.get(page_no, ()),
+                    ),
+                )
+            )
+
+        ok = sum(result.status == "ok" for result in results)
+        return PageBatchOut(
+            book_id=book_id,
+            job_id=job_id,
+            scope="legacy" if job_id == LEGACY_JOB_ID else "active",
+            requested=len(payload.page_nos),
+            ok=ok,
+            failed=len(results) - ok,
+            pages=results,
+        )
+
     @app.get("/api/v1/books/{book_id}/pages/{page_no}", response_model=PageData)
     def get_page(book_id: SafeBookId, page_no: int, session: SessionDep) -> PageData:
         """单页完整数据：结构化 blocks + 页级 markdown + 原页图 URL + 已合并人工编辑。
@@ -922,19 +1110,15 @@ def create_app(
         artifact_dir, job_id = _read_scope(session, book_id)
         blocks = _load_page(artifact_dir, page_no)
         edit_rows = OperationRepository(session).list_edits_for_page(book_id, job_id, page_no)
-        blocks = blocks.model_copy(
-            update={"blocks": apply_relabels(blocks.blocks, relabels_by_block(edit_rows))}
-        )
         markdown_path = artifact_dir / "pages" / f"p{page_no:04d}.md"
-        edits = [_edit_record(edit) for edit in edit_rows]
-        return PageData(
-            blocks=blocks,
-            markdown=markdown_path.read_text(encoding="utf-8") if markdown_path.is_file() else "",
-            image_url=f"/api/v1/books/{book_id}/pages/{page_no}/image",
-            edits=edits,
-            furniture_blocks=list(
-                _furniture_marks_for(session, book_id, job_id, artifact_dir).get(page_no, ())
-            ),
+        markdown = markdown_path.read_text(encoding="utf-8") if markdown_path.is_file() else ""
+        return _page_data(
+            book_id,
+            page_no,
+            blocks,
+            markdown,
+            edit_rows,
+            _furniture_marks_for(session, book_id, job_id, artifact_dir).get(page_no, ()),
         )
 
     @app.get("/api/v1/books/{book_id}/pages/{page_no}/image")
@@ -1321,23 +1505,36 @@ def create_app(
     # ---------- ④ 知识点梳理（af_kp） ----------
 
     def _kp_text_engine() -> tuple[str, KnowledgeEngine]:
-        """文本引擎槽位（`KA-22`）：名字空或闭集外都是 503，**不回落**成任何具体引擎。
+        """文本引擎槽位（`KA-22`）：三键显式空、闭集外或未接入均为 503，且不构造引擎。
 
         与 `resolve_engine_name` 的解析面分开：梳理请求体没有 `engine` 字段（`KA-22` 的成本归因
-        要有落点），所以这里的名字只可能来自 `AXIOM_KP_ENGINE` 一处。槽位默认值就是内置实名
-        （AF-T1 甲），装配即接通、`.env` 零改动——因此 503 只可能来自「把默认值显式清空」这一
-        种服务侧误配，文案不再教人「请配置」。闭集本身收在 `engines/factory.py`（`TEXT_ENGINE_NAMES`），
-        端点不另写一份名字表——那样等于给「哪个名字算梳理引擎」开出第二处事实源；工厂报的
-        `TextSlotError` 在这里只换成 503，不新增 HTTP 码（误配的是服务侧环境，不是调用方传错请求体，
-        读成 400 会把责任放错边）。
+        要有落点），所以名字只可能来自 `AXIOM_KP_ENGINE`。出站地址与超时同样只读配置；
+        三键任一显式空值都在受理期停用梳理槽位，零写入。闭集收在 `engines/factory.py`
+        （`TEXT_ENGINE_NAMES`），端点不另写一份名字表；`TextSlotError` 在这里只换成 503。
         """
         name = settings.kp_engine
-        if not name:
+        if not name.strip():
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    "梳理引擎槽位未接入：槽位名为空（默认值被显式清空；"
-                    "不回落、不缺省成任何引擎，零写入）"
+                    "梳理引擎槽位未接入：AXIOM_KP_ENGINE 槽位名为空"
+                    "（不回落、不缺省成任何引擎，零写入）"
+                ),
+            )
+        if not settings.engine_gateway_url.strip():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "梳理引擎槽位未接入：QED_ENGINE_GATEWAY_URL 槽位地址为空"
+                    "（不回落、不构造引擎，零写入）"
+                ),
+            )
+        if settings.kp_timeout is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "梳理引擎槽位未接入：AXIOM_KP_TIMEOUT 等待预算为空"
+                    "（不回落、不构造引擎，零写入）"
                 ),
             )
         try:
@@ -1462,6 +1659,29 @@ def create_app(
             ),
         )
 
+    @app.post("/api/v1/kp/merge/chapter-text", response_model=ChapterTextOut)
+    def merge_course_chapter_text(
+        payload: ChapterTextRequest, session: SessionDep
+    ) -> ChapterTextOut:
+        """课程级章总结与导读（PLAN-034）：显式目标、生成外锁、共享表三列同事务落库。"""
+        _, engine = _kp_text_engine()
+        try:
+            return merge_chapter_text(
+                session,
+                payload,
+                engine,
+                data_root=data_root,
+                reference_fetcher=fetch_references,
+            )
+        except ChapterTextError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        except EngineError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        finally:
+            close = getattr(engine, "close", None)
+            if callable(close):
+                close()
+
     @app.patch("/api/v1/kp/nodes/{node_id}", response_model=KpNodeOut)
     def patch_kp_node(node_id: str, payload: KpNodePatch, session: SessionDep) -> KpNodeOut:
         """人工背书域写入（`KA-11`/`KA-12`）：只有请求体里出现过的键参与写入，缺席与显式 `null` 不同。
@@ -1480,7 +1700,64 @@ def create_app(
                 detail=f"af_kp 乐观并发冲突：{node_id} 当前 rev={node.rev}，请求 if_rev={payload.if_rev}",
             )
         given = payload.model_fields_set - {"if_rev"}
-        fields: dict[str, Any] = {key: getattr(payload, key) for key in given if key != "links" and key != "anchors"}
+        outline_fields = {"depth", "toc_role", "toc_kind"}
+        if given & outline_fields:
+            if node.node_kind != "outline":
+                raise HTTPException(status_code=422, detail=f"目录改判字段只适用于目录行：{node_id}")
+            if node.confirmed:
+                raise HTTPException(status_code=422, detail=f"已确认目录行不可改判：{node_id}")
+        effective_depth = payload.depth if "depth" in given else node.depth
+        effective_parent_id = payload.parent_id if "parent_id" in given else node.parent_id
+        if (
+            node.node_kind == "outline"
+            and given & {"depth", "parent_id"}
+            and effective_depth == 2
+        ):
+            parent = repo.get(effective_parent_id) if effective_parent_id else None
+            if (
+                parent is None
+                or parent.book_id != node.book_id
+                or parent.node_kind != "outline"
+                or parent.depth != 1
+            ):
+                raise HTTPException(status_code=422, detail=f"二级目录须挂在同书一级目录下：{node_id}")
+        if "parent_id" in given and node.node_kind == "outline" and payload.parent_id:
+            cursor = repo.get(payload.parent_id)
+            seen = {node_id}
+            while cursor is not None and cursor.node_id not in seen:
+                seen.add(cursor.node_id)
+                cursor = repo.get(cursor.parent_id) if cursor.parent_id else None
+            if cursor is not None:
+                raise HTTPException(status_code=422, detail=f"目录父级不得成环：{node_id}")
+        if given & {"toc_role", "toc_kind"}:
+            old_meta = node.meta or {}
+            effective_role = (
+                payload.toc_role or TOC_ROLE_KNOWLEDGE
+                if "toc_role" in given
+                else str(old_meta.get("toc_role") or TOC_ROLE_KNOWLEDGE)
+            )
+            effective_kind = (
+                payload.toc_kind or ""
+                if "toc_kind" in given
+                else str(old_meta.get("toc_kind") or "")
+            )
+            if effective_role == TOC_ROLE_KNOWLEDGE and effective_kind:
+                raise HTTPException(status_code=422, detail=f"知识点目录的 toc_kind 必须为空：{node_id}")
+        fields: dict[str, Any] = {
+            key: getattr(payload, key)
+            for key in given
+            if key not in {"links", "anchors", "toc_role", "toc_kind"}
+        }
+        if given & {"toc_role", "toc_kind"}:
+            meta = dict(node.meta or {})
+            if "toc_role" in given:
+                meta["toc_role"] = payload.toc_role
+            if "toc_kind" in given:
+                if payload.toc_kind:
+                    meta["toc_kind"] = payload.toc_kind
+                else:
+                    meta.pop("toc_kind", None)
+            fields["meta"] = meta
         if "type" in given and node.node_kind == "outline" and payload.type:
             raise HTTPException(
                 status_code=422,
@@ -1497,11 +1774,23 @@ def create_app(
                 raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         if not fields:
             return _kp_node_echo(node, session)
-        written = repo.update(node_id, fields, if_rev=payload.if_rev)
+        written = (
+            repo.rejudge_outline(node_id, fields, if_rev=payload.if_rev)
+            if given & outline_fields
+            else repo.update(node_id, fields, if_rev=payload.if_rev)
+        )
         if not written.ok:
             if written.rev_conflict:
+                assert written.node is not None
                 raise HTTPException(
-                    status_code=409, detail=f"af_kp 乐观并发冲突：{node_id} 已被他人改写"
+                    status_code=409,
+                    detail=f"af_kp 乐观并发冲突：{node_id} 当前 rev={written.node.rev}，"
+                    f"请求 if_rev={payload.if_rev}",
+                )
+            if written.node is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"目录行当前不可改判（只允许未确认的 outline 行）：{node_id}",
                 )
             raise HTTPException(status_code=404, detail=f"知识点节点不存在：{node_id}")
         assert written.node is not None

@@ -38,8 +38,10 @@ import httpx
 
 from axiom_flow.db.llm_ledger import KP_LEDGER_TASK, LLM_CALL_SERVICE
 from axiom_flow.engines.base import (
+    CHAPTER_TEXT_PROMPT_VERSION,
     ChapterInput,
     ChapterReply,
+    ChapterTextInput,
     EngineError,
     ExerciseClassifyInput,
     ExerciseClassifyItem,
@@ -76,6 +78,7 @@ logger = logging.getLogger(__name__)
 KP_SLOT_NAME = "qed-gateway"
 
 _TEXT_PATH = "/api/v1/llm/text"
+_CALLS_PATH = "/api/v1/llm/calls"
 _HEALTH_PATH = "/api/v1/health"
 #: 只读模型清单（PLAN-033 W5）：当前生效文字槽位的模型名，仅用于异常注记。
 _CONFIG_MODELS_PATH = "/api/v1/config/models"
@@ -500,6 +503,15 @@ _CHAPTER_PROMPT = """\
 """
 
 
+_COURSE_CHAPTER_PROMPT = (
+    "你是课程级章节总结与导读作者。本轮把多本教材中对应章节的章级总结与子点总结归并成一章。\n"
+    "材料不含页码或块锚，不得补造出处坐标。\n"
+    + _CHAPTER_PROMPT[_CHAPTER_PROMPT.index("只谈这一章") :].replace(
+        "只按章前正文与子点总结写", "只按多教材同章材料写"
+    )
+)
+
+
 def _reference_block(notes: Sequence[ReferenceNote]) -> list[str]:
     """检索资料段（PLAN-033）：有资料才出现；标注来源与条目名，提示模型这是校准面而不是事实源。"""
     if not notes:
@@ -545,6 +557,27 @@ def _chapter_prompt(
     lines.extend(_reference_block(material.reference_notes))
     lines.extend(_review_note_block(review_note))
     lines.extend(_revision_block(revision))
+    lines.extend(_retry_block(material.retry_issues))
+    return "\n".join(lines)
+
+
+def _chapter_text_prompt(material: ChapterTextInput) -> str:
+    lines = [_COURSE_CHAPTER_PROMPT, f"章标题：{material.chapter_name}", "", "现有课程章材料：", ""]
+    if material.chapter_summary:
+        lines.extend([f"现有课程章总结：{material.chapter_summary}", ""])
+    if material.chapter_narrative:
+        lines.extend([f"现有课程章导读：{material.chapter_narrative}", ""])
+    lines.extend(["多教材同章材料：", ""])
+    for source in material.sources:
+        title = f"{source.title}（{source.book_id}）" if source.title else source.book_id
+        lines.extend([f"教材来源：{title}", f"同章名：{source.chapter_name}"])
+        if source.summary:
+            lines.append(f"章级总结：{source.summary}")
+        lines.append("子点总结：")
+        for point in source.points:
+            lines.append(f"- {point.name}：{point.summary}")
+        lines.append("")
+    lines.extend(_reference_block(material.reference_notes))
     lines.extend(_retry_block(material.retry_issues))
     return "\n".join(lines)
 
@@ -798,6 +831,7 @@ class KpGatewayEngine:
         self._client = client
         self._owns_client = client is None
         self._batch: tuple[str, str] | None = None
+        self._chapter_text: tuple[str, str, str] | None = None
         self._review_note = ""
         self._revision: RevisionContext | None = None
 
@@ -819,8 +853,15 @@ class KpGatewayEngine:
         绑定都会整个换掉——没传即清空，免得上一枚请求的建议漏进下一枚。
         """
         self._batch = (book_id, gen_batch)
+        self._chapter_text = None
         self._review_note = review_note
         self._revision = revision
+        return self
+
+    def bind_chapter_text(self, *, course_id: str, chapter_kp_id: str, evidence_sha256: str) -> KpGatewayEngine:
+        """绑定课程级章腿的显式目标与证据哈希；账目只在 8900 落。"""
+        self._batch = None
+        self._chapter_text = (course_id, chapter_kp_id, evidence_sha256)
         return self
 
     def _http(self) -> httpx.Client:
@@ -1058,6 +1099,24 @@ class KpGatewayEngine:
                 "point_count": len(material.point_summaries),
             },
         )
+        return self._chapter_reply(reply)
+
+    def chapter_text(self, material: ChapterTextInput) -> ChapterReply:
+        """课程级多书同章归并；目标与证据哈希决定 8900 账目身份。"""
+        reply = self._post_text(
+            "chapter",
+            _chapter_text_prompt(material),
+            {
+                "course_id": material.course_id,
+                "chapter_kp_id": material.chapter_kp_id,
+                "source_count": len(material.sources),
+                "point_count": sum(len(source.points) for source in material.sources),
+            },
+            course_text=True,
+        )
+        return self._chapter_reply(reply)
+
+    def _chapter_reply(self, reply: str) -> ChapterReply:
         if not reply.strip():
             raise EngineError("模型空回复（chapter）：不折算成零产出，按章失败披露")
         try:
@@ -1228,18 +1287,52 @@ class KpGatewayEngine:
             )
         return ExerciseVerifyReply(items=tuple(readings))
 
-    def _post_text(self, step: str, prompt: str, meta: dict[str, Any]) -> str:
+    def _post_text(
+        self, step: str, prompt: str, meta: dict[str, Any], *, course_text: bool = False
+    ) -> str:
         """一次调用：出站唯一、归因随体、四类故障各归一条 `EngineError` 文案。"""
-        if self._batch is None:
-            raise EngineError(f"梳理网关未绑定批次身份，拒跑 {step}：这一条调用将查不到主人（R8 甲）")
-        book_id, gen_batch = self._batch
-        payload = {
-            "prompt": prompt,
-            "service": LLM_CALL_SERVICE,
-            "task": KP_LEDGER_TASK,
-            "step": step,
-            "meta": {"book_id": book_id, "gen_batch": gen_batch, "engine": self.name, **meta},
-        }
+        if course_text:
+            if self._chapter_text is None:
+                raise EngineError("梳理网关未绑定 chapter_text 目标与证据哈希，拒跑课程级章腿")
+            course_id, chapter_kp_id, evidence_sha256 = self._chapter_text
+            payload = {
+                "prompt": prompt,
+                "service": LLM_CALL_SERVICE,
+                "task": f"kp-merge-chapter-{evidence_sha256[:12]}",
+                "step": step,
+                "prompt_template": f"kp-merge-chapter/{evidence_sha256}@{CHAPTER_TEXT_PROMPT_VERSION}",
+                "meta": {
+                    "course_id": course_id,
+                    "chapter_kp_id": chapter_kp_id,
+                    "evidence_sha256": evidence_sha256,
+                    "engine": self.name,
+                    **meta,
+                },
+            }
+        else:
+            if self._batch is None:
+                raise EngineError(f"梳理网关未绑定批次身份，拒跑 {step}：这一条调用将查不到主人（R8 甲）")
+            book_id, gen_batch = self._batch
+            payload = {
+                "prompt": prompt,
+                "service": LLM_CALL_SERVICE,
+                "task": KP_LEDGER_TASK,
+                "step": step,
+                "meta": {"book_id": book_id, "gen_batch": gen_batch, "engine": self.name, **meta},
+            }
+        try:
+            return self._post_text_once(payload, step)
+        except EngineError as exc:
+            if not course_text:
+                raise
+            try:
+                return self._recover_course_text(payload)
+            except EngineError as recovery_exc:
+                raise EngineError(
+                    f"{exc}；课程级出站结果不确定：{recovery_exc}（不自动重发）"
+                ) from exc
+
+    def _post_text_once(self, payload: dict[str, Any], step: str) -> str:
         try:
             response = self._http().post(f"{self.base_url}{_TEXT_PATH}", json=payload)
         except httpx.HTTPError as exc:
@@ -1260,6 +1353,47 @@ class KpGatewayEngine:
         if not isinstance(reply, str):
             raise EngineError(f"8900 网关响应缺 reply 文本（{step}）")
         return reply
+
+    def _recover_course_text(self, payload: dict[str, Any]) -> str:
+        try:
+            response = self._http().get(
+                f"{self.base_url}{_CALLS_PATH}",
+                params={
+                    "service": payload["service"],
+                    "task": payload["task"],
+                    "step": payload["step"],
+                    "status": "success",
+                    "prompt_template": payload["prompt_template"],
+                    "size": 200,
+                },
+                timeout=min(self.timeout, _MODEL_PROBE_TIMEOUT),
+            )
+            if response.status_code != 200:
+                raise EngineError(f"账本查询返回 HTTP {response.status_code}")
+            body = response.json()
+        except httpx.HTTPError as exc:
+            raise EngineError(f"账本不可达（{type(exc).__name__}）") from exc
+        except ValueError as exc:
+            raise EngineError("账本响应不是 JSON") from exc
+        if not isinstance(body, dict) or not isinstance(body.get("items"), list):
+            raise EngineError("账本响应形状不可核对")
+        total = body.get("total")
+        if isinstance(total, bool) or not isinstance(total, int) or total != len(body["items"]):
+            raise EngineError("账本总数与返回行数不一致")
+        if total > 200:
+            raise EngineError("账本匹配超过单页上限，无法证明唯一")
+        matches = [
+            row["response"]
+            for row in body["items"]
+            if isinstance(row, dict)
+            and all(row.get(key) == payload[key] for key in ("service", "task", "step", "prompt_template"))
+            and row.get("status") == "success"
+            and row.get("prompt") == payload["prompt"]
+            and isinstance(row.get("response"), str)
+        ]
+        if len(matches) != 1:
+            raise EngineError(f"账本精确成功匹配为 {len(matches)} 条")
+        return matches[0]
 
     def _object(self, reply: str, step: str) -> dict:
         """回复 → JSON 对象：取首个 `{` 到最后 `}`，非法转义仍走同一枚补计腿（`DEFECT-026` 甲）。

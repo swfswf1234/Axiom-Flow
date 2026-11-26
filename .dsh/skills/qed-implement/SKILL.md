@@ -8,7 +8,8 @@ description: Use when implementing code in the QED repos — locates the module 
 ## 步骤
 
 1. **定位模块**：在标准映射「模块映射」（`docs/architecture/code-map.md`）找到模块职责、状态、设计关联（DesignRef）与关联测试；契约变化先完成 ADR/设计，再改实现、code-map 与语义测试。实现前对照 `design/` 文档与已批计划壳范围——文档未提及的功能不加（缺失先回文档面补设计再裁决）。
-2. **先写测试**：涉及契约/状态机/迁移/行为变化，先写会失败的测试（调用 `test-driven-development`），再写实现使其通过。
+2. **先写测试**：涉及契约/状态机/迁移/行为变化，先写会失败的测试、亲眼看到它红，再写最小实现使其通过
+   （先红纪律的展开见 `qed-verification` 第 1 节）。
 3. **遵循分层**：按标准映射「测试门禁」的测试分层与治理契约测试规范。
 4. **同步映射**：模块新增/移动/删除时，同一变更内同步 code-map 与关联设计文档；先用内容检索（宿主 `grep` 工具）全库确认无残余引用。
 5. **记录过程**：每批实现与取证的进展写入承载壳的 `## 过程与证据` 节（带日期戳），
@@ -28,7 +29,8 @@ description: Use when implementing code in the QED repos — locates the module 
 
 ## 调试
 
-遇到 bug 或测试失败，先调用 `systematic-debugging` 定位根因，禁止猜测性修复；可复现缺陷先补回归测试再修复。
+遇到 bug 或测试失败，先定位根因再提修复，禁止猜测性修复；可复现缺陷先补回归测试再修复
+（根因纪律的展开见 `qed-verification` 第 2 节）。
 
 DSH 会话内的工具选择（宿主编写、`cmd /c`、`PYTHONUTF8`、缓存目录不可写）见
 `dsh-tooling-conventions` 与 `docs/standards/local-dev.md`「Agent 工具层」节，本文不复制。

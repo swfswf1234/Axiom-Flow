@@ -1486,3 +1486,35 @@ class TestKpRepository:
         assert not kp.set_exercise_verify(book_id="b11", node_id="afkp-o1", state="failed")
         assert kp.get("afkp-p1").meta is None
         assert kp.get("afkp-o1").meta is None
+
+    def test_rejudge_confirmed_guard_failure_is_not_a_rev_conflict(self, session):
+        kp = KpRepository(session)
+        self._node(session, node_kind="outline", depth=2)
+        assert kp.set_confirmed("afkp-a1", confirmed=True).ok
+
+        result = kp.rejudge_outline("afkp-a1", {"depth": 1})
+
+        assert (result.ok, result.rev_conflict) == (False, False)
+        assert result.node is not None and result.node.confirmed == 1
+        assert kp.get("afkp-a1").depth == 2
+
+    def test_rejudge_kind_guard_failure_is_not_a_rev_conflict(self, session):
+        kp = KpRepository(session)
+        self._node(session, node_kind="point", depth=1)
+
+        result = kp.rejudge_outline("afkp-a1", {"depth": 2})
+
+        assert (result.ok, result.rev_conflict) == (False, False)
+        assert result.node is not None and result.node.node_kind == "point"
+        assert kp.get("afkp-a1").depth == 1
+
+    def test_rejudge_stale_rev_on_an_editable_outline_is_still_a_conflict(self, session):
+        kp = KpRepository(session)
+        self._node(session, node_kind="outline", depth=2)
+        assert kp.update("afkp-a1", {"summary": "他人已改"}).ok
+
+        result = kp.rejudge_outline("afkp-a1", {"depth": 1}, if_rev=0)
+
+        assert (result.ok, result.rev_conflict) == (False, True)
+        assert result.node is not None and result.node.rev == 1
+        assert kp.get("afkp-a1").depth == 2

@@ -66,7 +66,7 @@ _REFERENCE_NAME_SHAPES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("front_matter", re.compile(r"前言|引言|序言|译名表|编者附言|导读|内容简介|致读者|作者与出版者")),
     ("appendix", re.compile(r"^\s*附\s*录|^\s*appendix", re.IGNORECASE)),
     ("bibliography", re.compile(r"参考文献|书目|参考书目")),
-    ("index", re.compile(r"^\s*索\s*引|^\s*index", re.IGNORECASE)),
+    ("index", re.compile(r"^\s*索\s*索?\s*引|^\s*index", re.IGNORECASE)),
     ("back_matter", re.compile(r"(?:校订|译|编)?后\s*记|^\s*跋")),
     ("exercise", re.compile(r"^\s*习\s*题|^\s*练\s*习|习题解答|习题提示")),
 )
@@ -205,16 +205,19 @@ def _is_top_level_name(name: str) -> bool:
 
 
 def normalize_entry_levels(entries: Sequence[TocEntry]) -> list[TocEntry]:
-    """书级层级归一（`KA-57`）：本书有明写章号时，其余行一律是节；没有明写章号则保持行形状。
+    """书级层级归一（`KA-57`）：本书有明写章号时，其余一／二级行归节，显式三级及以上保留。
 
     `entry_level` 是**单行**判据，它把 `1. 前言` 读成章（有些书确实这样写）。但一本同时写着
     `第一章…` 与 `1. 前言` 的书里，章只有一个含义——不归一就会让 262 条编号条目全成顶级行，
     每一条都把上一章挤出父位。附件行与章同级，习题段留在章内。
     """
     items = list(entries)
-    if not any(_is_top_level_name(entry.name) for entry in items):
+    if not any(_EXPLICIT_CHAPTER.match((entry.name or "").lstrip()) for entry in items):
         return items
-    return [replace(entry, level=1 if _is_top_level_name(entry.name) else 2) for entry in items]
+    return [
+        replace(entry, level=1 if _is_top_level_name(entry.name) else max(2, entry.level))
+        for entry in items
+    ]
 
 
 #: 纯编号条目（`34. 单调整序变量`）：不含 `§` 的分节号，与 `_ENTRY_NUMBER_PREFIX` 分开判。

@@ -1,18 +1,18 @@
 # 知识梳理轮接口与链路统一实施（knowledge-curation-round）
 
-状态：In Progress
+状态：Completed
 任务类型：B
-最后更新：2026-11-07
-关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900：新增的习题腿与详情腿同样只经适配层出站）、
-[ADR 0007](../adr/0007-parse-status-semantics.md)（进度与结局分列是本案梳理结局位的形状来源）、
-[ADR 0015](../adr/0015-db-single-source-for-readiness.md)（就绪的唯一事实源是 DB，本案不把产物文件升成判据）、
-[ADR 0016](../adr/0016-af-family-rebuild-into-four-tables.md)（决定 2 的「当前态四源」与决定 10 ① 的「同步 upsert 禁写 `af_books.meta`」＝本案必须加真列的直接依据；决定 11 已立「加列不加表」的先例）、
-[ADR 0013](../adr/0013-ledger-row-three-elements.md)／[ADR 0018](../adr/0018-task-column-bound-and-progress-ban.md)（本案台账行的三列口径）
+最后更新：2026-11-24
+关联 ADR：[ADR 0004](../../../adr/0004-model-boundary-and-pipeline-ownership.md)（模型生命周期归 8900：新增的习题腿与详情腿同样只经适配层出站）、
+[ADR 0007](../../../adr/0007-parse-status-semantics.md)（进度与结局分列是本案梳理结局位的形状来源）、
+[ADR 0015](../../../adr/0015-db-single-source-for-readiness.md)（就绪的唯一事实源是 DB，本案不把产物文件升成判据）、
+[ADR 0016](../../../adr/0016-af-family-rebuild-into-four-tables.md)（决定 2 的「当前态四源」与决定 10 ① 的「同步 upsert 禁写 `af_books.meta`」＝本案必须加真列的直接依据；决定 11 已立「加列不加表」的先例）、
+[ADR 0013](../../../adr/0013-ledger-row-three-elements.md)／[ADR 0018](../../../adr/0018-task-column-bound-and-progress-ban.md)（本案台账行的三列口径）
 本案另需一枚新 ADR（ADR 0019）：把「梳理结局」写进 `af_books` 当前态清单，并为档 B 加列放行——W1 的前置立法。
-关联设计：[knowledge-analysis.md](../design/knowledge-analysis.md)（`KA-1~KA-50` 在册条文＝本案改动面基线，新条从 `KA-51` 起）、
-[parsing-management.md](../design/parsing-management.md)（`PM-13` 单实例串行前提）、[model-integration.md](../design/model-integration.md)（出站与槽位登记）、
-[database-design.md](../architecture/database-design.md)（`af_books` 列清单正本）、[api.md](../architecture/api.md)（④ 类端点形状）、
-[operations.md](../guides/operations.md)（真库 ALTER 窗口的备份与回滚 runbook）
+关联设计：[knowledge-analysis.md](../../../design/knowledge-analysis.md)（`KA-1~KA-50` 在册条文＝本案改动面基线，新条从 `KA-51` 起）、
+[parsing-management.md](../../../design/parsing-management.md)（`PM-13` 单实例串行前提）、[model-integration.md](../../../design/model-integration.md)（出站与槽位登记）、
+[database-design.md](../../../architecture/database-design.md)（`af_books` 列清单正本）、[api.md](../../../architecture/api.md)（④ 类端点形状）、
+[operations.md](../../../guides/operations.md)（真库 ALTER 窗口的备份与回滚 runbook）
 关联 Tracker：docs/trackers/todo.md（PLAN-028 镜像行与 ARCH-035 聚合行；本案承载 ARCH-036/037/038/039/040/041 六枚功能任务行与 REQ-155 出站请求行；随步壳行 PLAN-025／026／027／029 与入站 REQ-139／142／143／146 在 todo「普通任务轮」节，承载仍指各自壳）
 归档判定：Retain（种类分流与四链路的裁决推导、真库加列窗口的前后指纹、与根侧 ADR 0028 两级闸的对账读数不可再生；判据本体晋升到 `docs/design/knowledge-analysis.md`）
 
@@ -104,9 +104,9 @@
 | 编号 | 归行 | 要裁的一件事 | 两案与代价 |
 | --- | --- | --- | --- |
 | Q2（已裁 2026-11-07） | 大任务二 | ~~裁剪后的原文切片是否落盘（`<book_dir>/kp/<node_id>.excerpt.md`）~~ **已裁＝甲（见 C17）**：不落盘，「裁剪好的结果」＝工作区每行的起止两页＋总结/导读，正文由根侧按版本产物现取现渲染 | 乙案（落盘、盘上有可指认产物）的代价＝删除通路多清一类文件、读面多一条腿，不为本案支付 |
-| Q3 | 重要任务一 | 本案 DDL 与 PLAN-027 真机梳理窗口的先后 | 先窗口＝真机读数落在旧表形状上，与本案终态差两列；先 DDL＝窗口的窗口前指纹与备份基线要重取 |
+| Q3（已取消 2026-11-24） | 重要任务一 | ~~本案 DDL 与 PLAN-027 真机梳理窗口的先后~~ **用户裁决＝取消**：事实已过期，W14 真库加列窗口已于 2026-11-24 执行完毕（见「过程与证据」），PLAN-027 真机窗口尚未发令，先后已由既成事实确定，无需再裁 | 原两案（先窗口读旧形状／先 DDL 重取指纹）均不再适用 |
 | Q5（已裁 2026-11-07） | 大任务三 | ~~关键定义的结构化程度~~ **已裁＝甲**：`meta.must_master`（2~4 条「要能做到什么」）＋`meta.key_definitions`（2~6 条 `{term, definition}`）两枚闭集键，工作区与导出面同投影透传；章侧不加键（`chapter_summary`＝学习内容、`narrative`＝导读）；坏条目丢弃不丢行。乙案（只写提示词、库里不建结构）的代价＝屏侧拿不到稳定清单，与成功标准 5 的「清单」字样相悖 | 甲可被屏侧稳定渲染，代价是 `meta` 闭集扩两键、读面加两枚派生键 |
-| Q6 | 重要任务一 | 书目列表三段里的「梳理完成」取哪一枚读数（与并行壳 PLAN-029 撞同一句话） | 甲＝本案 W4 的 `af_books.last_curation_result`（批次结局，写列，一次读全）；乙＝PLAN-029 的 `stage.done`（内容维严口径＝目录在册行全覆盖 ∧ 未定位零枚 ∧ 每行确认，读时派生、零 DDL）；丙＝两枚并存，徽章取乙、批次筛选与告警取甲。甲对人工确认进度盲，乙在列表面要逐本派生（PLAN-029 自己禁了逐行查询，列表用需另设一次批量派生），丙把两问分开但屏上要写清两枚各自含义 |
+| Q6（已取消 2026-11-24） | 重要任务一 | ~~书目列表三段里的「梳理完成」取哪一枚读数（与并行壳 PLAN-029 撞同一句话）~~ **用户裁决＝取消**：徽章取数属 8903 消费面的展示口径，不阻塞本壳功能达成与本行关闭；底座两列与三写者已就位，两枚读数并存且各答一问（批次维／内容维），最终取数由消费面按需自取，本案不再代裁 | 原甲（批次结局，对人工确认盲）／乙（内容维严口径，列表需批量派生）／丙（并存）三案均不再在本案裁决 |
 
 ## 习题集梳理方案与边界（2026-11-06 用户四裁）
 
@@ -213,7 +213,7 @@
 | 重要任务二：习题集题目腿与跨书挂章 | 习题集批次里的题目／解答成对抽取与配对：配套模式按（章＋题号）合并进教材侧题行并写题包，独立模式在本书成题行与题包；另交章级索引与选中题重解析 | ARCH-041（W9、W10、W16、W17） | 入站 REQ-146 章末习题段成行（只管**教材内部**，与本行的**习题集整本**腿分工不重叠）；PLAN-025 W3/W4 生成腿与收尾（调度壳不动，只加一条腿）；PLAN-029 W1（整本绿判据纯函数，复用不自造） | 教材侧行集只由大任务二产出，本行只补空位；重解析只覆盖未确认机器行；题目行落**教材**行集，故 `KA-15` 导出面与章节树零适配；习题行进共享主表由根侧 ADR 0028 两级闸挡住，本行不放宽也不自造配对表 |
 | 大任务三：知识点详情 | 每章「学什么」＋导读，每点「要掌握什么」＋关键定义 | ARCH-039（W11） | PLAN-026 W6 适配器（同一枚 `KnowledgeEngine`，本行只加 prompt 与读数形状）；入站 REQ-143「一键总结／详解」写腿；`KA-20`／`KA-30` 长文通路 | 详情只在已确认目录与已梳理章节上生成，人工确认门不因本行放宽；本行零新列，结构化读数只走 `meta` 闭集键 |
 | 大任务四：全流程联调验收 | 三块串成一条链的总流程回归＋前后端联调面 | ARCH-040（W12、W13、W15） | PLAN-025 W8 文档晋升；PLAN-026 W8 文档随步；入站 REQ-139 乙／丙面形状核对的产出 N1（已交付＝`qed-gateway` 槽位在册）、N2（`kp` 路由在网生效与 `openapi.json` 对账）、N3（人工直登记知识点的创建端点）后两枚仍待判；PLAN-027 与 PLAN-029 的真机读数作验收参照 | 端点面与条文随步**唯一归本行**，其余五行不得各自改 `api.md`；PLAN-027 的真机读数与本案判据分列，本案关闭不以真机读数作为条件 |
-| 并行壳（只划界，不挂靠） | 根侧「梳理屏选书三态」要的读时派生 `stage` 五键 | 归重要任务一与大任务四之间，本轮不另立行 | [PLAN-029](../history/plans/2026-11/2026-11-06-kp-book-stage-derived-read-request.md)（入站 REQ-156，同节并行；2026-11-07 关闭，Retain）：W1 派生纯函数 → W2 `KpWorkspaceOut` 加 `stage` → W3 契约与单元 → W4 两侧回执 | PLAN-029 答「这本书梳理到哪一步」（内容维、读时派生、零 DDL），本案 W4 答「上一批跑到什么结局」（批次维、写列）——两枚各答一问，**谁也不得改成对方那枚**；徽章取数归 Q6。本案的加列窗口不做 `stage` 派生，PLAN-029 明文不消费 `last_curation_result`，故两案在 DDL 与读面上互不阻塞 |
+| 并行壳（只划界，不挂靠） | 根侧「梳理屏选书三态」要的读时派生 `stage` 五键 | 归重要任务一与大任务四之间，本轮不另立行 | [PLAN-029](2026-11-06-kp-book-stage-derived-read-request.md)（入站 REQ-156，同节并行；2026-11-07 关闭，Retain）：W1 派生纯函数 → W2 `KpWorkspaceOut` 加 `stage` → W3 契约与单元 → W4 两侧回执 | PLAN-029 答「这本书梳理到哪一步」（内容维、读时派生、零 DDL），本案 W4 答「上一批跑到什么结局」（批次维、写列）——两枚各答一问，**谁也不得改成对方那枚**；徽章取数归 Q6。本案的加列窗口不做 `stage` 派生，PLAN-029 明文不消费 `last_curation_result`，故两案在 DDL 与读面上互不阻塞 |
 
 ## 工作项
 
@@ -232,7 +232,7 @@
 | W11 | 大任务三 | 知识点详情形状：每点给「要掌握什么」与关键定义清单（Q5 出裁）、每章给学习内容与导读；prompt 侧按「先说要什么」的口径改写并冻结样本/哈希/预算/采纳门槛 | `engines/kp_gateway.py`、`db/repositories.py`、`schemas.py` | W6、W8、Q5（已裁甲） | 已完成（2026-11-07；Q5 取甲——点腿回复加 `must_master`（2~4 条）与 `key_definitions`（2~6 条 `{term, definition}`），`_point_row` 净化后落 `meta` 两枚闭集键（坏条目丢弃、点行照留；上限 6／8 条、120／120／500 字）；`KpNodeOut` 加两枚派生键，工作区／单行／导出同一投影透传、坏值归空表；章侧不加键，`chapter_summary` 明确为「本章学习内容」。提示词按「先说要什么」改写并冻结哈希／样本／预算／采纳门槛（见证据节）。`TestPointsDetailPrompt`／`TestPointDetailReads`／`TestKpDetailReads` 九例全绿，全量 `1406 passed／18 skipped`＋`ruff` 绿） |
 | W12 | 大任务四 | 端点面与判定序随步：④ 类新增/改动端点入 `api.md` 总表与小节（含 `GET …/kp/export` 透传新 `meta` 键），与运行时路由表双向对账 | `api/main.py`、`api.md`、`tests/contract/test_api_v1_contract.py` | W3~W11 | 已完成（2026-11-07；`api.md` ④ 类总表与小节按运行时实序重写：阶段段改四值闭集并写明 `exercise` 两模式已交付；受理门表由「七道单门」改「单门＋组合门」排列——`only_failed` 只与 `content`、`target_book_id` 只与「习题集＋`exercise`」且目标书须在册／教材／不在飞／整本绿、`retry_node_ids` 只与 `exercise`，目标书在飞 409 单列；工作区 JSON 补 `"exercise": null` 与节点 `source_book_id`／`source_pages`，导出节写明与工作区同一投影（`_kp_node_out`）只加过滤与排序；422／409 错误码行同步扩写。契约网新增 `test_the_export_face_carries_the_same_projection` 与 `TestFullChainRegression` 三例；④ 类端点表 11 行与运行时路由逐行对账，公共端点 30 条；文档三套契约 52 枚绿） |
 | W13 | 大任务四 | 条文晋升与文档随步：`KA-51~KA-53` 新条（种类闸与组合闭集、重试两条路、习题梳理腿）＋ W1~W12 的实现落点写入 `knowledge-analysis.md`，`code-map.md` 五元组与 `overview.md` 能力矩阵同步 | `docs/design/`、`docs/architecture/` | W2~W12 | 已完成（2026-11-07；`knowledge-analysis.md` 加验收判据 24（详情读数一处成形、工作区／单行回显／导出三面共用；坏条目丢弃、不参与去重与门）与 25（端点与判定序：七道单门后接组合门，④ 表 ↔ 运行时路由双向对账、每端点有同名小节），最后更新改 2026-11-07；`overview.md` 知识能力行改「种类分流、四值阶段、批次三态、确认与只读导出」，补受理组合门、两条习题腿、详情两枚读数与十一条端点，设计引用扩到 `KA-1`~`KA-57`；`code-map.md` 条文范围改 `KA-1~KA-57`、`api/main.py` 行改「④ 十一条」；`KA-51`／`KA-52`／`KA-53` 条文已在 W3～W11 随步落正文） |
-| W14 | 重要任务一 | 真库加列窗口（D 类）：按 `operations.md` runbook 取备份与逐表 DDL 双份、留 sha256，迁移升→降→升三次往返，前后列数与索引名逐名指纹；发令前单独批准 | `migrations/`、本壳「过程与证据」 | W1~W2、Q3 | 待开始 |
+| W14 | 重要任务一 | 真库加列窗口（D 类）：按 `operations.md` runbook 取备份与逐表 DDL 双份、留 sha256，迁移升→降→升三次往返，前后列数与索引名逐名指纹；发令前单独批准 | `migrations/`、本壳「过程与证据」 | W1~W2 | 已完成（2026-11-24 用户单独发令；业务库 `qed` 停服后取备份 sha256 `653dc40c…`、逐表 DDL 双份留档；迁移 `20261022_0001`→`20261106_0001` 升→降→升，实测列数 22→24→22→24、`alembic_version` 终值 `20261106_0001`、索引名逐名不变 `PRIMARY`／`ix_af_books_course`／`ix_af_books_status`、两列就位、`af_books` 0 行保持；读数见「过程与证据」） |
 | W15 | 大任务四 | 总流程回归与前后端联调面：一条链的回归判据（解析完成→开始梳理→梳理完成三段一次读全、教材一轮从目录到详情可指认、习题集一轮在教材章下可回指来源书与来源页）本地取数；给根侧 8900／8903 一份响应字段与错误码清单，缺口按需另立一枚出站请求行 | `tests/`、本壳「过程与证据」、todo 出站行 | W3~W13 | 已完成（2026-11-07；本地一条链回归＝`TestFullChainRegression` 三例：① 三段状态由同一 `GET /books/{id}` 一次读全（`last_parse_result`／`last_curation_result`／`curation_in_flight` 与批次流水）；② 教材一轮从目录行到点行到详情（父指针在目录集内、总结非空、页区间有值、详情两键可读、`exercise` 为空）；③ 习题集跨书行回读（`type=exercise`、`source_book_id`／`source_pages`、父行可指认）。8900／8903 响应字段与错误码清单见「2026-11-07 大任务四」节；清点结论＝现有端点字段已覆盖，`roles` 到货由 REQ-155 承载、人工建点（N3）未裁，故不新增出站行） |
 | W16 | 重要任务二 | 题包索引与习题读面：批次收尾整份重写章级索引 `<book_dir>/kp/exercises/<章行 node_id>.json` 与来源书 `kp/exercises/meta.json`；`KpWorkspaceOut.exercise` 读时派生（kind／target_book_id／items／packs／pending_reparse／unmatched／done），`KpNodeOut` 加 `source_book_id`／`source_pages` 两枚读键；习题书完成读数只此一处（不复用 `stage.done`）；零写库零 DDL | `orchestrator/knowledge.py`、`db/repositories.py`、`schemas.py`、`api/main.py` | W9、W10 | 已完成（2026-11-07；收尾整份重写章级索引 `<book_dir>/kp/exercises/<章行 node_id>.json` 与来源书 `kp/exercises/meta.json`；`KpWorkspaceOut.exercise` 读时派生 kind／target_book_id／items／packs／pending_reparse／unmatched／done，`done` 只认 `items>0 ∧ packs==items ∧ pending_reparse==0`；`KpNodeOut` 带 `source_book_id`／`source_pages`；零写库零 DDL。`TestExerciseIndexAndReadFace`／`TestKpExerciseFace` 全绿） |
 | W17 | 重要任务二 | 选中题行重解析：`KpJobCreate.retry_node_ids`（载荷第八键）只与 `stage='exercise'` 合法（其余组合 422 零写入）；受理面逐枚校验「行在目标书 ∧ `meta.source_book_id`＝本书 ∧ `confirmed=0`」；执行体只对选中题号重新取证与配对、覆盖未确认机器行与题包，确认行 422；不受整本绿门限制；批次号新发 | `schemas.py`、`orchestrator/knowledge.py`、`db/repositories.py` | W16 | 已完成（2026-11-07；`KpJobCreate.retry_node_ids` 载荷第八键、只与 `stage='exercise'` 合法；受理面逐枚校验「行在归属书 ∧ 来源书＝本书 ∧ `confirmed=0`」，一次至多 200 枚，缺失目标时按本书最近一批习题流水推导归属；`retry_exercise_book_items` 只重取选中题号并覆盖未确认机器行与题包，不触发首轮作废面；批次号新发。`TestExerciseBookAcceptance` 与契约受理门用例全绿） |
@@ -370,6 +370,26 @@
     若裁「要」再另立一枚出站请求行。
 - **门禁**＝定向契约 6 枚、文档契约 52 枚绿；全量 `pytest tests -q` → **1410 passed, 18 skipped**（84.62s，较 W11 基线 +4＝导出同投影 1＋全链回归 3）、`ruff check src tests scripts` → **All checks passed**。真库加列窗口（W14）与业务库同步不在本证据内。
 
+### 2026-11-24 W14 真库加列窗口（D 类，用户单独发令后执行）
+
+- **发令原文**＝用户「W14确认开始实现」（2026-11-24），依「不隐式执行」条款单独批准；本段即批准原文随读数留档。
+- **窗口前状态（只读探针实读）**＝业务库 `qed`（`QED_DB_HOST=127.0.0.1:3306`、`QED_DB_USER=root`，`trust_env=False` 直连），
+  `alembic_version=20261022_0001`、`af_books` 22 列、无 `doc_kind`／`last_curation_result`、索引名
+  `PRIMARY`＋`ix_af_books_course`＋`ix_af_books_status`、0 行；模型服务 5002 `/health` 无排队（窗口排他判据成立）。
+- **停服与备份**＝`scripts/axiom_flow_service.py stop`（窗口前 8902 监听 PID 34296，stop 幂等确认）；按 `operations.md` runbook
+  以 `mysqldump --single-transaction` 备份 `af_books`／`af_operations`／`af_pages`／`af_kp`／`alembic_version` 五件，
+  `SHOW CREATE TABLE` 逐表 DDL 双份留档；备份 sha256 `653dc40c916c69afbae8cbd34947fb0715b40f625e3be034429e5c8783531ce8`、
+  窗口前 `ddl_before_af_books.txt` sha256 `98f4b5297a397e6928fd72e74ef69bb34c2056e1bf504ce1bf899c25cbecf2a8`。
+  留档落仓库根 `tmp/w14_window_20261124/`（`%TEMP%` 同份，ADR 0012 临时区，不作事实源）。
+- **迁移往返（alembic `-x db_url` 直连 `qed`）**＝`20261022_0001`→`20261106_0001`（upgrade）→`20261022_0001`（downgrade）
+  →`20261106_0001`（upgrade），三步均 exit 0、迁移日志三行齐全。复核读数：列数 **22→24→22→24**（升降级后实测下退 22、
+  再升 24），`alembic_version` 终值 `20261106_0001`；终态两列就位（`doc_kind`／`last_curation_result`）、
+  索引名逐名不变（`PRIMARY`／`ix_af_books_course`／`ix_af_books_status`）、`SHOW INDEX` 无新增、`af_books` 0 行保持。
+  窗口后 `SHOW CREATE TABLE af_books` 留档 sha256 `3c3bf5d59fdf061d818479f0c697091bffe6c753c140b06896a5770c9b915ed6`。
+- **恢复**＝窗口结束即 `scripts/axiom_flow_service.py start --wait`，8902 新 PID 46076、`/api/v1/health` 200，端口监听复核在册；
+  业务库 `qed` 仍 0 行（保持「业务库保持为空直到用户明确说同步 OK」的既有口径，本窗口只做结构不回填数据）。
+- **判读**＝成功标准第 7 条「真库加列窗口有前后指纹、可升可降」逐项成立；W14 由「待开始」转完成，PLAN-028 的 W1~W18 在册项全部有判定。
+
 ## 验证与验收
 
 - **可判据**＝每一枚新增值都要能被一条反向用例打到（未声明被拒、非法 `stage`×种类被拒、形状不合的题目草稿不落行、习题行不出现在共享主表导出面）。
@@ -404,9 +424,66 @@
 
 ## 关闭与归档
 
-- 关闭判据＝W1~W18 全部有判定，且「目标与成功标准」八条逐条有本地读数；真机侧的整本梳理读数不在本案关闭条件内（归 PLAN-027），本案只交形状。
+- 关闭判据＝W1~W18 全部有判定，且「目标与成功标准」八条逐条有本地读数；真机侧的整本梳理读数不在本案关闭条件内（归 PLAN-027），本案只交形状。**2026-11-24 复核：W14 已执行完毕、Q3／Q6 已由用户取消，在册 W1~W18 全部有判定，八条成功标准逐条有读数，本案满足关闭条件（见文末 PLAN-028 收口结论）。**
 - 归并去向＝见「核心任务与在册行的挂靠」表：本轮合的是归属与冲突裁决，不是壳的合并——PLAN-025／026／027 三枚壳各自保留承载与关闭判据（镜像守护要求每枚计划文件恰好一行 `PLAN-*`）；入站 REQ-139／142／143／146 的承载指针不迁移（一任务一承载）；本案与上游壳的前后依赖写在各自「前置条件」里，不改写它们的成功标准。
 - 行位去向＝具体小任务与在册壳（PLAN-025／026／027／029、REQ-139／142／143／146／155）的 todo 行在「普通
   任务轮」节，随挂靠的大任务收尾逐个关闭；本案收口只关 PLAN-028 镜像行与 ARCH-035~041 七行。
 - 归档判定 **Retain**：种类分流的裁决推导、真库加列窗口的前后指纹、与根侧两级闸的对账读数不可再生。
-- 收口按 [任务生命周期](../standards/task-lifecycle.md)「计划生命周期」第 5 步的六步顺序执行，缺任一项视为未收尾。
+- 收口按 [任务生命周期](../../../standards/task-lifecycle.md)「计划生命周期」第 5 步的六步顺序执行，缺任一项视为未收尾。
+
+## ARCH-036 收口结论（2026-11-24）
+
+**关闭结果：`Achieved`。** 本行范围＝「重要任务一：底座」（壳「核心任务与在册行的挂靠」表：ARCH-036 承 W1~W4、W14）。
+功能判据 W1~W4 已全部达成并有代码、迁移与真机 dry-run 证据；剩余 W14、REQ-155、Q6 三项经判定均非功能缺口，
+本行据此关闭。PLAN-028 壳本身仍 `In Progress`（W14 属其工作项但未发令），本次只关 ARCH-036 一枚任务行，
+壳不关闭、`plans/index.md` 不新增登记（无计划归档动作）。
+
+| 功能判据 | 达成证据 |
+| --- | --- |
+| W1 前置立法 | [ADR 0019](../../../adr/0019-curation-outcome-and-book-kind-columns.md) `状态：Accepted`，`af_books` 两列入当前态清单；`database-design.md` 列清单随步 |
+| W2 种类列入站 | `db/models.py:72` `derive_doc_kind`（两义按教材、缺位未声明）；`migrations/20261106_0001_af_books_kind_and_curation.py` 两列升降级往返；`db/repositories.py:589-626` 同步腿每次重算 `doc_kind`，是唯一写者 |
+| W3 受理门种类闸 | `orchestrator/knowledge.py:446-458` 未声明 422「先同步书目」、非法 `stage`×种类 422；`api/main.py:181-182` 书目读面透出两列；`TestKindGate`／`TestBooksEndpoints` 有用例 |
+| W4 结局位写者 | `knowledge.py:7215` `curation_result_for`、`repositories.py:681` `mark_curation_result`、`repositories.py:1499` `curating_book_ids`；`TestCurationResult` 六形覆盖（干净／失败节／缺页／未解析／异常／中断不回写失败） |
+
+**收尾复核（2026-11-24）**：定向 `TestKindGate`／`TestCurationResult`／`TestBooksEndpoints`／schema／db／migration
+共 **210 passed**；壳 2026-11-06 `qed_test` dry-run 已证两列 22→24→22→24 升降往返、b05/b07 同步后种类可读、
+两枚 422 零写入、317 页 outline 批次完结。全量门禁读数见 `completed.md` 本行。
+
+**三项剩余的去向（2026-11-24 更新）**：
+
+1. **W14 真库加列窗口（D 类）＝已执行完毕**：用户 2026-11-24 单独发令后按 `operations.md` runbook 在业务库 `qed`
+   完成备份/DDL/指纹与升→降→升往返（列数 22→24→22→24、终值 `20261106_0001`、索引名不变、0 行保持），
+   读数见本壳「2026-11-24 W14 真库加列窗口」节。本项从 ARCH-036 关闭时的非功能欠账转为已交付运维里程碑，
+   不再是 PLAN-028 的在册剩余。
+2. **REQ-155（根侧 8900 `books/sync` 补 `roles`）**：本仓 W2 已能派生两值，按 C11 在到货前对未声明书一律 422 兜底，
+   dry-run 已手工补 roles 取证；该键到货是**根侧转达**事项，本仓对根零写入，REQ-155 保留 Open 为跨项目长线行，
+   不随本行关闭，也不构成此处功能欠账。
+3. **Q3／Q6＝用户 2026-11-24 裁决取消**：Q3（DDL 与真机窗口先后）因 W14 已执行、PLAN-027 未发令而事实过期；
+   Q6（徽章取数）属 8903 展示口径，底座两列与写者已就位、两读数并存各答一问，由消费面按需自取。两项已在壳
+   「待裁点」表标注取消，不再是 PLAN-028 的在册剩余。
+
+**归档判定**：本行无独立计划壳（承载为 PLAN-028 壳），无 `plans/index.md` 单独归档动作；结论正文留在本壳，
+证据摘要迁 `completed.md`。
+
+## PLAN-028 收口结论（2026-11-24）
+
+**关闭结果：`Achieved`。** 依据「关闭与归档」节判据逐条复核：W1~W18 全部有判定（W14 已于 2026-11-24 执行完毕），
+「目标与成功标准」八条逐条有本地读数；待裁点 Q2／Q3／Q5／Q6 均已裁或取消，其中 Q3／Q6 由用户 2026-11-24 明确取消。
+PLAN-028 镜像行与 ARCH-035~041 七行随本次一并收口；承载壳判 `Retain`（裁决推导、真库加列前后指纹、与根侧两级闸的
+对账读数不可再生，判据本体已晋升 `docs/design/knowledge-analysis.md`），迁 `docs/history/plans/2026-11/`。
+
+| 成功标准 | 达成证据 |
+| --- | --- |
+| 1 种类可判且被判、未声明拒 | ARCH-036 W1~W3：`derive_doc_kind`、两真列、受理门两道 422，`TestKindGate` |
+| 2 三段判据一次读全 | W4 三写者＋`GET /books` 透出两列，`TestCurationResult`／`TestBooksEndpoints`，全链回归三例 |
+| 3 教材目录与习题两路 | W5~W7、W9／W10：四值阶段闭集、教材题行、习题集题目腿与跨书挂章，`TestFullChainRegression` |
+| 4 四类行各有链路判据 | W6 `CONTENT_LEGS_BY_NODE_TYPE`：章节→章腿、知识点→点腿、习题与「其他」→∅ |
+| 5 详情两读数 | W11：`must_master`／`key_definitions` 两枚闭集键三面同投影 |
+| 6 重试三处各自有界 | W5 同范围重发、W8 `only_failed`×`content`、W17 `retry_node_ids`×`exercise`，各自 422 零写入反向用例 |
+| 7 真库加列有指纹可升降 | W14 2026-11-24 业务库 `qed` 升→降→升，列数 22→24→22→24、索引名不变、备份 sha256 留档，见本壳证据节 |
+| 8 任务面收得起来、一条链 | 四大任务＋两重要任务各自关闭（ARCH-036~041），W12 端点面与 W15 一条链回归三例，根侧字段清单成文 |
+
+**门禁**：全量 `pytest tests -q` 与 `ruff check src tests` 见本次收尾会话读数（随 `completed.md` 迁移）。
+**未随本行关闭**：REQ-155（根侧补 `roles`，跨项目长线行，本仓 422 兜底）、REQ-139 N3／C7（邻壳新增端点待裁）、
+PLAN-027（真机整本梳理窗口，独立 D 类）、PLAN-034／REQ-163（独立 Accepted 壳）、PLAN-026 W12②（邻壳已裁待执行）；
+以上均非 PLAN-028 在册项。

@@ -582,6 +582,20 @@ class PageListOut(BaseModel):
     pages: list[PageStateOut] = Field(default_factory=list)
 
 
+class PageBatchRequest(BaseModel):
+    """`POST /books/{id}/pages/batch` 请求：同书一次读取 1–32 个唯一有效页号。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page_nos: list[Annotated[int, Field(strict=True, ge=1)]] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def _unique_page_nos(self) -> PageBatchRequest:
+        if len(self.page_nos) != len(set(self.page_nos)):
+            raise ValueError("page_nos 不能重复")
+        return self
+
+
 class PageData(BaseModel):
     """GET /books/{id}/pages/{no} 响应：对照主数据源（已合并人工编辑）。
 
@@ -597,6 +611,28 @@ class PageData(BaseModel):
         default_factory=list,
         description="家具块下标（0 基、版本内块坐标；类型维∪跨页重复线，升序）",
     )
+
+
+class PageBatchResult(BaseModel):
+    """批量取页的逐页结果：成功给既有 PageData，失败给脱敏原因且 data=None。"""
+
+    page_no: int
+    status: Literal["ok", "missing", "not_parsed", "artifact_missing", "invalid_artifact"]
+    parse_status: PageState
+    data: PageData | None = None
+    error: str = ""
+
+
+class PageBatchOut(BaseModel):
+    """批量取页响应：版本作用域自证 + 请求序逐页结果 + 本批计数。"""
+
+    book_id: str
+    job_id: str
+    scope: Literal["active", "legacy"]
+    requested: int
+    ok: int
+    failed: int
+    pages: list[PageBatchResult] = Field(default_factory=list)
 
 
 # ---------- API：解析任务 ----------
@@ -661,6 +697,9 @@ class ParseJobListOut(BaseModel):
 #: 超限判 422 而不是截断——备注被砍半会静默改变这一轮梳理的取向，与 `NARRATIVE_MAX_CHARS`
 #: 「超限不截」同一条口径；批次流水的 `payload` 是 JSON，落库存全文、不受列宽约束。
 KP_REVIEW_NOTE_MAX_CHARS = 2000
+
+#: 详解正文的上限（`KA-30`）：与其余长度闸不同，这一枚不背列宽，正文在磁盘上。
+NARRATIVE_MAX_CHARS = 512_000
 
 #: 一批跑哪几条腿（`KA-34`／`KA-43`／`KA-53`）：`full`＝目录＋知识点两腿，`outline`＝只跑目录、
 #: 知识点阶段整条不发起，`content`＝目录腿不发起、拿**在册**目录行做知识点并同批补节级总结，
@@ -753,6 +792,80 @@ class KpLedgerOut(BaseModel):
     result: dict[str, Any] | None = None
     error: str = ""
     created_at: datetime | None = None
+
+
+class ChapterTextPoint(BaseModel):
+    """课程级章证据中的一枚子点。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=500)
+    summary: str = Field(default="", max_length=1000)
+
+
+class ChapterTextSource(BaseModel):
+    """课程级章证据中的一本教材同章材料。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    book_id: str = Field(pattern=SAFE_SEGMENT_PATTERN)
+    title: str = Field(default="", max_length=500)
+    chapter_name: str = Field(min_length=1, max_length=500)
+    summary: str = Field(default="", max_length=1000)
+    points: list[ChapterTextPoint] = Field(min_length=1)
+
+
+class ChapterTextEvidence(BaseModel):
+    """目标课程章自身的既有文本。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=500)
+    summary: str = Field(default="", max_length=1000)
+    narrative: str = Field(default="", max_length=NARRATIVE_MAX_CHARS)
+
+
+class ChapterTextRequest(BaseModel):
+    """课程级章总结与导读请求：显式目标身份＋多本无页块溯源证据。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    course_id: str = Field(pattern=SAFE_SEGMENT_PATTERN)
+    chapter_kp_id: str = Field(pattern=SAFE_SEGMENT_PATTERN)
+    chapter: ChapterTextEvidence
+    sources: list[ChapterTextSource] = Field(min_length=1)
+
+
+class ChapterTextCheck(BaseModel):
+    """确定性成文校验结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool
+    issues: list[str] = Field(default_factory=list)
+    model: str = ""
+
+
+class ChapterTextPersistence(BaseModel):
+    """共享主表与内容寻址正文的落库读数。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kp_id: str
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    narrative_ref: str = Field(min_length=1, max_length=500)
+    reused: bool
+
+
+class ChapterTextOut(BaseModel):
+    """课程级章总结与两段导读的四块响应。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(max_length=1000)
+    narrative: str = Field(max_length=NARRATIVE_MAX_CHARS)
+    check: ChapterTextCheck
+    persistence: ChapterTextPersistence
 
 
 class KpJobProgressOut(BaseModel):
@@ -1015,6 +1128,11 @@ class KpNodePatch(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     parent_id: str | None = Field(default=None, max_length=64)
+    depth: Literal[1, 2] | None = None
+    toc_role: Literal["knowledge", "reference"] | None = None
+    toc_kind: Literal[
+        "", "front_matter", "back_matter", "symbol_table", "appendix", "bibliography", "index", "exercise"
+    ] | None = None
     order_hint: int | None = None
     links: list[KpLinkIn] | None = None
     anchors: list[KpAnchorIn] | None = None
@@ -1022,6 +1140,14 @@ class KpNodePatch(BaseModel):
     type: Literal["", "memory", "procedure", "concept", "design"] | None = None
     summary: str | None = Field(default=None, max_length=1000)
     if_rev: int | None = Field(default=None, ge=0, description="乐观并发：与当前 `rev` 不符即 409（CW-6）")
+
+    @field_validator("depth")
+    @classmethod
+    def _reject_explicit_null_depth(cls, value: Literal[1, 2] | None) -> Literal[1, 2]:
+        """缺席仍表示不改；显式 `null` 会落成数据库 NULL，读侧又静默当章，故在形状闸拒绝。"""
+        if value is None:
+            raise ValueError("depth 不能为 null；省略该键表示不修改")
+        return value
 
 
 class KpSummaryRegenIn(BaseModel):
@@ -1069,11 +1195,6 @@ class KpConfirmOut(BaseModel):
     confirmed: int
     rev: int
     missing: list[str] = Field(default_factory=list)
-
-
-#: 详解正文的上限（`KA-30`）：与其余长度闸不同，这一枚**不背列宽**——`af_kp.narrative_ref` 只存单段
-#: 文件名，正文在磁盘上。上限管的是「一次请求能吃下多大一篇」，取值口径与根侧读长文的字节闸同量级。
-NARRATIVE_MAX_CHARS = 512_000
 
 
 class KpNarrativeWriteIn(BaseModel):

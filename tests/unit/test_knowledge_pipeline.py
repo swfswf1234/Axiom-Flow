@@ -1335,6 +1335,40 @@ class TestModelLedOutline:
         assert (outline.toc_pages, outline.fallback_pages, outline.unlocated) == ((1,), (), ())
         assert [step for step, _ in engine.calls] == ["toc_pages", "toc_entries"]
 
+    def test_model_levels_and_attachment_identity_are_deterministic(self, session, tmp_path):
+        pages_dir = _toc_scene(session, tmp_path)
+        session.get(AfBook, "b05").page_count = 5
+        PageRepository(session).upsert("b05", "job-a1", 5, status="parsed", source="mineru", error="")
+        for page_no, body in {
+            2: "第 1 章 集合论\n正文。",
+            3: "§ 1. 极限\n正文。",
+            4: "附录 极限的一般观点\n正文。",
+            5: "索 索引\n正文。",
+        }.items():
+            _write_page_artifacts(pages_dir, page_no, [], body=body)
+        evidence = build_evidence_set(session, data_root=tmp_path, acceptance=_accepted(session))
+        engine = FakeKnowledgeEngine(
+            on_toc_pages=lambda samples: TocPagePick(toc_pages=(1,)),
+            on_toc_entries=lambda page_no, text: [
+                OutlineEntry(level=2, printed_page=1, name="第 1 章 集合论"),
+                OutlineEntry(level=1, printed_page=2, name="§ 1. 极限"),
+                OutlineEntry(level=1, printed_page=3, name="附录 极限的一般观点"),
+                OutlineEntry(level=1, printed_page=4, name="索 索引"),
+            ],
+        )
+
+        outline = build_outline(_accepted(session), evidence, engine)
+
+        assert [(node.row.name, node.row.depth) for node in outline.nodes[:2]] == [
+            ("第 1 章 集合论", 1),
+            ("§ 1. 极限", 2),
+        ]
+        assert [(node.row.name, node.row.meta["toc_role"], node.row.meta.get("toc_kind")) for node in outline.nodes[2:]] == [
+            ("附录 极限的一般观点", "reference", "appendix"),
+            ("索 索引", "reference", "index"),
+        ]
+        assert outline.nodes[1].row.meta["toc_role"] == "knowledge"
+
     def test_the_organize_legs_dirty_names_are_cleaned_before_they_are_registered(self, session, tmp_path):
         """`KA-41`：整理腿的名字入册前过同一把清洗——脏名让前缀命中永不成立，锚就落回目录页自己。"""
         _toc_scene(session, tmp_path)
@@ -1604,7 +1638,8 @@ class TestModelLedOutline:
 
     def test_a_section_before_any_chapter_gets_no_parent(self, session, tmp_path):
         """无前置章不造父（`KA-26` 同轴）：正腿第一条就是节时父为空，其后的节挂前面最近那条章。"""
-        _toc_scene(session, tmp_path)
+        pages_dir = _toc_scene(session, tmp_path)
+        _write_page_artifacts(pages_dir, 4, [], body="§ 2. 实数与极限\n正文又起。")
         accepted = _accepted(session)
         evidence = build_evidence_set(session, data_root=tmp_path, acceptance=accepted)
         engine = FakeKnowledgeEngine(
@@ -1612,7 +1647,7 @@ class TestModelLedOutline:
             on_toc_entries=lambda page_no, text: [
                 OutlineEntry(level=2, printed_page=2, name="序的关系与集合的势"),
                 OutlineEntry(level=1, printed_page=1, name="第1章 集合论"),
-                OutlineEntry(level=2, printed_page=3, name="第2章 实数与极限"),
+                OutlineEntry(level=2, printed_page=3, name="§ 2. 实数与极限"),
             ],
         )
 
@@ -1625,7 +1660,7 @@ class TestModelLedOutline:
         ] == [
             ("序的关系与集合的势", 2, None),
             ("第1章 集合论", 1, None),
-            ("第2章 实数与极限", 2, "第1章 集合论"),
+            ("§ 2. 实数与极限", 2, "第1章 集合论"),
         ]
 
     def test_the_stage_call_count_is_bounded_by_one_plus_pages_plus_one(self, session, tmp_path):
@@ -2525,7 +2560,13 @@ class TestProgressiveOutlineLanding:
         ]
         patches.insert(
             0,
-            {"node_id": "afkp-mine", "anchors": [{"page": 3, "block_indexes": [0]}], "order_hint": 7, "parent_id": None},
+            {
+                "node_id": "afkp-mine",
+                "anchors": [{"page": 3, "block_indexes": [0]}],
+                "order_hint": 7,
+                "parent_id": None,
+                "depth": 2,
+            },
         )
 
         written = repo.repoint_draft_outline(book_id="b05", gen_batch="afkp-0123456789ab", patches=patches)
@@ -2544,10 +2585,9 @@ class TestProgressiveOutlineLanding:
                 node.rev,
             ) == before[row.node_id]
         node = repo.get("afkp-mine")
-        assert (node.anchors[0]["page"], node.order_hint) == (3, 7)
-        assert (node.name, node.depth, node.model_ref, node.gen_status, node.confirmed, node.rev) == (
+        assert (node.anchors[0]["page"], node.order_hint, node.depth) == (3, 7, 2)
+        assert (node.name, node.model_ref, node.gen_status, node.confirmed, node.rev) == (
             "极限的 ε-δ 定义",
-            1,
             "qwen-vl",
             "draft",
             0,

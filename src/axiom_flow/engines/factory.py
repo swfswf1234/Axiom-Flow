@@ -80,6 +80,8 @@ def build_text_engine(name: str, settings: Settings) -> KnowledgeEngine:
     认得的引擎。出站地址与等待预算只从 `settings` 取（`config.py` 一处默认），适配器不自己拼默认值。
     """
     resolve_text_engine_name(name)
+    if settings.kp_timeout is None:
+        raise TextSlotError("梳理引擎槽位尚未接入：AXIOM_KP_TIMEOUT 等待预算为空（不回落默认值）")
     if name == KP_SLOT_NAME:
         return KpGatewayEngine(settings.engine_gateway_url, timeout=float(settings.kp_timeout))
     raise TextSlotError(f"梳理引擎槽位尚未接入：{name}（当前可用：{', '.join(IMPLEMENTED_TEXT_ENGINES)}）")

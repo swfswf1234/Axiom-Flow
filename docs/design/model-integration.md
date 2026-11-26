@@ -3,7 +3,7 @@
 设计状态：Accepted
 确认状态：已确认
 实现状态：Verified（MinerU 适配器已实现并真机取证；paddleocr-vl/qwen-vl 预留槽位）
-最后更新：2026-10-22
+最后更新：2026-11-25
 关联代码：`src/axiom_flow/config.py`、`src/axiom_flow/engines/`、`src/axiom_flow/normalize/`
 关联测试：`tests/unit/test_config.py`、`tests/unit/test_engines.py`、`tests/unit/test_engine_factory.py`、`tests/smoke/test_live_mineru_chain.py`
 关联 ADR：[ADR 0004](../adr/0004-model-boundary-and-pipeline-ownership.md)
@@ -62,9 +62,9 @@
 | `QED_OCR_MODEL_URL` | 图像槽位本地端点（MinerU 容器，健康端点 `/health`） | `http://127.0.0.1:5002` |
 | `AXIOM_OCR_TIMEOUT` | **单窗口/单页一次调用**的超时秒数（三段式提交/轮询/取结果共享） | `600` |
 | `AXIOM_PARSE_WINDOW_SIZE` | 全本解析每个解析窗口的页数（串行提交；默认值由真机 W0 冻结） | `56` |
-| `AXIOM_KP_ENGINE` | 梳理（文本）槽位名：唯一登记值是 `qed-gateway`（经统一中转的网关适配器），空值与闭集外名字一律受理期拒跑、**不回落** | `qed-gateway` |
-| `QED_ENGINE_GATEWAY_URL` | 梳理出站地址——本仓库唯一出站的文本通路（`POST /api/v1/llm/text`，探活 `GET /api/v1/health`）；尾斜杠读入即归一 | `http://127.0.0.1:8900` |
-| `AXIOM_KP_TIMEOUT` | 梳理单次调用的超时秒数，**与中转服务自身的调用预算同值**（`QED_LLM_TIMEOUT`，统一为 600；原「必须长于」的余量口径撤销）；非数字回落默认值 | `600` |
+| `AXIOM_KP_ENGINE` | 梳理（文本）槽位名：唯一登记值是 `qed-gateway`（经统一中转的网关适配器）；显式空值优先保留并停用槽位，闭集外名字同拒，均在受理期返回 503 且零写入、**不回落** | `qed-gateway` |
+| `QED_ENGINE_GATEWAY_URL` | 梳理出站地址——本仓库唯一出站的文本通路（`POST /api/v1/llm/text`，探活 `GET /api/v1/health`）；尾斜杠读入即归一，显式空值在受理期返回 503 且不构造引擎、零写入 | `http://127.0.0.1:8900` |
+| `AXIOM_KP_TIMEOUT` | 梳理单次调用的超时秒数，**与中转服务自身的调用预算同值**（统一为 600；原「必须长于」的余量口径撤销）；显式空值停用槽位并返回 503，非空但非数字才回落 600 | `600` |
 | `API_KEY` | 云端档位凭据（仅 qwen-vl 预留，注释态，不随解析默认路径读取） | — |
 | `AXIOM_VISION_MODEL` | qwen-vl 档位模型名（仅 qwen-vl 预留，注释态） | `qwen-vl-plus` |
 | `QED_DATA_ROOT` | 三项目统一数据根（`raw/` 只读输入、`parsed/` 本仓库产物） | 向上走查根 `.env` |
@@ -94,7 +94,7 @@ flowchart LR
 
 | 编号 | 守则（结论 ＋ 判据） | 理由／例外／边界 | 实现落点 → 守护测试 |
 | --- | --- | --- | --- |
-| MI-1 | **配置只有三段，两边 `.env` 允许不一致**：配置中心只有三段——服务（`AXIOM_PORT`）/ 数据与库（`QED_DATA_ROOT`、`QED_DB_*`）/ 解析引擎（见上方「配置键」表）；读取优先级＝真实环境变量 > 自身 `.env` > 父目录 `.env`（向上走查）> 内置默认值 | 本仓库既要能独立部署，也要能被 QED-Engine 托管时跟随根 `.env`；「两边允许不一致」是明确裁决，不是默认行为。服务启动不依赖 8900 与模型在线，只在解析时连接模型 API | `config.py:load_settings`（三段式 + `.env` 向上走查） → `tests/unit/test_config.py` |
+| MI-1 | **配置只有三段，两边 `.env` 允许不一致**：配置中心只有三段——服务（`AXIOM_PORT`）/ 数据与库（`QED_DATA_ROOT`、`QED_DB_*`）/ 解析引擎（见上方「配置键」表）；读取优先级＝真实环境变量 > 自身 `.env` > 父目录 `.env`（向上走查）> 内置默认值。例外：梳理出站三键按**键存在即取值**，环境与 `.env` 的显式空值均覆盖下层来源并停用槽位；普通配置仍跳过空值 | 本仓库既要能独立部署，也要能被 QED-Engine 托管时跟随根 `.env`；「两边允许不一致」是明确裁决，不是默认行为。显式空是用户停用意图，不能被默认值或父目录值悄悄改写。服务启动不依赖 8900 与模型在线，只在解析时连接模型 API | `config.py:load_settings`（三段式 + `.env` 向上走查 + 显式空例外） → `tests/unit/test_config.py`、`tests/contract/test_api_v1_contract.py` |
 | MI-2 | **引擎名先解析后落库，未注册即 400**：实际引擎 = 请求体 `engine`（可选）优先、缺省回落 `AXIOM_OCR_ENGINE`，由 `engines/factory.py` 显式分派；`af_operations` 的 parse 事件行的 `engine` 存**解析后的实际引擎名**，写侧恒取该已解析值（`pipeline.py:engine=engine.name`），不接受调用方原样透传 | 缺引擎名必须报错、不做静默回落——否则这一行作业记录的引擎归属不可信。例外：未在 `factory.ENGINE_NAMES` 注册的名称返回 400；非法字面值由 schema 返回 422。边界：DDL 侧该列是 NOT NULL + 空串默认值，**这不是引擎兜底**——四表折叠后 `edit`/`structure` 等意图行不写引擎，默认值只让它们有合法列值；parse 行读到空串即视为写侧缺陷，不解释为「默认引擎」 | `engines/factory.py:resolve_engine_name/build_engine` → `tests/unit/test_engine_factory.py` |
 
 #### 适配器契约与请求形态
@@ -129,6 +129,7 @@ flowchart LR
 | MI-13 | **预留槽位未实现即报错，不回落**：`paddleocr-vl`、`qwen-vl` 是已登记未实现的槽位，请求它们返回 400，**不回落 MinerU**（ADR 0004 不做静默兜底） | 启用路径：在 8900 注册单元 → 本仓库新增 `engines/<name>.py` 并登记进 `factory.IMPLEMENTED_ENGINES` → 需要新配置键时按 ADR 流程新增（`AXIOM_PADDLEOCR_URL` 已退役，启用时重新登记）。qwen-vl 属云端档位，启用时取消 `.env` 里 `API_KEY` / `AXIOM_VISION_MODEL` 的注释，输出 markdown 归一为统一版面块（bbox 可能缺失，标记来源） | `engines/factory.py:IMPLEMENTED_ENGINES` → `tests/unit/test_engine_factory.py` |
 | MI-14 | **对根侧的出站要求：解析在飞时不得换起模型**：8900 在 8902 有未完成（`queued`/`running`）解析任务时**不得重启/换起 vision 槽位**，或至少提供可被 8902 探测的「占用中」信号；真机窗口执行前须与 8900 侧约定静默期（见 [operations runbook](../guides/operations.md)） | 模型容器的重启/换起权在 8900，而重启会直接毁掉在飞与排队中的解析（实证：一次并发重启使两个任务同时报断连/不可用） | 跨项目请求（无本仓库代码落点） → `docs/standards/cross-project-collaboration.md` 登记 |
 | MI-15 | **预处理与后处理恒在本仓库做**：本仓库送给引擎的只有**源件（PDF 或 ingest 自产页图）+ 产物形态开关 + 窗口字段**（MI-4、MI-6）；解析前后的两段——**预处理**（页图渲染与 150 DPI 基准、`book.json` 元信息）与**后处理**（坐标换算、类型映射与可见丢弃、公式定界符、知识块切分、清单与质量信号）——实现位置**恒在本仓库**，即 `ingest/` 与 `normalize/`（规则条文：[PP-2](parsing-pipeline.md)、[PP-8~PP-10](parsing-pipeline.md)、[PP-19](parsing-pipeline.md)） | 预留：后续要加的输入整形（如去噪、二值化、按页方向校正）与结果修补（如公式修补、跨页条目合并）**只落在本仓库这两处**，并以新的质量信号或产物字段变得可见；**不通过新增引擎侧调参开关实现**（那属 8900 的调参域，MI-4 的不发清单即为此而设）。为什么：这两段决定产物是否可复现与可回归测试，放在引擎侧就要靠容器配置解释「同一本书为什么两次结果不同」，本仓库的契约稳定性与真机取证同时失效。例外：引擎内建的版面/公式/表格识别本身**不属这两段**——它是模型的本职，由 8900 侧配置，本仓库只消费其返回（MI-4） | `engines/mineru.py` 表单内容（只送源件 + 形态开关）、`ingest/` 与 `normalize/` 两段实现 → `tests/unit/test_engines.py`（不发送调参键）、`tests/unit/test_normalize.py` |
+| MI-16 | **文字槽位名只读探测、不下发模型**：章腿成文校验要给失败注记记当前模型名时，本仓库只读探测 8900 的文字槽位配置（`GET /config/models`），不切换槽位、不在生成请求体带 `model` 字段、不调用其他模型；探测失败留空串且生成照跑，模型档位始终由 8900 当前生效槽位决定。只读探测只服务 `meta.chapter_check.model` 的归因，不是第二处模型当前态；文字出站仍走 `QED_ENGINE_GATEWAY_URL` 的直连纪律（MI-10） | 模型生命周期归 8900，本仓逐调用点名模型就多一份要跟着追改的当前态；章腿失败注记需要可归因的模型名，故以只读探测补上，探测失败不得把外部配置波动变成梳理不可用 | `engines/kp_gateway.py:current_model_name`／`_post_text`（请求体无 `model`） → `tests/unit/test_engine_kp_gateway.py`（探测失败不阻断、请求体不带 `model`） |
 
 ## 失败与质量语义
 

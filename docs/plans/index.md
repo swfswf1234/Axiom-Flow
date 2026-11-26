@@ -1,13 +1,97 @@
 # 计划索引
 
 状态：Current
-最后更新：2026-11-23
+最后更新：2026-11-26
 
 本目录保存已批准且尚未关闭的执行计划。活跃计划的镜像行见
 [待做任务](../trackers/todo.md)，计划正文是范围、验证和回滚的事实源。
 
 ## 关闭登记
 
+- ARCH-042 知识梳理轮跨项目请求长线（退役聚合壳）已按用户裁决关闭（2026-11-26）。该行没有独立
+  计划文件，故不产生 Retain／Delete 归档动作；关闭结论保留在 PLAN-034 归档壳「ARCH-042 聚合壳关闭」节，
+  证据见 [completed.md](../trackers/completed.md) 的 ARCH-042 行。
+
+- PLAN-034 课程级章总结与两段导读生成腿（Axiom-Flow，B 类）已完成（2026-11-26），W1 真模型 demo
+  经用户明确免除，计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-10-merge-chapter-text-generation.md](../history/plans/2026-11/2026-11-10-merge-chapter-text-generation.md)。
+  壳保留 W0 落库不变式、共享表三列同事务、内容寻址文件与查账恢复推导，以及独立评审三处缺陷的修复证据；
+  运行时事实源以 [knowledge-analysis.md](../design/knowledge-analysis.md)、[api.md](../architecture/api.md) 与代码测试为准。
+  关闭证据见 [completed.md](../trackers/completed.md) 的 PLAN-034 行；PLAN-035 保持在册，仅执行不落表 dry-run。
+
+- PLAN-046 REQ-139 批量取页（Axiom-Flow，B 类；C7 执行、N3 人工建点取消）已完成（2026-11-26），
+  计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-25-req139-kp-page-batch-and-node-create.md](../history/plans/2026-11/2026-11-25-req139-kp-page-batch-and-node-create.md)。
+  壳保留批量端点形状、21 条批量契约回归、I/O 容错与缓存不变式、根侧回执；Git 锚点按用户裁决跳过。
+  运行时事实源以 [api.md](../architecture/api.md)、[parsing-pipeline.md](../design/parsing-pipeline.md) 与代码测试为准；
+  关闭证据见 [completed.md](../trackers/completed.md) 的 PLAN-046 行。
+
+- PLAN-044 DSH 治理技能落位（Axiom-Flow，B 类；一并关闭长期行 REQ-125）已完成（2026-11-26，
+  七枚技能正本落位、三处悬空调用改指 `qed-verification`、S1~S6 逐条达成），计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-22-dsh-skill-placement.md](../history/plans/2026-11/2026-11-22-dsh-skill-placement.md)
+  （保留受控差异对账表与裸调用改指的推导，不可再生）；事实落点在 `.dsh/skills/`、
+  [local-dev.md](../standards/local-dev.md) 七枚对账表与 [development.md](../guides/development.md)。
+  关闭证据见 [completed.md](../trackers/completed.md) 的 PLAN-044／REQ-125 行。
+- PLAN-025 知识点梳理消费通路实现批（Axiom-Flow，B 类）已按用户分项验收口径关闭（2026-11-25），
+  计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-10-23-kp-curation-implementation.md](../history/plans/2026-11/2026-10-23-kp-curation-implementation.md)。
+  壳保留 17 条判据的逐条覆盖等级、状态机变异复验与未执行边界；第 13 条裁剪未交付，第 5 条竞态响应缺口的
+  关闭时移交已由 PLAN-026 R18 后续交付；REQ-139 C7 已由 PLAN-046 交付关闭，N3 人工建点经用户 2026-11-25 裁决取消。运行时事实源以
+  [knowledge-analysis.md](../design/knowledge-analysis.md)、[api.md](../architecture/api.md) 与代码测试为准；
+  关闭证据见 [completed.md](../trackers/completed.md) 的 PLAN-025 行。
+- PLAN-027 整本真机梳理窗口与两壳收口（Axiom-Flow，D 类）已按用户裁决关闭（2026-11-25）：原整本窗口
+  不再执行，W4／W5 不适用，W6~W9 未执行，R7~R17 已逐项分派。计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-01-kp-real-machine-window-closeout.md](../history/plans/2026-11/2026-11-01-kp-real-machine-window-closeout.md)，
+  保留取消裁决、原窗口规程与欠账去向；R7 关闭时的尾项已由 PLAN-026 后续交付。关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-027 行。
+- PLAN-026 块类型改判回放、页域识别与梳理文本引擎接入（Axiom-Flow，B 类）已完成（2026-11-25）：
+  R7 三键显式空优先并停用、R18 条件 UPDATE 竞态 409 回带最新 `rev` 均已交付；W12② `removed`／`emphasis`
+  按用户裁决取消，W10 后半条整本窗口随 PLAN-027 取消。计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-10-26-annotation-replay-and-kp-text-engine.md](../history/plans/2026-11/2026-10-26-annotation-replay-and-kp-text-engine.md)，
+  保留改判回放、真书标定、TDD 与取消／未跑边界；运行时事实源以
+  [knowledge-analysis.md](../design/knowledge-analysis.md)、[api.md](../architecture/api.md)、
+  [model-integration.md](../design/model-integration.md) 与代码测试为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-026 行。
+- PLAN-036 习题集目录套级匹配与一层章（Axiom-Flow，B 类，承载 REQ-170／REQ-178）已完成
+  （2026-11-25，S1~S5 功能判据与可用真机读数成立；b11 暂缓、b15/b16 与四本教材未独立重跑的范围已明示），
+  计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-13-exercise-outline-set-matching.md](../history/plans/2026-11/2026-11-13-exercise-outline-set-matching.md)
+  （保留跨书合并改配套提取的裁决推导、b07／b17 真机链与未执行样本边界）；运行时事实源以
+  [knowledge-analysis.md `KA-51`／`KA-53`／`KA-68`／`KA-70`／`KA-71`](../design/knowledge-analysis.md)、
+  [api.md](../architecture/api.md) 与代码测试为准；关闭证据见 [completed.md](../trackers/completed.md) 的 PLAN-036 行。
+- PLAN-037 REQ-179 习题切分四缺陷修复（Axiom-Flow，B 类）已完成（2026-11-25，W1~W7 与
+  S1~S5 逐条有判定；根侧 S5 未单独重跑，按用户授权采纳本仓同口径替代读数），计划按 **`Retain`**
+  归档至 [history/plans/2026-11/2026-11-22-req179-exercise-split-fixes.md](../history/plans/2026-11/2026-11-22-req179-exercise-split-fixes.md)
+  （保留 b07 八章重跑、全量替换、S5 同口径对比与界面验证证据）；运行时事实源以
+  [knowledge-analysis.md `KA-53`／`KA-56`／`KA-70`](../design/knowledge-analysis.md)、
+  [api.md 图片端点](../architecture/api.md) 与相应代码测试为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-037 行。
+- PLAN-045 根侧书目同步 roles 到货承载（Axiom-Flow，B 类，承载 REQ-155）已完成（2026-11-25，
+  W1~W3 与 S1~S3 逐条有读数），计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-24-root-sync-roles-carrier.md](../history/plans/2026-11/2026-11-24-root-sync-roles-carrier.md)
+  （保留根侧到货代码、透传单测与五种书目真机回读等外部证据）；运行时事实源以
+  [ADR 0019](../adr/0019-curation-outcome-and-book-kind-columns.md)、[database-design.md](../architecture/database-design.md)
+  与 [api.md](../architecture/api.md) 为准；关闭证据见 [completed.md](../trackers/completed.md) 的 PLAN-045／REQ-155 行。
+- PLAN-028 知识梳理轮接口与链路统一实施（Axiom-Flow，B 类，聚合行 ARCH-035、底座 ARCH-036）已完成
+  （2026-11-24，W1~W18 全部有判定、八条成功标准逐条有读数；W14 真库加列窗口用户单独发令后在业务库 `qed`
+  完成升降往返并留指纹；Q3／Q6 经用户裁决取消），计划按 **`Retain`** 归档至
+  [history/plans/2026-11/2026-11-06-knowledge-curation-round.md](../history/plans/2026-11/2026-11-06-knowledge-curation-round.md)
+  （保留种类分流裁决推导、真库加列前后指纹、与根侧两级闸对账读数；判据本体已晋升
+  [knowledge-analysis.md](../design/knowledge-analysis.md)）；关闭证据见 [completed.md](../trackers/completed.md)
+  的 PLAN-028／ARCH-035／ARCH-036 行与 [2026-11 索引](../history/plans/2026-11/index.md)。
+- PLAN-030 部分解析版本读面可见与补页续跑（Axiom-Flow，B 类，承载根侧请求 REQ-160）已完成
+  （2026-11-23，W1~W5 全达成、b11/b13 真机补页窗口已取证），计划按 **`Delete`** 删除；读面作用域与
+  基线口径已晋升 [parsing-pipeline.md `PP-22`](../design/parsing-pipeline.md) 与
+  [api.md](../architecture/api.md)，运行时事实源以二者为准；关闭证据见
+  [completed.md](../trackers/completed.md) 的 PLAN-030 / REQ-160 行。
+- PLAN-033 章节总结与导读的章级检索增强（Axiom-Flow，B 类）已完成（2026-11-23，S7 质量窗口经用户裁决
+  认可、W8 条文晋升后按用户确认收尾），计划按 **`Retain`** 保留在
+  [history/plans/2026-11/2026-11-09-chapter-summary-retrieval.md](../history/plans/2026-11/2026-11-09-chapter-summary-retrieval.md)
+  （保留 b05 第 3 章冻结样本的窗口读数与用户终评、C-1~C-7 口径推导与 W1~W8 逐项证据）；运行时事实源
+  以晋升后的 [knowledge-analysis.md `KA-72`／`KA-73`](../design/knowledge-analysis.md)、
+  [api.md 总结/导读腿](../architecture/api.md)、
+  [model-integration.md `MI-16`](../design/model-integration.md) 与 [reference.py](../../src/axiom_flow/reference.py)
+  为准；关闭证据见 [completed.md](../trackers/completed.md) 的 PLAN-033 行。
 - PLAN-019 解析产物可信与增量重跑实施（Axiom-Flow，B 类，承载 ARCH-022）已完成（2026-11-23，按用户裁决
   立项返工重定后 S1/S2/S3/S6 达成、S4/S5 移出转长线），计划按 **`Retain`** 保留在
   [history/plans/2026-09/2026-09-28-parse-artifact-trust.md](../history/plans/2026-09/2026-09-28-parse-artifact-trust.md)（保留 2026-11-23 目标

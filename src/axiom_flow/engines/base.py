@@ -190,6 +190,42 @@ class ReferenceNote:
     text: str
 
 
+CHAPTER_TEXT_PROMPT_VERSION = "kp-merge-chapter-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterTextPoint:
+    """课程级证据中的一枚子点。"""
+
+    name: str
+    summary: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterTextSource:
+    """课程级证据中的一本教材同章材料。"""
+
+    book_id: str
+    title: str
+    chapter_name: str
+    summary: str = ""
+    points: tuple[ChapterTextPoint, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterTextInput:
+    """无页块溯源的课程级章腿输入。"""
+
+    course_id: str
+    chapter_kp_id: str
+    chapter_name: str
+    chapter_summary: str = ""
+    chapter_narrative: str = ""
+    sources: tuple[ChapterTextSource, ...] = ()
+    reference_notes: tuple[ReferenceNote, ...] = ()
+    retry_issues: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class ChapterInput:
     """章腿的一枚输入（`KA-65`＋PLAN-033）：章前正文块＋子点总结清单＋检索资料。

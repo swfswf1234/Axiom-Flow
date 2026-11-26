@@ -1694,6 +1694,22 @@ class TestNormalizeEntryLevels:
 
         assert [row.level for row in rows] == [1, 2]
 
+    def test_an_attachment_alone_does_not_trigger_chapter_normalization(self):
+        rows = normalize_entry_levels(self._entries("1. 引言", "附录 习题解答"))
+
+        assert [row.level for row in rows] == [1, 2]
+
+    def test_explicit_third_level_rows_survive_chapter_normalization(self):
+        rows = [
+            TocEntry(name="第1章 极限论", printed_page=1, level=1, block_index=0),
+            TocEntry(name="§ 1. 极限", printed_page=2, level=2, block_index=0),
+            TocEntry(name="1. 数列极限", printed_page=3, level=3, block_index=0),
+        ]
+
+        normalized = normalize_entry_levels(rows)
+
+        assert [row.level for row in normalized] == [1, 2, 3]
+
 
 class TestFoldNumberedSubItems:
     """`KA-62`：`§` 节下的纯编号条目是三级细目——二级只有一节时，细目不许把它切成半截。"""

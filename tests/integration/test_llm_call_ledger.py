@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from sqlalchemy import Engine, text
@@ -49,6 +50,22 @@ _GEN_BATCH = "afkp-integration01"
 def _ddl(store: Engine) -> str:
     with store.connect() as conn:
         return str(conn.execute(text("SHOW CREATE TABLE qed_llm_calls")).fetchone()[1])
+
+
+def _structural_ddl(ddl: str) -> str:
+    """只归一 INSERT 会推进的自增计数；其余 DDL 逐字保留，结构差异仍必须转红。"""
+    return re.sub(r"\bAUTO_INCREMENT=\d+\b", "AUTO_INCREMENT=<counter>", ddl)
+
+
+def test_structural_ddl_normalizes_only_the_auto_increment_counter() -> None:
+    ddl = (
+        "CREATE TABLE `qed_llm_calls` (`id` bigint NOT NULL AUTO_INCREMENT) "
+        "ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4"
+    )
+
+    assert _structural_ddl(ddl) == _structural_ddl(ddl.replace("AUTO_INCREMENT=7", "AUTO_INCREMENT=8"))
+    assert _structural_ddl(ddl) != _structural_ddl(ddl.replace("bigint", "int"))
+    assert _structural_ddl(ddl) != _structural_ddl(ddl.replace("ENGINE=InnoDB", "ENGINE=MyISAM"))
 
 
 def _count(store: Engine) -> int:
@@ -135,7 +152,9 @@ class TestCallLedgerOnRealTable:
     def test_the_structure_is_untouched_by_the_write(self, mysql_store: Engine, appended) -> None:
         _, _, ddl_before = appended
 
-        assert _ddl(mysql_store) == ddl_before, "写入通路碰了结构：本案的硬边界是零 ALTER、零新列"
+        assert _structural_ddl(_ddl(mysql_store)) == _structural_ddl(
+            ddl_before
+        ), "写入通路碰了结构：本案的硬边界是零 ALTER、零新列"
 
     def test_an_overlong_error_is_truncated_before_the_insert(self, mysql_store: Engine, ledger) -> None:
         """`error` 是 VARCHAR(500)：截断是写入器做的，真表上验一次「整条 INSERT 没有被拒」。"""

@@ -107,8 +107,9 @@ $env:QED_TEST_MYSQL = "1"
 
 - **Qoder 端**：本仓 L2 治理四件套正本在 `.qoder/skills/`，全局 L1 通用技能在机器级
   `~/.qoder/skills/`；版本控制取白名单形态 `.qoder/*` ＋ `!.qoder/skills/` ＋ `!.qoder/settings.json`。
-- **DSH 端**：本仓正本在 `.dsh/skills/`（DSH 扫描 rank 100＝`<项目根>/.dsh/skills`），
-  版本控制取 `.dsh/*` ＋ `!.dsh/skills/`。技能目录被 watch，改动热更新到下一次模型请求。
+- **DSH 端**：本仓正本在 `.dsh/skills/`（DSH 扫描 rank 100＝`<项目根>/.dsh/skills`，现七枚＝治理四件套
+  ＋ `dsh-tooling-conventions`／`cjk-safe-edit-and-verify`／`qed-verification`），版本控制取
+  `.dsh/*` ＋ `!.dsh/skills/`。技能目录被 watch，改动热更新到下一次模型请求。
   机器绑定事实（完整性级别边界、扫描根实况、缓存目录坑）见[本地开发环境](../standards/local-dev.md)
   「Agent 工具层（DSH 端）」节。
 
@@ -116,6 +117,7 @@ $env:QED_TEST_MYSQL = "1"
 编号改写与本机实测事实三类，H2 骨架与状态枚举一律不动（对账表见 local-dev.md 同上节）。
 
 技能只引用「概念」（如「文档治理」「任务生命周期」）：不硬编码本仓库路径，不写单一 agent 端的
-专有工具名，`description` 值长 ≤200 字符（技能清单每会话全量注入，属常驻成本）。本仓库实际文件
+专有工具名，`description` 值长 ≤200 字符为最优目标、非硬门禁（技能清单每会话全量注入，属常驻成本；
+2026-11-25 用户裁决接受 `cjk-safe-edit-and-verify`／`dsh-tooling-conventions` 两枚继承描述超长）。本仓库实际文件
 由 `AGENTS.md`「标准映射（概念 → 本仓库文件）」表定位。新增或改名标准后，同步更新该表与
 `docs/standards/index.md`。

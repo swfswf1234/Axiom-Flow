@@ -1,6 +1,7 @@
 """统一配置（三段式：服务 / 数据与数据库 / 解析引擎）。
 
 读取优先级：真实环境变量 > 自身 `.env` > 父目录 `.env`（向上走查）> 内置最小默认值。
+梳理出站三键是例外：键显式存在即取值，空值也优先，并作为停用／无效槽位保留，不回落默认值。
 **数据根 `QED_DATA_ROOT` 无默认值**：缺配、指向仓内 `data/`、或目录不存在时 `load_settings()`
 在启动期抛 `DataRootError` 拒绝起服，不静默回退（ADR 0009，Q1 裁决＝直接报错）。
 本服务只做「模型 API 调用 + 预处理/后处理」：模型生命周期与调参归 QED-Engine（8900），
@@ -23,7 +24,8 @@
 梳理出站（R8 甲，PLAN-026 W6）用**新键名** `QED_ENGINE_GATEWAY_URL` 与 `AXIOM_KP_TIMEOUT`：
 退役清单里的 `QED_LLM_GATEWAY_URL`／`QED_LLM_TIMEOUT` 一个都不复活——那两个名字在 8902 侧
 曾同时承担「网关地址」和「要不要走网关」两件事，删掉正是为了不再让配置决定通路。
-两者都有内置默认值（8900 回环地址／360 秒），`.env` 零改动即可起梳理通路。
+三键都有内置默认值（网关实名／8900 回环地址／600 秒），`.env` 零改动即可起梳理通路；
+三键显式置空则停用该槽位，与普通可选配置的空值跳过语义分开。
 """
 
 from __future__ import annotations
@@ -101,9 +103,9 @@ class Settings:
     #: 梳理出站地址（R8 甲）：8900 的 `POST /api/v1/llm/text`，prompt 与调用由本仓发起、
     #: 调用账只由 8900 落一行。空值不提供——没有「不打网关」的默认形态。
     engine_gateway_url: str = "http://127.0.0.1:8900"
-    #: 一次梳理模型调用的等待预算：与 8900 自己的调用预算同值（`QED_LLM_TIMEOUT`＝600s），
-    #: 不留余量差；两侧谁先改都要一起改，否则慢模型的合法回复会被一侧先掐掉，读成「这一节没产物」。
-    kp_timeout: int = 600
+    #: 一次梳理模型调用的等待预算：与 8900 自己的调用预算同值（600s），不留余量差。
+    #: `AXIOM_KP_TIMEOUT` 显式空值保留为 None 并停用槽位；非空但非数字才回落 600。
+    kp_timeout: int | None = 600
     db_host: str = "127.0.0.1"
     db_port: int = 3306
     db_name: str = "qed"
@@ -133,6 +135,17 @@ def _to_int(value: Any, default: int) -> int:
         return default
 
 
+def _to_optional_int(value: Any, default: int) -> int | None:
+    """梳理超时：显式空值是停用标记，只有非空坏值才回落内置默认。"""
+    if not str(value).strip():
+        return None
+    return _to_int(value, default)
+
+
+_EXPLICIT_EMPTY_ENV_KEYS = frozenset(
+    {"AXIOM_KP_ENGINE", "QED_ENGINE_GATEWAY_URL", "AXIOM_KP_TIMEOUT"}
+)
+
 _ENV_MAP = {
     "AXIOM_VISION_MODEL": ("vision_model", str),
     "AXIOM_OCR_ENGINE": ("ocr_engine", str),
@@ -142,7 +155,7 @@ _ENV_MAP = {
     "AXIOM_MAX_REGIONS_PER_PAGE": ("max_regions_per_page", partial(_to_int, default=16)),
     "AXIOM_KP_ENGINE": ("kp_engine", str),
     "QED_ENGINE_GATEWAY_URL": ("engine_gateway_url", str),
-    "AXIOM_KP_TIMEOUT": ("kp_timeout", partial(_to_int, default=600)),
+    "AXIOM_KP_TIMEOUT": ("kp_timeout", partial(_to_optional_int, default=600)),
     "QED_DB_HOST": ("db_host", str),
     "QED_DB_PORT": ("db_port", partial(_to_int, default=3306)),
     "QED_DB_NAME": ("db_name", str),
@@ -160,7 +173,8 @@ DATA_ROOT_ENV = "QED_DATA_ROOT"
 def _env_file_values(start: Path | None = None) -> dict[str, str]:
     """从 start 向上走查全部 `.env`，合并为视图（不修改 os.environ，避免测试环境污染）。
 
-    先加载者（自身 .env）优先，父目录 `.env` 兜底；空值（如 `KEY=`）跳过留给兜底来源。
+    先加载者（自身 .env）优先，父目录 `.env` 兜底；普通空值（如 `KEY=`）跳过留给兜底来源。
+    梳理出站三键显式空值例外保留，保证子目录 `.env` 能覆盖父目录与默认值。
     键限 `QED_*`/`AXIOM_*` 与唯一密钥 `API_KEY`；已有环境变量优先于文件值（见 `_env_value`）。
     """
     values: dict[str, str] = {}
@@ -175,7 +189,7 @@ def _env_file_values(start: Path | None = None) -> dict[str, str]:
             key, _, value = line.partition("=")
             key = key.strip()
             value = _strip_env_comment(value.strip())
-            if not value:
+            if not value and key not in _EXPLICIT_EMPTY_ENV_KEYS:
                 continue
             if key.startswith(("QED_", "AXIOM_")) or key == "API_KEY":
                 values.setdefault(key, value)
@@ -217,7 +231,10 @@ def load_settings(**overrides: Any) -> Settings:
     file_values = _env_file_values()
     values: dict[str, Any] = {}
     for env_name, (field_name, converter) in _ENV_MAP.items():
-        raw = os.environ.get(env_name) or file_values.get(env_name)
+        if env_name in _EXPLICIT_EMPTY_ENV_KEYS:
+            raw = os.environ[env_name] if env_name in os.environ else file_values.get(env_name)
+        else:
+            raw = os.environ.get(env_name) or file_values.get(env_name)
         if raw is not None:
             values[field_name] = converter(raw)
     env_root = os.environ.get(DATA_ROOT_ENV) or file_values.get(DATA_ROOT_ENV)
